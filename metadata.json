@@ -1,0 +1,6 @@
+{
+  "name": "AutoPro Flash & Diagnostic Hub",
+  "description": "Logiciel professionnel de diagnostic automobile OBD-II, flash ECU, liaison direct mobile-tablette (Câble/WiFi/Bluetooth) et traducteur/installateur d'applications embarquées toutes marques.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
