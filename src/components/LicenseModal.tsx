@@ -129,6 +129,16 @@ export const LicenseModal: React.FC<LicenseModalProps> = ({
               ))}
             </div>
           </div>
+
+          <div className="p-3 bg-emerald-950/30 rounded-xl border border-emerald-600/50 space-y-1">
+            <div className="flex items-center gap-2 text-emerald-300 font-bold text-[11px]">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Garantie Durée Illimitée &amp; Sauvegarde Intégrale Active</span>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Votre licence est permanente, sans abonnement caché et sauvegardée sur notre serveur SaaS. Exportez à tout moment une sauvegarde complète (.JSON) depuis l'onglet Historique SaaS.
+            </p>
+          </div>
         </div>
 
         {/* Deactivation / Sign out Zone */}

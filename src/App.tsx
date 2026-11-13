@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ConnectionMode, Vehicle, LicenseSession } from './types/automotive';
 import { VEHICLE_PRESETS } from './data/mockVehicles';
 import { Header } from './components/Header';
@@ -13,6 +13,7 @@ import { CommercialPackaging } from './components/CommercialPackaging';
 import { ChineseTabletFlasher } from './components/ChineseTabletFlasher';
 import { BodyComfortControl } from './components/BodyComfortControl';
 import { KeylessProximitySecurity } from './components/KeylessProximitySecurity';
+import { CameraIntegration } from './components/CameraIntegration';
 import { ConnectModal } from './components/ConnectModal';
 import { LicenseGate } from './components/LicenseGate';
 import { LicenseModal } from './components/LicenseModal';
@@ -40,13 +41,43 @@ export default function App() {
   const [matrixName, setMatrixName] = useState<string>(() => {
     return localStorage.getItem('autopro_matrix_name') || 'Jarvis';
   });
-  const [activeTab, setActiveTab] = useState<'diagnostic' | 'history' | 'flash' | 'connection' | 'apps' | 'translator' | 'smartech' | 'packaging' | 'chinese_flasher' | 'comfort' | 'keyless'>('history');
+  const [activeTab, setActiveTab] = useState<'diagnostic' | 'history' | 'flash' | 'connection' | 'apps' | 'translator' | 'smartech' | 'packaging' | 'chinese_flasher' | 'comfort' | 'keyless' | 'cameras'>('history');
+  const [atelierMode, setAtelierMode] = useState<boolean>(() => {
+    return localStorage.getItem('autopro_atelier_mode') === 'true';
+  });
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle>(VEHICLE_PRESETS[0]);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>('cable');
   const [isConnected, setIsConnected] = useState<boolean>(true);
   const [batteryVoltage, setBatteryVoltage] = useState<number>(13.8);
   const [isConnectModalOpen, setIsConnectModalOpen] = useState<boolean>(false);
   const [dtcCodes, setDtcCodes] = useState(INITIAL_DTC_CODES);
+
+  const toggleAtelierMode = () => {
+    setAtelierMode(prev => {
+      const next = !prev;
+      localStorage.setItem('autopro_atelier_mode', String(next));
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (licenseSession?.isValid) {
+      fetch('/api/clients/activity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientName: licenseSession.clientName,
+          hwid: licenseSession.hwid,
+          actionType: 'heartbeat',
+          actionDetails: `Ouverture session AutoPro (${licenseSession.tierLabel}) — Liaison ${connectionMode.toUpperCase()}`,
+          vehicleName: `${selectedVehicle.brand} ${selectedVehicle.model}`,
+          locationCity: 'Algérie (Tablette Atelier)',
+        }),
+      }).catch(() => {
+        // Silent telemetry ignore
+      });
+    }
+  }, [licenseSession?.key]);
 
   const handleDeactivateLicense = () => {
     localStorage.removeItem('autopro_license_session');
@@ -59,7 +90,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-slate-950">
+    <div className={`min-h-screen bg-[#070b14] text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-slate-950 ${atelierMode ? 'atelier-mode' : ''}`}>
       {/* Top Bar adhering to Top Bar Contract */}
       <Header
         activeTab={activeTab}
@@ -71,6 +102,8 @@ export default function App() {
         onOpenLicenseModal={() => setIsLicenseModalOpen(true)}
         matrixName={matrixName}
         onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
+        atelierMode={atelierMode}
+        onToggleAtelierMode={toggleAtelierMode}
       />
 
       {/* Main Content Area */}
@@ -176,6 +209,17 @@ export default function App() {
             isConnected={isConnected}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
             onSelectTab={setActiveTab}
+          />
+        )}
+
+        {activeTab === 'cameras' && (
+          <CameraIntegration
+            selectedVehicle={selectedVehicle}
+            connectionMode={connectionMode}
+            isConnected={isConnected}
+            onOpenConnectModal={() => setIsConnectModalOpen(true)}
+            onSelectTab={setActiveTab}
+            clientName={licenseSession.clientName}
           />
         )}
       </main>

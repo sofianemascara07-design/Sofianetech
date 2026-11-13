@@ -1,10 +1,12 @@
 import React from 'react';
 import { ConnectionMode, LicenseSession } from '../types/automotive';
-import { ShieldCheck, Key, Mic } from 'lucide-react';
+import { ShieldCheck, Key, Mic, Sun, Camera } from 'lucide-react';
+
+type NavTab = 'diagnostic' | 'history' | 'flash' | 'connection' | 'apps' | 'translator' | 'smartech' | 'packaging' | 'chinese_flasher' | 'comfort' | 'keyless' | 'cameras';
 
 interface HeaderProps {
-  activeTab: 'diagnostic' | 'history' | 'flash' | 'connection' | 'apps' | 'translator' | 'smartech' | 'packaging' | 'chinese_flasher' | 'comfort' | 'keyless';
-  onSelectTab: (tab: 'diagnostic' | 'history' | 'flash' | 'connection' | 'apps' | 'translator' | 'smartech' | 'packaging' | 'chinese_flasher' | 'comfort' | 'keyless') => void;
+  activeTab: NavTab;
+  onSelectTab: (tab: NavTab) => void;
   isConnected: boolean;
   connectionMode: ConnectionMode;
   onOpenConnectModal: () => void;
@@ -12,6 +14,8 @@ interface HeaderProps {
   onOpenLicenseModal?: () => void;
   matrixName?: string;
   onOpenVoiceModal?: () => void;
+  atelierMode?: boolean;
+  onToggleAtelierMode?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -24,6 +28,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenLicenseModal,
   matrixName = 'Jarvis',
   onOpenVoiceModal,
+  atelierMode = false,
+  onToggleAtelierMode,
 }) => {
   const getModeLabel = (mode: ConnectionMode) => {
     switch (mode) {
@@ -160,6 +166,17 @@ export const Header: React.FC<HeaderProps> = ({
             Traducteur
           </button>
           <button
+            onClick={() => onSelectTab('cameras')}
+            className={`whitespace-nowrap shrink-0 transition-colors pb-1 border-b-2 cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'cameras'
+                ? 'text-cyan-400 border-cyan-400 font-semibold'
+                : 'border-transparent hover:text-cyan-300 text-cyan-400/90'
+            }`}
+          >
+            <Camera className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Caméras &amp; ADAS</span>
+          </button>
+          <button
             onClick={() => onSelectTab('packaging')}
             className={`whitespace-nowrap shrink-0 transition-colors pb-1 border-b-2 cursor-pointer text-amber-400 ${
               activeTab === 'packaging'
@@ -171,8 +188,25 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </nav>
 
-        {/* Zone 3: 1 primary action + voice assistant + license badge */}
-        <div className="flex items-center gap-2.5 shrink-0">
+        {/* Zone 3: 1 primary action + atelier mode + voice assistant + license badge */}
+        <div className="flex items-center gap-2 shrink-0">
+          {onToggleAtelierMode && (
+            <button
+              onClick={onToggleAtelierMode}
+              className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm ${
+                atelierMode
+                  ? 'bg-yellow-400 text-black border-yellow-300 hover:bg-yellow-300'
+                  : 'bg-slate-900 border-amber-500/40 hover:border-amber-400 text-amber-300'
+              }`}
+              title="Activer/Désactiver le Mode Atelier fort contraste (plein soleil & garage sombre)"
+            >
+              <Sun className={`w-3.5 h-3.5 ${atelierMode ? 'text-black' : 'text-amber-400'}`} />
+              <span className="hidden sm:inline text-[11px]">
+                {atelierMode ? 'Atelier ON' : 'Mode Atelier'}
+              </span>
+            </button>
+          )}
+
           {onOpenVoiceModal && (
             <button
               onClick={onOpenVoiceModal}
@@ -282,6 +316,13 @@ export const Header: React.FC<HeaderProps> = ({
           className={`whitespace-nowrap py-1 ${activeTab === 'translator' ? 'text-cyan-400 font-semibold' : ''}`}
         >
           Traducteur
+        </button>
+        <button
+          onClick={() => onSelectTab('cameras')}
+          className={`whitespace-nowrap py-1 font-semibold flex items-center gap-1 ${activeTab === 'cameras' ? 'text-cyan-400 font-bold' : 'text-cyan-400/80'}`}
+        >
+          <Camera className="w-3 h-3" />
+          <span>Caméras &amp; ADAS</span>
         </button>
         <button
           onClick={() => onSelectTab('packaging')}

@@ -28,3 +28,83 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(71, 85, 105, 0.9);
 }
+
+/* ============================================================================
+   MODE ATELIER — FORT CONTRASTE (Plein soleil & Garages sombres)
+   ============================================================================ */
+.atelier-mode {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+.atelier-mode header,
+.atelier-mode footer {
+  background-color: #000000 !important;
+  border-color: #facc15 !important;
+  border-width: 2px !important;
+}
+
+.atelier-mode .bg-slate-950,
+.atelier-mode .bg-slate-950\/95,
+.atelier-mode .bg-slate-950\/80,
+.atelier-mode .bg-slate-950\/70,
+.atelier-mode .bg-slate-950\/60,
+.atelier-mode .bg-slate-950\/40,
+.atelier-mode .bg-slate-900,
+.atelier-mode .bg-slate-900\/90,
+.atelier-mode .bg-slate-900\/80,
+.atelier-mode .bg-slate-900\/70,
+.atelier-mode .bg-slate-900\/60,
+.atelier-mode .bg-slate-900\/40,
+.atelier-mode .bg-\[\#070b14\] {
+  background-color: #050505 !important;
+  background-image: none !important;
+}
+
+.atelier-mode .border-slate-800,
+.atelier-mode .border-slate-800\/80,
+.atelier-mode .border-slate-700,
+.atelier-mode .border-slate-900 {
+  border-color: #e2e8f0 !important;
+}
+
+.atelier-mode .text-slate-400,
+.atelier-mode .text-slate-500 {
+  color: #f8fafc !important;
+}
+
+.atelier-mode .text-slate-300 {
+  color: #ffffff !important;
+}
+
+.atelier-mode .text-cyan-400,
+.atelier-mode .text-cyan-300 {
+  color: #22d3ee !important;
+  font-weight: 700;
+}
+
+.atelier-mode .text-amber-400,
+.atelier-mode .text-amber-300 {
+  color: #fde047 !important;
+  font-weight: 700;
+}
+
+.atelier-mode .text-emerald-400,
+.atelier-mode .text-emerald-300 {
+  color: #4ade80 !important;
+  font-weight: 700;
+}
+
+.atelier-mode input,
+.atelier-mode select,
+.atelier-mode textarea {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border: 2px solid #facc15 !important;
+}
+
+.atelier-mode button:focus-visible {
+  outline: 3px solid #facc15 !important;
+  outline-offset: 2px;
+}
+

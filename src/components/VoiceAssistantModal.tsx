@@ -189,7 +189,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         setExecutedActions(actionsPerformed);
 
         // Switch tab if suggested
-        if (data.suggestedTab && ['diagnostic', 'flash', 'comfort', 'chinese_flasher', 'smartech', 'apps'].includes(data.suggestedTab)) {
+        if (data.suggestedTab && ['diagnostic', 'flash', 'comfort', 'chinese_flasher', 'smartech', 'apps', 'cameras', 'keyless'].includes(data.suggestedTab)) {
           setTimeout(() => {
             onSelectTab(data.suggestedTab);
           }, 1500);
@@ -475,6 +475,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               className="px-2.5 py-1 rounded-lg bg-amber-950/60 hover:bg-amber-900/60 text-amber-300 hover:text-amber-200 border border-amber-800/60 transition-colors cursor-pointer"
             >
               📡 "Clé 3m &amp; Antivol"
+            </button>
+            <button
+              onClick={() => handleSendVoiceCommand("Ouvre les caméras 360 et ADAS du véhicule")}
+              className="px-2.5 py-1 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 hover:text-cyan-200 border border-cyan-800/60 transition-colors cursor-pointer"
+            >
+              📹 "Caméras 360° &amp; ADAS"
             </button>
             <button
               onClick={() => handleSendVoiceCommand("7el el male w ghlaq zoudjadj")}

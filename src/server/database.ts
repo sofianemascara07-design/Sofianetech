@@ -1,12 +1,70 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { DiagnosticScanSession, DatabaseStats } from '../types/automotive';
+import { DiagnosticScanSession, DatabaseStats, ClientActivityRecord } from '../types/automotive';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, '../../data');
 const DB_FILE = path.resolve(DATA_DIR, 'autopro_database.json');
+const ACTIVITIES_FILE = path.resolve(DATA_DIR, 'autopro_activities.json');
+
+const INITIAL_SEEDED_ACTIVITIES: ClientActivityRecord[] = [
+  {
+    id: 'ACT-DZ-9014',
+    clientName: 'Garage Mascara Auto Pro',
+    hwid: 'HWID-DZ-9882-7EAB-5A63-PC',
+    actionType: 'activation',
+    actionDetails: 'Activation de licence Master DZ (À Vie) validée sur tablette d\'atelier',
+    timestamp: '2026-11-12T08:15:00Z',
+    locationCity: 'Mascara, Algérie',
+    durationMinutes: 45,
+  },
+  {
+    id: 'ACT-DZ-9013',
+    clientName: 'Atelier Express Relizane',
+    hwid: 'HWID-DZ-4412-9C01-3B22-PC',
+    actionType: 'scan_started',
+    actionDetails: 'Scan complet UDS & Lecture 2 codes défauts (P0302)',
+    timestamp: '2026-11-11T16:42:00Z',
+    vehicleName: 'Jetour Dashing 1.6 TGDI',
+    locationCity: 'Relizane, Algérie',
+    durationMinutes: 18,
+  },
+  {
+    id: 'ACT-DZ-9012',
+    clientName: 'Tafraoui Diag & Flash Oran',
+    hwid: 'HWID-DZ-3109-F188-9A11-PC',
+    actionType: 'flash_executed',
+    actionDetails: 'Reprogrammation Stage 1 + Checksum CRC32 validé',
+    timestamp: '2026-11-11T14:20:00Z',
+    vehicleName: 'Fiat Doblò 1.6 MultiJet',
+    locationCity: 'Oran, Algérie',
+    durationMinutes: 27,
+  },
+  {
+    id: 'ACT-DZ-9011',
+    clientName: 'Sidi Bel Abbès ÉlectroAuto',
+    hwid: 'HWID-DZ-7741-B204-8E19-PC',
+    actionType: 'camera_view',
+    actionDetails: 'Connexion caméras ADAS / Recul 360° et calibration angle de braquage',
+    timestamp: '2026-11-10T11:05:00Z',
+    vehicleName: 'Geely Coolray 1.5 TD',
+    locationCity: 'Sidi Bel Abbès, Algérie',
+    durationMinutes: 12,
+  },
+  {
+    id: 'ACT-DZ-9010',
+    clientName: 'Chlef Auto Tech',
+    hwid: 'HWID-DZ-5580-A310-1C44-PC',
+    actionType: 'keyless_toggle',
+    actionDetails: 'Configuration Clé Mains-Libres 3m & Test code PIN urgence 884926',
+    timestamp: '2026-11-09T17:30:00Z',
+    vehicleName: 'Chery Tiggo 8 Pro Max',
+    locationCity: 'Chlef, Algérie',
+    durationMinutes: 15,
+  },
+];
 
 const INITIAL_SEEDED_SCANS: DiagnosticScanSession[] = [
   {
@@ -186,6 +244,7 @@ const INITIAL_SEEDED_SCANS: DiagnosticScanSession[] = [
 
 export class AutoProDatabase {
   private scans: Map<string, DiagnosticScanSession> = new Map();
+  private activities: ClientActivityRecord[] = [];
   private vinIndex: Map<string, string[]> = new Map(); // VIN -> array of scan IDs
   private codeIndex: Map<string, string[]> = new Map(); // DTC code -> array of scan IDs
   private isInitialized = false;
@@ -201,6 +260,25 @@ export class AutoProDatabase {
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+
+      if (fs.existsSync(ACTIVITIES_FILE)) {
+        try {
+          const rawActs = fs.readFileSync(ACTIVITIES_FILE, 'utf-8');
+          const parsedActs: ClientActivityRecord[] = JSON.parse(rawActs);
+          if (Array.isArray(parsedActs) && parsedActs.length > 0) {
+            this.activities = parsedActs;
+          } else {
+            this.activities = [...INITIAL_SEEDED_ACTIVITIES];
+            this.saveActivitiesToFile();
+          }
+        } catch {
+          this.activities = [...INITIAL_SEEDED_ACTIVITIES];
+          this.saveActivitiesToFile();
+        }
+      } else {
+        this.activities = [...INITIAL_SEEDED_ACTIVITIES];
+        this.saveActivitiesToFile();
       }
 
       if (fs.existsSync(DB_FILE)) {
@@ -220,6 +298,7 @@ export class AutoProDatabase {
     } catch (err) {
       console.error('[AutoProDatabase] Initialization fallback to seed:', err);
       this.loadData(INITIAL_SEEDED_SCANS);
+      this.activities = [...INITIAL_SEEDED_ACTIVITIES];
       this.isInitialized = true;
     }
   }
@@ -257,6 +336,63 @@ export class AutoProDatabase {
     } catch (err) {
       console.error('[AutoProDatabase] Save error:', err);
     }
+  }
+
+  private saveActivitiesToFile() {
+    try {
+      const tempFile = `${ACTIVITIES_FILE}.tmp`;
+      fs.writeFileSync(tempFile, JSON.stringify(this.activities, null, 2), 'utf-8');
+      fs.renameSync(tempFile, ACTIVITIES_FILE);
+    } catch (err) {
+      console.error('[AutoProDatabase] Save activities error:', err);
+    }
+  }
+
+  public logActivity(record: Omit<ClientActivityRecord, 'id' | 'timestamp'> & { id?: string; timestamp?: string }): ClientActivityRecord {
+    const newRecord: ClientActivityRecord = {
+      ...record,
+      id: record.id || `ACT-DZ-${Math.floor(1000 + Math.random() * 9000)}`,
+      timestamp: record.timestamp || new Date().toISOString(),
+    };
+    this.activities.unshift(newRecord);
+    if (this.activities.length > 500) {
+      this.activities = this.activities.slice(0, 500);
+    }
+    this.saveActivitiesToFile();
+    return newRecord;
+  }
+
+  public getActivities(filter?: { clientName?: string; actionType?: string; search?: string }): ClientActivityRecord[] {
+    let list = [...this.activities];
+    if (filter?.clientName && filter.clientName !== 'all') {
+      list = list.filter(a => a.clientName === filter.clientName);
+    }
+    if (filter?.actionType && filter.actionType !== 'all') {
+      list = list.filter(a => a.actionType === filter.actionType);
+    }
+    if (filter?.search) {
+      const q = filter.search.toLowerCase();
+      list = list.filter(
+        a =>
+          a.clientName.toLowerCase().includes(q) ||
+          a.hwid.toLowerCase().includes(q) ||
+          a.actionDetails.toLowerCase().includes(q) ||
+          (a.vehicleName && a.vehicleName.toLowerCase().includes(q)) ||
+          (a.locationCity && a.locationCity.toLowerCase().includes(q))
+      );
+    }
+    return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+
+  public exportFullBackup() {
+    return {
+      exportedAt: new Date().toISOString(),
+      platform: 'AutoPro Suite Automobile DZ',
+      guarantee: 'Licence Illimitée à Vie · Sauvegarde Intégrale',
+      scans: Array.from(this.scans.values()),
+      clientActivities: this.activities,
+      stats: this.getStats(),
+    };
   }
 
   public getAllScans(filter?: {

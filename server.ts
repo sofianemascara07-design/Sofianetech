@@ -517,7 +517,11 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
       speechReply = `Climatisation réglée sur ${targetTemp}°C par ${matrixName}.`;
     }
 
-    if (lower.includes('historique') || lower.includes('history') || lower.includes('base de données') || lower.includes('santé') || lower.includes('suivi')) {
+    if (lower.includes('caméra') || lower.includes('camera') || lower.includes('recul') || lower.includes('360') || lower.includes('adas') || lower.includes('dashcam')) {
+      suggestedTab = 'cameras';
+      actions.push({ type: 'switch_tab', params: { tab: 'cameras' } });
+      speechReply = `Affichage des flux caméras ADAS et vue 360° du véhicule sur la tablette.`;
+    } else if (lower.includes('historique') || lower.includes('history') || lower.includes('base de données') || lower.includes('santé') || lower.includes('suivi')) {
       suggestedTab = 'history';
       actions.push({ type: 'switch_tab', params: { tab: 'history' } });
       speechReply = `Accès à l'historique diagnostic et à la base de données SaaS de suivi santé.`;
@@ -698,6 +702,16 @@ app.post('/api/license/verify', (req, res) => {
 
   const signature = `SIG-${Buffer.from(`${cleanKey}:${clientName || 'Atelier'}:${hwid || 'HWID'}:AUTOPRO-DZ-LIC-2026`).toString('base64').substring(0, 24)}`;
 
+  // Log client license activation in SaaS Activity Tracker
+  saasDatabase.logActivity({
+    clientName: clientName || 'Client Licencié AutoPro DZ',
+    hwid: hwid || 'HWID-AUTO-DETECTED',
+    actionType: 'activation',
+    actionDetails: `Activation clé ${cleanKey.substring(0, 14)}... (${tier.toUpperCase()} - Durée Illimitée)`,
+    locationCity: 'Algérie (Passerelle DZ)',
+    durationMinutes: 1,
+  });
+
   return res.json({
     valid: true,
     message: 'Licence authentifiée avec succès sur le serveur AutoPro DZ',
@@ -786,6 +800,15 @@ app.post('/api/history', (req, res) => {
       return res.status(400).json({ success: false, error: 'Données de session de scan manquantes' });
     }
     const created = saasDatabase.addScan(sessionData);
+    saasDatabase.logActivity({
+      clientName: created.clientName || 'Atelier AutoPro DZ',
+      hwid: created.vin || 'HWID-SCANNER',
+      actionType: 'scan_started',
+      actionDetails: `Scan ${created.vehicleName} (${created.dtcCodes.length} DTC détectés · Score ${created.overallHealthScore}%)`,
+      vehicleName: created.vehicleName,
+      locationCity: 'Atelier DZ',
+      durationMinutes: Math.max(1, Math.round(created.durationSeconds / 60)),
+    });
     return res.status(201).json({
       success: true,
       message: 'Session de scan enregistrée dans la base de données SaaS avec succès',
@@ -853,6 +876,98 @@ app.post('/api/history/seed', (_req, res) => {
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// GET /api/clients/activity - Track when clients activate and use the app
+app.get('/api/clients/activity', (req, res) => {
+  try {
+    const { clientName, actionType, search } = req.query;
+    const activities = saasDatabase.getActivities({
+      clientName: typeof clientName === 'string' ? clientName : undefined,
+      actionType: typeof actionType === 'string' ? actionType : undefined,
+      search: typeof search === 'string' ? search : undefined,
+    });
+    return res.json({
+      success: true,
+      total: activities.length,
+      activities,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/clients/activity - Log client module usage event
+app.post('/api/clients/activity', (req, res) => {
+  try {
+    const { clientName, hwid, actionType, actionDetails, vehicleName, locationCity, durationMinutes } = req.body;
+    const record = saasDatabase.logActivity({
+      clientName: clientName || 'Atelier Client AutoPro DZ',
+      hwid: hwid || 'HWID-TABLETTE',
+      actionType: actionType || 'heartbeat',
+      actionDetails: actionDetails || 'Utilisation active du logiciel AutoPro DZ',
+      vehicleName,
+      locationCity: locationCity || 'Algérie',
+      durationMinutes,
+    });
+    return res.status(201).json({ success: true, activity: record });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/db/backup - Full JSON backup guarantee download
+app.get('/api/db/backup', (_req, res) => {
+  try {
+    const backup = saasDatabase.exportFullBackup();
+    return res.json({ success: true, backup });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/cameras/command - Control vehicle ADAS / 360 / Reverse / Dashcam cameras via LVDS / CAN-Bus
+app.post('/api/cameras/command', (req, res) => {
+  const { cameraChannel, action, steeringAngleDeg, guidelinesActive, nightVisionActive, clientName, vehicleName } = req.body;
+  const timestamp = new Date().toLocaleTimeString();
+
+  let canFrame = '0x3B2 [8] 01 00 FF 20 00 00 00 00 (LVDS_CAM_SWITCH)';
+  let message = `Flux vidéo commuté sur ${cameraChannel || 'Caméra Recul'}`;
+
+  if (action === 'calibrate_adas') {
+    canFrame = '0x742 [8] 2E F1 A0 01 00 00 00 00 (ADAS_CALIBRATION_START)';
+    message = 'Calibration dynamique de la caméra pare-brise ADAS lancée (tolérance ±0.2°).';
+  } else if (action === 'toggle_record') {
+    canFrame = '0x3B8 [8] 02 01 00 00 00 00 00 00 (DVR_REC_TOGGLE)';
+    message = 'Commande d\'enregistrement vidéo DVR envoyée au boîtier multimédia.';
+  } else if (action === 'snapshot') {
+    canFrame = '0x3B9 [8] 04 FF 00 00 00 00 00 00 (CAM_SNAPSHOT_CAPTURE)';
+    message = 'Capture HD instantanée enregistrée dans la galerie atelier.';
+  }
+
+  if (clientName) {
+    saasDatabase.logActivity({
+      clientName,
+      hwid: 'HWID-TABLETTE-ADAS',
+      actionType: 'camera_view',
+      actionDetails: `${message} (${cameraChannel || '360°'})`,
+      vehicleName: vehicleName || 'Véhicule Atelier',
+      locationCity: 'Algérie',
+      durationMinutes: 2,
+    });
+  }
+
+  return res.json({
+    success: true,
+    cameraChannel,
+    action,
+    steeringAngleDeg,
+    guidelinesActive,
+    nightVisionActive,
+    canFrame,
+    message,
+    timestamp,
+  });
 });
 
 // Mount Vite or static files

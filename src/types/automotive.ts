@@ -208,3 +208,30 @@ export interface DatabaseStats {
   indexedKeys: number;
   walEnabled: boolean;
 }
+
+export interface ClientActivityRecord {
+  id: string;
+  clientName: string;
+  hwid: string;
+  actionType: 'activation' | 'scan_started' | 'flash_executed' | 'dtc_cleared' | 'keyless_toggle' | 'camera_view' | 'app_installed' | 'heartbeat';
+  actionDetails: string;
+  timestamp: string;
+  vehicleName?: string;
+  locationCity?: string;
+  ipAddress?: string;
+  durationMinutes?: number;
+}
+
+export interface VehicleCameraSystem {
+  activeCamera: 'rear' | 'front' | 'left' | 'right' | '360' | 'dashcam';
+  isReverseEngaged: boolean;
+  guidelinesActive: boolean;
+  steeringAngleDeg: number;
+  nightVisionActive: boolean;
+  recording: boolean;
+  cameraResolution: '1080p AHD' | '720p HD' | 'CVBS';
+  brightness: number;
+  contrast: number;
+  distanceToObstacleMeters?: number;
+}
+

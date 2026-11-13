@@ -28,9 +28,16 @@ import {
   ChevronDown,
   ChevronUp,
   Printer,
-  Sparkles
+  Sparkles,
+  Users,
+  HardDrive,
+  MapPin,
+  Globe,
+  FileDown,
+  Key
 } from 'lucide-react';
-import { DiagnosticScanSession, DatabaseStats, Vehicle, ScanDtcItem } from '../types/automotive';
+import { jsPDF } from 'jspdf';
+import { DiagnosticScanSession, DatabaseStats, Vehicle, ScanDtcItem, ClientActivityRecord } from '../types/automotive';
 import { VEHICLE_PRESETS } from '../data/mockVehicles';
 
 interface DiagnosticHistoryProps {
@@ -44,6 +51,12 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
   onSelectVehicle,
 }) => {
   const [scans, setScans] = useState<DiagnosticScanSession[]>([]);
+  const [activities, setActivities] = useState<ClientActivityRecord[]>([]);
+  const [activeSubTab, setActiveSubTab] = useState<'scans' | 'activity'>('scans');
+  const [activitySearch, setActivitySearch] = useState('');
+  const [activityFilter, setActivityFilter] = useState<string>('all');
+  const [isBackingUp, setIsBackingUp] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dbStats, setDbStats] = useState<DatabaseStats | null>(null);
@@ -80,9 +93,10 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const [scansRes, statsRes] = await Promise.all([
+      const [scansRes, statsRes, actRes] = await Promise.all([
         fetch('/api/history'),
         fetch('/api/db/stats'),
+        fetch('/api/clients/activity'),
       ]);
 
       if (!scansRes.ok || !statsRes.ok) {
@@ -91,9 +105,11 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
 
       const scansData = await scansRes.json();
       const statsData = await statsRes.json();
+      const actData = actRes.ok ? await actRes.json() : { activities: [] };
 
       setScans(scansData.scans || []);
       setDbStats(statsData.stats || null);
+      setActivities(actData.activities || []);
     } catch (err: any) {
       setError(err.message || 'Impossible de se connecter à la base de données SaaS');
     } finally {
@@ -243,62 +259,182 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
     showToast('Exportation JSON téléchargée avec succès.');
   };
 
-  const handlePrintReport = (scan: DiagnosticScanSession) => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Fiche d'Atelier AutoPro - ${scan.id}</title>
-          <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #111; }
-            h1 { font-size: 20px; border-bottom: 2px solid #0284c7; padding-bottom: 8px; margin-bottom: 12px; }
-            .header-info { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; background: #f8fafc; padding: 12px; border-radius: 8px; font-size: 13px; }
-            .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; }
-            .dtc-box { border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin-bottom: 12px; }
-            .dtc-code { font-weight: bold; font-size: 15px; color: #b91c1c; }
-            .recom { background: #f0fdf4; border-left: 3px solid #16a34a; padding: 8px; margin-top: 8px; font-size: 13px; }
-            .footer { margin-top: 30px; font-size: 11px; text-align: center; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 12px; }
-          </style>
-        </head>
-        <body>
-          <h1>RAPPORT DE DIAGNOSTIC AUTOMOBILE - AUTOPRO DZ</h1>
-          <div class="header-info">
-            <div>
-              <strong>Véhicule :</strong> ${scan.vehicleName} (${scan.year})<br/>
-              <strong>Moteur :</strong> ${scan.engine}<br/>
-              <strong>Numéro VIN :</strong> ${scan.vin}<br/>
-              <strong>Kilométrage :</strong> ${scan.mileageKm.toLocaleString()} km
-            </div>
-            <div>
-              <strong>Réf. Session :</strong> ${scan.id}<br/>
-              <strong>Date & Heure :</strong> ${new Date(scan.timestamp).toLocaleString('fr-FR')}<br/>
-              <strong>Client :</strong> ${scan.clientName}<br/>
-              <strong>Technicien :</strong> ${scan.technicianName}
-            </div>
-          </div>
-          <h3>Codes Défauts Détectés (DTC) &amp; Préconisations de Réparation :</h3>
-          ${scan.dtcCodes.length === 0 ? '<p>Aucun code défaut. Tous les systèmes sont en ordre.</p>' : scan.dtcCodes.map(d => `
-            <div class="dtc-box">
-              <span class="dtc-code">${d.code}</span> - <em>${d.system}</em><br/>
-              <p><strong>Description :</strong> ${d.descriptionFr}</p>
-              <div class="recom">
-                <strong>Solution Technique Préconisée :</strong><br/>
-                ${d.repairRecommendation}<br/>
-                ${d.partReference ? `<strong>Réf. Pièce OEM :</strong> ${d.partReference}<br/>` : ''}
-                ${d.estimatedCostDZD ? `<strong>Estimation Coût :</strong> ${d.estimatedCostDZD.toLocaleString()} DZD` : ''}
-              </div>
-            </div>
-          `).join('')}
-          <div class="footer">
-            AutoPro Diagnostic &amp; Flash Hub - Algérie · Système certifié UDS ISO 14229 / SAE J2534
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
+  const handleDownloadFullBackup = async () => {
+    setIsBackingUp(true);
+    try {
+      const res = await fetch('/api/db/backup');
+      if (!res.ok) throw new Error('Erreur sauvegarde');
+      const data = await res.json();
+      const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute('href', dataStr);
+      downloadAnchor.setAttribute('download', `autopro-sauvegarde-integrale-${new Date().toISOString().slice(0, 10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast('Sauvegarde intégrale SaaS (Scans + Activités Clients) téléchargée !');
+    } catch {
+      showToast('Erreur lors de la sauvegarde intégrale.');
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
+  const handleGeneratePdfReport = (scan: DiagnosticScanSession) => {
+    try {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      let y = 16;
+
+      // Header Banner
+      doc.setFillColor(15, 23, 42);
+      doc.rect(0, 0, pageWidth, 34, 'F');
+      doc.setTextColor(34, 211, 238);
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.text('AUTOPRO DIAGNOSTIC & FLASH HUB — ALGERIE', 14, 15);
+
+      doc.setTextColor(226, 232, 240);
+      doc.setFontSize(9.5);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Rapport Officiel de Diagnostic Electronique Automobile (ISO 14229 UDS / SAE J2534)', 14, 22);
+      doc.text(`Ref. Session : ${scan.id}   |   Date : ${new Date(scan.timestamp).toLocaleString('fr-FR')}`, 14, 28);
+
+      y = 44;
+
+      // Vehicle & Client Info Card
+      doc.setFillColor(248, 250, 252);
+      doc.setDrawColor(203, 213, 225);
+      doc.roundedRect(14, y, pageWidth - 28, 36, 2, 2, 'FD');
+
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('INFORMATIONS VEHICULE & ATELIER', 18, y + 7);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9.5);
+      doc.text(`Vehicule : ${scan.vehicleName} (${scan.year})`, 18, y + 14);
+      doc.text(`Motorisation : ${scan.engine}`, 18, y + 20);
+      doc.text(`Numero VIN : ${scan.vin}`, 18, y + 26);
+      doc.text(`Kilometrage : ${scan.mileageKm.toLocaleString('fr-FR')} km`, 18, y + 32);
+
+      const col2X = 112;
+      doc.text(`Client : ${scan.clientName}`, col2X, y + 14);
+      doc.text(`Technicien : ${scan.technicianName}`, col2X, y + 20);
+      doc.text(`Protocole : ${scan.protocolUsed}`, col2X, y + 26);
+      doc.text(`Batterie : ${scan.batteryVoltage} V  |  Score Sante : ${scan.overallHealthScore}/100`, col2X, y + 32);
+
+      y += 44;
+
+      // Status Summary
+      const statusLabel =
+        scan.status === 'passed'
+          ? 'SAIN — AUCUN DEFAUT ACTIF'
+          : scan.status === 'resolved'
+          ? 'REPARE / RESOLU EN ATELIER'
+          : scan.status === 'warning'
+          ? 'AVERTISSEMENT — CONTROLE RECOMMANDE'
+          : 'DEFAUT CRITIQUE DETECTE';
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(scan.status === 'critical' ? 185 : 15, scan.status === 'passed' || scan.status === 'resolved' ? 118 : 23, 42);
+      doc.text(`ETAT GLOBAL : ${statusLabel} (${scan.dtcCodes.length} code(s) DTC)`, 14, y);
+      y += 8;
+
+      // DTC List
+      if (scan.dtcCodes.length === 0) {
+        doc.setFillColor(240, 253, 244);
+        doc.setDrawColor(134, 239, 172);
+        doc.roundedRect(14, y, pageWidth - 28, 16, 2, 2, 'FD');
+        doc.setTextColor(21, 128, 61);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10);
+        doc.text('Aucun code defaut (DTC) detecte. Tous les calculateurs repondent normalement.', 18, y + 10);
+        y += 24;
+      } else {
+        scan.dtcCodes.forEach((dtc, idx) => {
+          if (y > 245) {
+            doc.addPage();
+            y = 20;
+          }
+
+          const descLines = doc.splitTextToSize(`Description : ${dtc.descriptionFr}`, pageWidth - 36);
+          const recLines = doc.splitTextToSize(`Preconisation : ${dtc.repairRecommendation}`, pageWidth - 36);
+          const rootLines = dtc.rootCause ? doc.splitTextToSize(`Cause racine : ${dtc.rootCause}`, pageWidth - 36) : [];
+          const boxHeight = 16 + descLines.length * 4.5 + recLines.length * 4.5 + rootLines.length * 4.5 + (dtc.estimatedCostDZD || dtc.partReference ? 7 : 0);
+
+          doc.setFillColor(255, 255, 255);
+          doc.setDrawColor(203, 213, 225);
+          doc.roundedRect(14, y, pageWidth - 28, boxHeight, 2, 2, 'FD');
+
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(10.5);
+          doc.setTextColor(185, 28, 28);
+          doc.text(`${idx + 1}. ${dtc.code} — ${dtc.system} [${dtc.status}]`, 18, y + 7);
+
+          let lineY = y + 13;
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(9);
+          doc.setTextColor(30, 41, 59);
+          doc.text(descLines, 18, lineY);
+          lineY += descLines.length * 4.5;
+
+          if (rootLines.length > 0) {
+            doc.setTextColor(180, 83, 9);
+            doc.text(rootLines, 18, lineY);
+            lineY += rootLines.length * 4.5;
+          }
+
+          doc.setTextColor(21, 128, 61);
+          doc.setFont('helvetica', 'bold');
+          doc.text(recLines, 18, lineY);
+          lineY += recLines.length * 4.5;
+
+          if (dtc.estimatedCostDZD || dtc.partReference) {
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(71, 85, 105);
+            const metaParts: string[] = [];
+            if (dtc.partReference) metaParts.push(`Ref. OEM : ${dtc.partReference}`);
+            if (dtc.estimatedCostDZD) metaParts.push(`Cout estime : ${dtc.estimatedCostDZD.toLocaleString('fr-FR')} DZD`);
+            if (dtc.laborHours) metaParts.push(`Main-d'oeuvre : ${dtc.laborHours}h`);
+            doc.text(metaParts.join('   |   '), 18, lineY + 1);
+          }
+
+          y += boxHeight + 5;
+        });
+      }
+
+      // Technician Notes
+      if (scan.technicianNotes) {
+        if (y > 255) {
+          doc.addPage();
+          y = 20;
+        }
+        const notesLines = doc.splitTextToSize(`Observations Atelier : ${scan.technicianNotes}`, pageWidth - 36);
+        doc.setFillColor(241, 245, 249);
+        doc.roundedRect(14, y, pageWidth - 28, 10 + notesLines.length * 4.5, 2, 2, 'F');
+        doc.setTextColor(51, 65, 85);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'italic');
+        doc.text(notesLines, 18, y + 7);
+      }
+
+      // Footer
+      doc.setDrawColor(226, 232, 240);
+      doc.line(14, 280, pageWidth - 14, 280);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text('AutoPro Diagnostic & Flash Hub DZ · WhatsApp Support & Licences : +213 05 57 76 78 04', 14, 286);
+      doc.text('Document genere automatiquement — Certifie ISO 14229 UDS', pageWidth - 14, 286, { align: 'right' });
+
+      doc.save(`Rapport_AutoPro_${scan.id}.pdf`);
+      showToast(`Rapport PDF professionnel généré : Rapport_AutoPro_${scan.id}.pdf`);
+    } catch {
+      showToast('Erreur lors de la génération du fichier PDF.');
+    }
   };
 
   // Filtered scans
@@ -311,6 +447,21 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
       const matchClient = scan.clientName?.toLowerCase().includes(q);
       const matchDtc = scan.dtcCodes.some(d => d.code.toLowerCase().includes(q) || d.descriptionFr.toLowerCase().includes(q));
       if (!matchVehicle && !matchClient && !matchDtc) return false;
+    }
+    return true;
+  });
+
+  // Filtered client activities
+  const filteredActivities = activities.filter(act => {
+    if (activityFilter !== 'all' && act.actionType !== activityFilter) return false;
+    if (activitySearch.trim()) {
+      const q = activitySearch.toLowerCase();
+      const matchClient = act.clientName.toLowerCase().includes(q);
+      const matchHwid = act.hwid.toLowerCase().includes(q);
+      const matchDetails = act.actionDetails.toLowerCase().includes(q);
+      const matchCity = (act.locationCity || '').toLowerCase().includes(q);
+      const matchVehicle = (act.vehicleName || '').toLowerCase().includes(q);
+      if (!matchClient && !matchHwid && !matchDetails && !matchCity && !matchVehicle) return false;
     }
     return true;
   });
@@ -400,6 +551,16 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <button
+              onClick={handleDownloadFullBackup}
+              disabled={isBackingUp}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 hover:text-white flex items-center gap-2 cursor-pointer transition-colors shadow-sm disabled:opacity-50"
+              title="Télécharger une sauvegarde complète permanente (Scans + Activités Clients + Base SaaS)"
+            >
+              <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{isBackingUp ? 'Sauvegarde...' : 'Sauvegarde Intégrale'}</span>
+            </button>
+
+            <button
               onClick={handleOptimizeDb}
               disabled={isOptimizing}
               className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 border border-cyan-500/40 text-cyan-300 hover:text-white flex items-center gap-2 cursor-pointer transition-colors shadow-sm disabled:opacity-50"
@@ -420,7 +581,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
             <button
               onClick={handleExportJson}
               className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white cursor-pointer transition-colors"
-              title="Exporter l'historique en JSON"
+              title="Exporter les scans en JSON"
             >
               <Download className="w-4 h-4" />
             </button>
@@ -497,6 +658,172 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Sub-Tabs Switcher: Diagnostics vs Activité Clients & Licences */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex p-1 rounded-xl bg-slate-900 border border-slate-800 gap-1">
+          <button
+            onClick={() => setActiveSubTab('scans')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
+              activeSubTab === 'scans'
+                ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>Historique Scans &amp; Santé ({scans.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveSubTab('activity')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
+              activeSubTab === 'activity'
+                ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Activité Clients &amp; Licences ({activities.length})</span>
+          </button>
+        </div>
+
+        <div className="px-3 py-1.5 rounded-xl bg-emerald-950/40 border border-emerald-700/50 text-[11px] font-semibold text-emerald-300 flex items-center gap-2">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Durée Illimitée · Sauvegarde Persistante SaaS Active</span>
+        </div>
+      </div>
+
+      {activeSubTab === 'activity' ? (
+        <div className="space-y-4">
+          {/* Activity Filter Bar */}
+          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Rechercher un client, HWID, wilaya (Oran, Alger, Mascara...), véhicule..."
+                value={activitySearch}
+                onChange={(e) => setActivitySearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <select
+                value={activityFilter}
+                onChange={(e) => setActivityFilter(e.target.value)}
+                className="bg-slate-950 border border-slate-800 text-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:border-emerald-500"
+              >
+                <option value="all">Toutes les Actions ({activities.length})</option>
+                <option value="activation">Activations Licence</option>
+                <option value="scan_started">Scans Diagnostic</option>
+                <option value="flash_executed">Flash ECU / Reprog</option>
+                <option value="camera_view">Caméras &amp; ADAS</option>
+                <option value="keyless_toggle">Clé 3m &amp; Antivol</option>
+                <option value="heartbeat">Connexions Tablette</option>
+              </select>
+
+              <button
+                onClick={fetchScansAndStats}
+                className="px-3 py-2 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-emerald-300 font-semibold flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Actualiser</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Client Activity List */}
+          <div className="space-y-2.5">
+            {filteredActivities.length === 0 ? (
+              <div className="p-10 text-center rounded-2xl bg-slate-900/40 border border-slate-800 text-xs text-slate-400">
+                Aucune activité client trouvée pour ces filtres.
+              </div>
+            ) : (
+              filteredActivities.map((act) => {
+                const actionColor =
+                  act.actionType === 'activation'
+                    ? 'bg-emerald-950 text-emerald-300 border-emerald-600/60'
+                    : act.actionType === 'flash_executed'
+                    ? 'bg-rose-950 text-rose-300 border-rose-600/60'
+                    : act.actionType === 'camera_view'
+                    ? 'bg-cyan-950 text-cyan-300 border-cyan-600/60'
+                    : act.actionType === 'keyless_toggle'
+                    ? 'bg-amber-950 text-amber-300 border-amber-600/60'
+                    : 'bg-slate-800 text-slate-200 border-slate-600';
+
+                const actionLabel: Record<ClientActivityRecord['actionType'], string> = {
+                  activation: 'Activation Clé',
+                  scan_started: 'Scan Diagnostic',
+                  flash_executed: 'Flash ECU',
+                  dtc_cleared: 'Effacement DTC',
+                  keyless_toggle: 'Clé 3m / Antivol',
+                  camera_view: 'Caméras & ADAS',
+                  app_installed: 'App Tablette',
+                  heartbeat: 'Session Active',
+                };
+
+                return (
+                  <div
+                    key={act.id}
+                    className="p-4 rounded-xl bg-slate-900/75 border border-slate-800 hover:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${actionColor}`}>
+                          {actionLabel[act.actionType] || act.actionType}
+                        </span>
+                        <span className="font-bold text-white text-sm">{act.clientName}</span>
+                        {act.vehicleName && (
+                          <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-cyan-300 font-semibold text-[11px]">
+                            {act.vehicleName}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-slate-300">{act.actionDetails}</p>
+                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+                        <span className="font-mono text-slate-300">HWID: {act.hwid}</span>
+                        {act.locationCity && (
+                          <span className="flex items-center gap-1 text-emerald-300">
+                            <MapPin className="w-3 h-3" />
+                            {act.locationCity}
+                          </span>
+                        )}
+                        {act.ipAddress && (
+                          <span className="flex items-center gap-1 font-mono">
+                            <Globe className="w-3 h-3" />
+                            {act.ipAddress}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0 space-y-1">
+                      <div className="font-mono text-xs text-cyan-300 font-semibold">
+                        {new Date(act.timestamp).toLocaleDateString('fr-FR', {
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                        })}{' '}
+                        ·{' '}
+                        {new Date(act.timestamp).toLocaleTimeString('fr-FR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </div>
+                      {act.durationMinutes !== undefined && (
+                        <div className="text-[10px] text-slate-400">
+                          Durée session : {act.durationMinutes} min
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
 
       {/* Filter & Search Bar */}
       <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs">
@@ -633,11 +960,12 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
                     )}
 
                     <button
-                      onClick={() => handlePrintReport(scan)}
-                      className="p-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white cursor-pointer transition-colors"
-                      title="Imprimer / Télécharger la fiche atelier"
+                      onClick={() => handleGeneratePdfReport(scan)}
+                      className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                      title="Générer et télécharger un rapport PDF professionnel complet"
                     >
-                      <Printer className="w-4 h-4" />
+                      <FileDown className="w-3.5 h-3.5" />
+                      <span>Générer rapport</span>
                     </button>
 
                     <button
@@ -765,6 +1093,8 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
             );
           })}
         </div>
+      )}
+      </>
       )}
 
       {/* Modal: Enregistrer un Scan Manuel */}
