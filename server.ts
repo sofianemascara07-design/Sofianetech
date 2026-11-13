@@ -11,9 +11,34 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const port = 3000;
+const port =
+  process.env.RENDER || (process.env.NODE_ENV === 'production' && process.env.PORT && process.env.PORT !== '8080')
+    ? Number(process.env.PORT) || 3000
+    : 3000;
+
+// CORS for separated Firebase Hosting (https://autoprodz-a7071.web.app) & Render Backend
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  return next();
+});
 
 app.use(express.json({ limit: '10mb' }));
+
+// Health check for Render & Firebase Hosting bridge verification
+app.get('/api/health', (_req, res) => {
+  return res.json({
+    status: 'ok',
+    service: 'AutoPro Diagnostic & Flash Backend DZ',
+    version: '2.6.0-cameras',
+    features: ['cameras', 'atelier-mode', 'pdf-reports', 'client-activity', 'backup'],
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // Initialize Google GenAI
 const getAIClient = () => {

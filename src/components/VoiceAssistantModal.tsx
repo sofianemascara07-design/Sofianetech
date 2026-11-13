@@ -23,6 +23,7 @@ import {
   Radio
 } from 'lucide-react';
 import { Vehicle } from '../types/automotive';
+import { apiFetch } from '../utils/apiBridge';
 
 interface VoiceAssistantModalProps {
   isOpen: boolean;
@@ -143,7 +144,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     setRecognitionError(null);
 
     try {
-      const response = await fetch('/api/ai/voice-command', {
+      const response = await apiFetch('/api/ai/voice-command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -165,7 +166,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           for (const action of data.actions) {
             // Send direct BCM command to backend
             try {
-              await fetch('/api/bcm/command', {
+              await apiFetch('/api/bcm/command', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

@@ -39,6 +39,7 @@ import {
 import { jsPDF } from 'jspdf';
 import { DiagnosticScanSession, DatabaseStats, Vehicle, ScanDtcItem, ClientActivityRecord } from '../types/automotive';
 import { VEHICLE_PRESETS } from '../data/mockVehicles';
+import { apiFetch } from '../utils/apiBridge';
 
 interface DiagnosticHistoryProps {
   selectedVehicle?: Vehicle;
@@ -94,9 +95,9 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
     setError(null);
     try {
       const [scansRes, statsRes, actRes] = await Promise.all([
-        fetch('/api/history'),
-        fetch('/api/db/stats'),
-        fetch('/api/clients/activity'),
+        apiFetch('/api/history'),
+        apiFetch('/api/db/stats'),
+        apiFetch('/api/clients/activity'),
       ]);
 
       if (!scansRes.ok || !statsRes.ok) {
@@ -130,7 +131,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
     setIsOptimizing(true);
     setOptimizeMessage(null);
     try {
-      const res = await fetch('/api/db/optimize', { method: 'POST' });
+      const res = await apiFetch('/api/db/optimize', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         setDbStats(data.stats);
@@ -146,7 +147,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
 
   const handleResolveScan = async (scanId: string) => {
     try {
-      const res = await fetch(`/api/history/${scanId}/resolve`, {
+      const res = await apiFetch(`/api/history/${scanId}/resolve`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes: 'Réparation validée après essai routier et réinitialisation calculatoire.' }),
@@ -167,7 +168,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
       return;
     }
     try {
-      const res = await fetch(`/api/history/${scanId}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/history/${scanId}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) {
         setScans(prev => prev.filter(s => s.id !== scanId));
@@ -184,7 +185,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
       return;
     }
     try {
-      const res = await fetch('/api/history/seed', { method: 'POST' });
+      const res = await apiFetch('/api/history/seed', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         setScans(data.scans);
@@ -231,7 +232,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
     };
 
     try {
-      const res = await fetch('/api/history', {
+      const res = await apiFetch('/api/history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newSession),
@@ -262,7 +263,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
   const handleDownloadFullBackup = async () => {
     setIsBackingUp(true);
     try {
-      const res = await fetch('/api/db/backup');
+      const res = await apiFetch('/api/db/backup');
       if (!res.ok) throw new Error('Erreur sauvegarde');
       const data = await res.json();
       const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2));

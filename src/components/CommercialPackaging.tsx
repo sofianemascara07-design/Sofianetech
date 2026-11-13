@@ -32,10 +32,14 @@ import {
   Radio,
   Zap,
   CheckCircle,
-  HelpCircle
+  HelpCircle,
+  Camera,
+  Server,
+  Terminal
 } from 'lucide-react';
 import { Vehicle } from '../types/automotive';
 import { VEHICLE_PRESETS } from '../data/mockVehicles';
+import { getBackendBaseUrl, setBackendBaseUrl } from '../utils/apiBridge';
 
 interface CommercialPackagingProps {
   appUrl: string;
@@ -56,8 +60,15 @@ export const CommercialPackaging: React.FC<CommercialPackagingProps> = ({
   const [copiedKey, setCopiedKey] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedPitch, setCopiedPitch] = useState(false);
+  const [copiedTermux, setCopiedTermux] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [pitchLanguage, setPitchLanguage] = useState<'fr' | 'ar'>('fr');
+
+  // Firebase Hosting + Render Backend Sync State
+  const [activeHostingTarget, setActiveHostingTarget] = useState<'firebase' | 'cloud'>('firebase');
+  const [renderUrlInput, setRenderUrlInput] = useState<string>(() => getBackendBaseUrl());
+  const [backendStatusMsg, setBackendStatusMsg] = useState<string | null>(null);
+  const [isTestingBackend, setIsTestingBackend] = useState(false);
 
   // ROI Business Simulator States (Adjustable by user / investor / garagiste)
   const [monthlyChineseFlash, setMonthlyChineseFlash] = useState<number>(6); // 20,000 DZD each
@@ -69,7 +80,13 @@ export const CommercialPackaging: React.FC<CommercialPackagingProps> = ({
   // SaaS Creator Revenue States (Selling licenses to garages across 58 wilayas)
   const [targetGaragesCount, setTargetGaragesCount] = useState<number>(20);
 
-  const sharedAppUrl = 'https://ais-pre-kd2bgrq3vtrufter4hwxrg-988212701770.europe-west2.run.app';
+  const firebaseAppUrl = 'https://autoprodz-a7071.web.app';
+  const cloudRunAppUrl = appUrl || 'https://ais-pre-kd2bgrq3vtrufter4hwxrg-988212701770.europe-west2.run.app';
+  const sharedAppUrl = activeHostingTarget === 'firebase' ? firebaseAppUrl : cloudRunAppUrl;
+
+  const termuxDeployCmd = renderUrlInput.trim()
+    ? `rm -rf dist && VITE_API_URL="${renderUrlInput.trim().replace(/\/+$/, '')}" npm run build && firebase deploy --only hosting --project autoprodz-a7071`
+    : `rm -rf dist && npm run build && firebase deploy --only hosting --project autoprodz-a7071`;
 
   // Pitch messages formatted for professional outreach
   const pitchMessages = {
@@ -118,7 +135,7 @@ Testez la démo en direct sur votre micro ou votre smartphone en cliquant sur le
     setCopiedKey(false);
   };
 
-  const handleCopy = (text: string, type: 'key' | 'url' | 'pitch') => {
+  const handleCopy = (text: string, type: 'key' | 'url' | 'pitch' | 'termux') => {
     navigator.clipboard.writeText(text);
     if (type === 'key') {
       setCopiedKey(true);
@@ -126,25 +143,59 @@ Testez la démo en direct sur votre micro ou votre smartphone en cliquant sur le
     } else if (type === 'url') {
       setCopiedUrl(true);
       setTimeout(() => setCopiedUrl(false), 2500);
+    } else if (type === 'termux') {
+      setCopiedTermux(true);
+      setTimeout(() => setCopiedTermux(false), 2500);
     } else {
       setCopiedPitch(true);
       setTimeout(() => setCopiedPitch(false), 2500);
     }
   };
 
+  const handleSaveAndTestRenderBackend = async () => {
+    const clean = setBackendBaseUrl(renderUrlInput);
+    setRenderUrlInput(clean);
+    setIsTestingBackend(true);
+    setBackendStatusMsg(null);
+    try {
+      const target = clean ? `${clean}/api/health` : '/api/health';
+      const res = await fetch(target);
+      const data = await res.json();
+      if (data?.status === 'ok') {
+        setBackendStatusMsg(`✅ Connecté (${data.version}) · Modules actifs : ${(data.features || []).join(', ')}`);
+      } else {
+        setBackendStatusMsg('⚠️ Réponse reçue mais format inattendu.');
+      }
+    } catch {
+      setBackendStatusMsg('❌ Serveur Render injoignable (vérifiez l\'URL https://...onrender.com ou attendez le réveil Render).');
+    } finally {
+      setIsTestingBackend(false);
+    }
+  };
+
+  const openExternalLink = (url: string) => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
   const handleShareWhatsApp = () => {
     const text = encodeURIComponent(pitchMessages[pitchLanguage]);
-    window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
+    openExternalLink(`https://api.whatsapp.com/send?text=${text}`);
   };
 
   const handleShareEmail = () => {
     const subject = encodeURIComponent('Démonstration Logiciel AutoPro Diagnostic & Flash DZ');
     const body = encodeURIComponent(pitchMessages[pitchLanguage]);
-    window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+    openExternalLink(`mailto:?subject=${subject}&body=${body}`);
   };
 
   // Quick 1-click guided demo scenarios
-  const launchDemoScenario = (scenarioId: 'fiat_doblo' | 'geely_flash' | 'chinese_tablet' | 'smartech_bridge') => {
+  const launchDemoScenario = (scenarioId: 'fiat_doblo' | 'geely_flash' | 'chinese_tablet' | 'smartech_bridge' | 'cameras_adas') => {
     if (!onSelectTab) return;
 
     if (scenarioId === 'fiat_doblo') {
@@ -159,6 +210,8 @@ Testez la démo en direct sur votre micro ou votre smartphone en cliquant sur le
       onSelectTab('chinese_flasher');
     } else if (scenarioId === 'smartech_bridge') {
       onSelectTab('smartech');
+    } else if (scenarioId === 'cameras_adas') {
+      onSelectTab('cameras');
     }
   };
 
@@ -263,7 +316,26 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
             </p>
           </div>
 
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 shrink-0 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0 w-full lg:w-auto">
+            <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
+              <button
+                onClick={() => setActiveHostingTarget('firebase')}
+                className={`px-2.5 py-1.5 rounded-lg font-bold cursor-pointer transition-colors ${
+                  activeHostingTarget === 'firebase' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Firebase Hosting
+              </button>
+              <button
+                onClick={() => setActiveHostingTarget('cloud')}
+                className={`px-2.5 py-1.5 rounded-lg font-bold cursor-pointer transition-colors ${
+                  activeHostingTarget === 'cloud' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Serveur Cloud
+              </button>
+            </div>
+
             <button
               onClick={() => handleCopy(sharedAppUrl, 'url')}
               className="flex-1 sm:flex-none px-4 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
@@ -993,6 +1065,95 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
                   <span>Lancer Démo Smartech DZ</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
+              </div>
+            </div>
+
+            {/* Demo Scenario 5 Banner: ADAS & 360 Cameras */}
+            <div className="p-4 rounded-xl bg-gradient-to-r from-cyan-950/50 to-slate-950 border border-cyan-700/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0">
+                  <Camera className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-white">
+                    Cas Atelier #5 : Caméras Existantes Véhicule &amp; Calibration ADAS 360°
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Testez le flux Recul, 360° Bird-View, Vision Nocturne IR, Enregistrement DVR et Calibration ECU 0x742 depuis la tablette.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => launchDemoScenario('cameras_adas')}
+                className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>Ouvrir Caméras &amp; ADAS</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Firebase Hosting (autoprodz-a7071.web.app) & Render Backend Sync Panel */}
+          <div className="p-5 rounded-2xl bg-slate-900/80 border border-amber-500/40 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
+                  <Server className="w-4 h-4 text-amber-400" />
+                  <span>Synchronisation Firebase Hosting (autoprodz-a7071.web.app) &amp; Backend Render</span>
+                </h2>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Les fichiers <code className="text-cyan-300">firebase.json</code>, <code className="text-cyan-300">.firebaserc</code>, <code className="text-cyan-300">render.yaml</code> et le pont API CORS sont prêts.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+              {/* Render Backend Connector */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                <label className="text-[11px] font-bold text-cyan-300 block">
+                  URL de votre Backend Render (ex: https://autopro-dz-backend.onrender.com) :
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="url"
+                    placeholder="https://votre-backend.onrender.com"
+                    value={renderUrlInput}
+                    onChange={(e) => setRenderUrlInput(e.target.value)}
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-500"
+                  />
+                  <button
+                    onClick={handleSaveAndTestRenderBackend}
+                    disabled={isTestingBackend}
+                    className="px-3.5 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-lg cursor-pointer shrink-0 disabled:opacity-50"
+                  >
+                    {isTestingBackend ? 'Test...' : 'Lier & Tester'}
+                  </button>
+                </div>
+                {backendStatusMsg && (
+                  <div className="p-2 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-slate-200">
+                    {backendStatusMsg}
+                  </div>
+                )}
+              </div>
+
+              {/* Termux 1-Command Deploy */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                    <Terminal className="w-3.5 h-3.5" />
+                    <span>Commande Termux pour mettre à jour autoprodz-a7071.web.app :</span>
+                  </span>
+                  <button
+                    onClick={() => handleCopy(termuxDeployCmd, 'termux')}
+                    className="text-[11px] text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer font-semibold"
+                  >
+                    {copiedTermux ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedTermux ? 'Copié' : 'Copier'}</span>
+                  </button>
+                </div>
+                <pre className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap break-all">
+                  {termuxDeployCmd}
+                </pre>
               </div>
             </div>
           </div>

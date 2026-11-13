@@ -20,6 +20,7 @@ import { LicenseModal } from './components/LicenseModal';
 import { VoiceAssistantModal } from './components/VoiceAssistantModal';
 import { INITIAL_DTC_CODES } from './data/mockVehicles';
 import { ShieldCheck, Cpu, HardDrive } from 'lucide-react';
+import { apiFetch } from './utils/apiBridge';
 
 export default function App() {
   const [licenseSession, setLicenseSession] = useState<LicenseSession | null>(() => {
@@ -62,7 +63,7 @@ export default function App() {
 
   useEffect(() => {
     if (licenseSession?.isValid) {
-      fetch('/api/clients/activity', {
+      apiFetch('/api/clients/activity', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

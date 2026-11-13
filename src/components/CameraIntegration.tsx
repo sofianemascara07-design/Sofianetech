@@ -27,6 +27,7 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import { Vehicle, ConnectionMode, VehicleCameraSystem } from '../types/automotive';
+import { apiFetch } from '../utils/apiBridge';
 
 interface CameraIntegrationProps {
   selectedVehicle: Vehicle;
@@ -202,7 +203,7 @@ export const CameraIntegration: React.FC<CameraIntegrationProps> = ({
     setCameraState(nextState);
 
     try {
-      const res = await fetch('/api/cameras/command', {
+      const res = await apiFetch('/api/cameras/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

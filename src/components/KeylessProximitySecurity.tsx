@@ -26,6 +26,7 @@ import {
   PowerOff
 } from 'lucide-react';
 import { Vehicle, ConnectionMode, DigitalKey } from '../types/automotive';
+import { apiFetch } from '../utils/apiBridge';
 
 interface KeylessProximitySecurityProps {
   selectedVehicle: Vehicle;
@@ -100,7 +101,7 @@ export const KeylessProximitySecurity: React.FC<KeylessProximitySecurityProps> =
     const threshold = digitalKey.proximityThresholdMeters;
 
     try {
-      const response = await fetch('/api/keyless/proximity-update', {
+      const response = await apiFetch('/api/keyless/proximity-update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -140,7 +141,7 @@ export const KeylessProximitySecurity: React.FC<KeylessProximitySecurityProps> =
     setPinFeedback(null);
 
     try {
-      const response = await fetch('/api/keyless/emergency-action', {
+      const response = await apiFetch('/api/keyless/emergency-action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -169,7 +170,7 @@ export const KeylessProximitySecurity: React.FC<KeylessProximitySecurityProps> =
   // 2. Revoke Lost Key (Perte de clé / smartphone)
   const handleRevokeLostKey = async () => {
     try {
-      const response = await fetch('/api/keyless/emergency-action', {
+      const response = await apiFetch('/api/keyless/emergency-action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actionType: 'revoke_key' }),
@@ -193,7 +194,7 @@ export const KeylessProximitySecurity: React.FC<KeylessProximitySecurityProps> =
     setKillSwitchLoading(true);
     const nextState = !digitalKey.isEngineBlocked;
     try {
-      const response = await fetch('/api/keyless/emergency-action', {
+      const response = await apiFetch('/api/keyless/emergency-action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -222,7 +223,7 @@ export const KeylessProximitySecurity: React.FC<KeylessProximitySecurityProps> =
   const handleTransferOwnership = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch('/api/keyless/emergency-action', {
+      const response = await apiFetch('/api/keyless/emergency-action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

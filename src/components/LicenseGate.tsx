@@ -19,6 +19,7 @@ import {
   Phone
 } from 'lucide-react';
 import { LicenseSession } from '../types/automotive';
+import { apiFetch } from '../utils/apiBridge';
 
 interface LicenseGateProps {
   onLicenseActivated: (session: LicenseSession) => void;
@@ -70,7 +71,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({ onLicenseActivated }) 
     setSuccessMessage(null);
 
     try {
-      const response = await fetch('/api/license/verify', {
+      const response = await apiFetch('/api/license/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

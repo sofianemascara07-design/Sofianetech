@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { TranslationItem, ConnectionMode } from '../types/automotive';
 import { SAMPLE_STRINGS_TO_TRANSLATE } from '../data/mockVehicles';
 import { Languages, Sparkles, Download, CheckCircle2, Send, Tablet, RefreshCw, FileCode } from 'lucide-react';
+import { apiFetch } from '../utils/apiBridge';
 
 interface AppTranslatorProps {
   connectionMode: ConnectionMode;
@@ -37,7 +38,7 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
     setAiNotes(null);
 
     try {
-      const res = await fetch('/api/translate/ai', {
+      const res = await apiFetch('/api/translate/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

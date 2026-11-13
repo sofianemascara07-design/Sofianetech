@@ -27,6 +27,7 @@ import {
   Mic
 } from 'lucide-react';
 import { Vehicle, ConnectionMode, ComfortState } from '../types/automotive';
+import { apiFetch } from '../utils/apiBridge';
 
 interface BodyComfortControlProps {
   selectedVehicle: Vehicle;
@@ -101,7 +102,7 @@ export const BodyComfortControl: React.FC<BodyComfortControlProps> = ({
   const sendBcmCommand = async (commandType: string, parameters: any = {}, customLog?: string) => {
     setExecutingCommand(commandType);
     try {
-      const response = await fetch('/api/bcm/command', {
+      const response = await apiFetch('/api/bcm/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

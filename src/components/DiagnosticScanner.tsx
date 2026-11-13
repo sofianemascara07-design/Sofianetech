@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Vehicle, DtcCode } from '../types/automotive';
 import { VEHICLE_PRESETS, INITIAL_DTC_CODES } from '../data/mockVehicles';
 import { AlertCircle, CheckCircle2, RotateCcw, Wrench, Sparkles, Activity, ShieldAlert, Cpu, Database, History, Save } from 'lucide-react';
+import { apiFetch } from '../utils/apiBridge';
 
 interface DiagnosticScannerProps {
   selectedVehicle: Vehicle;
@@ -108,7 +109,7 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
   const handleAskAiMechanic = async () => {
     setAiLoading(true);
     try {
-      const res = await fetch('/api/diagnose/ai', {
+      const res = await apiFetch('/api/diagnose/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -165,7 +166,7 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
         repairCompleted: false,
       };
 
-      const res = await fetch('/api/history', {
+      const res = await apiFetch('/api/history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

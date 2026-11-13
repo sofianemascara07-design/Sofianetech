@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Vehicle, FlashStage } from '../types/automotive';
 import { FLASH_STAGES, VEHICLE_PRESETS } from '../data/mockVehicles';
 import { Zap, ShieldCheck, AlertTriangle, Download, Upload, CheckCircle2, Cpu, Sparkles, HardDrive, FileText } from 'lucide-react';
+import { apiFetch } from '../utils/apiBridge';
 
 interface EcuFlashingProps {
   selectedVehicle: Vehicle;
@@ -107,7 +108,7 @@ Taille: 2048 KB (Flash Micro TC1797)`;
   const handleAskAiTuning = async () => {
     setAiLoading(true);
     try {
-      const res = await fetch('/api/flash/recommendations', {
+      const res = await apiFetch('/api/flash/recommendations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

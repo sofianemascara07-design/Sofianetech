@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { SmartechDzConfig, SmartechDzPlugin, Vehicle, DtcCode, ConnectionMode } from '../types/automotive';
 import { Cpu, CheckCircle2, RefreshCw, Zap, ShieldCheck, Languages, ExternalLink, HardDrive, Smartphone, Radio, ArrowRight, Download } from 'lucide-react';
+import { apiFetch } from '../utils/apiBridge';
 
 interface SmartechDzBridgeProps {
   selectedVehicle: Vehicle;
@@ -86,7 +87,7 @@ export const SmartechDzBridge: React.FC<SmartechDzBridgeProps> = ({
     ]);
 
     try {
-      const res = await fetch('/api/smartech-dz/sync', {
+      const res = await apiFetch('/api/smartech-dz/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -127,7 +128,7 @@ export const SmartechDzBridge: React.FC<SmartechDzBridgeProps> = ({
     ]);
 
     try {
-      const res = await fetch('/api/smartech-dz/inject-plugin', {
+      const res = await apiFetch('/api/smartech-dz/inject-plugin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
