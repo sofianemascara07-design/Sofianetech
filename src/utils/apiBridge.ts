@@ -1,5 +1,16 @@
 const STORAGE_KEY = 'autopro_render_backend_url';
 
+function isFullStackSelfHost(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location?.hostname || '';
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host.endsWith('.run.app') ||
+    host.endsWith('.onrender.com')
+  );
+}
+
 export function getBackendBaseUrl(): string {
   try {
     if (typeof window !== 'undefined' && window.location?.search) {
@@ -13,6 +24,12 @@ export function getBackendBaseUrl(): string {
     }
   } catch {
     // Ignore URL/storage errors
+  }
+
+  // On AI Studio Cloud Run (.run.app), Render (.onrender.com), or localhost,
+  // ALWAYS use the co-located Express backend so a stale localStorage URL never breaks /api calls.
+  if (isFullStackSelfHost()) {
+    return '';
   }
 
   const envUrl = (import.meta as any).env?.VITE_API_URL;
@@ -62,7 +79,12 @@ export function apiUrl(path: string): string {
 }
 
 export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
-  return globalThis.fetch(apiUrl(input), init);
+  const target = apiUrl(input);
+  const isCrossOrigin = target.startsWith('http://') || target.startsWith('https://');
+  return globalThis.fetch(target, {
+    credentials: isCrossOrigin ? 'omit' : 'same-origin',
+    ...init,
+  });
 }
 
 export function installApiBridge(): void {

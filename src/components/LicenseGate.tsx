@@ -15,10 +15,13 @@ import {
   Clock,
   UserCog,
   Server,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { LicenseSession } from '../types/automotive';
 import {
   apiFetch,
+  apiUrl,
   getBackendBaseUrl,
   isStaticFirebaseWithoutBackend,
   setBackendBaseUrl,
@@ -37,6 +40,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
   const [clientName, setClientName] = useState('');
   const [licenseKey, setLicenseKey] = useState('');
   const [adminPasscode, setAdminPasscode] = useState('');
+  const [showAdminPasscode, setShowAdminPasscode] = useState(false);
   const [hwid, setHwid] = useState('');
   const [copiedHwid, setCopiedHwid] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -45,7 +49,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
   const [demoLinksEnabled, setDemoLinksEnabled] = useState<boolean>(false);
   const [defaultDemoMinutes, setDefaultDemoMinutes] = useState<number>(10);
 
-  // Render Backend Config helper (especially for Firebase Hosting autoprodz-a7071.web.app)
+  // Render Backend Config helper (for Firebase Hosting autoprodz-a7071.web.app)
   const [renderUrlInput, setRenderUrlInput] = useState<string>(() => getBackendBaseUrl());
   const [showRenderConfig, setShowRenderConfig] = useState<boolean>(() => isStaticFirebaseWithoutBackend());
   const [renderStatusMsg, setRenderStatusMsg] = useState<string | null>(null);
@@ -119,6 +123,24 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
     }
   };
 
+  const postVerifyRequest = async (payload: Record<string, unknown>) => {
+    try {
+      return await apiFetch('/api/license/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      // Automatic single retry (handles Render free-tier cold start or transient mobile 4G drop)
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      return await apiFetch('/api/license/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
+  };
+
   const handleActivate = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
@@ -137,24 +159,21 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
     setIsVerifying(true);
 
     try {
-      const response = await apiFetch('/api/license/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          authMode === 'admin'
-            ? {
-                mode: 'admin',
-                adminPasscode: adminPasscode.trim(),
-                hwid,
-              }
-            : {
-                mode: 'client',
-                key: licenseKey.trim(),
-                clientName: clientName.trim() || 'Client AutoPro DZ',
-                hwid,
-              }
-        ),
-      });
+      const payload =
+        authMode === 'admin'
+          ? {
+              mode: 'admin',
+              adminPasscode: adminPasscode.trim(),
+              hwid,
+            }
+          : {
+              mode: 'client',
+              key: licenseKey.trim(),
+              clientName: clientName.trim() || 'Client AutoPro DZ',
+              hwid,
+            };
+
+      const response = await postVerifyRequest(payload);
 
       const rawText = await response.text();
       if (rawText.trim().startsWith('<')) {
@@ -183,8 +202,9 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
         setErrorMessage(data.message || 'Accès refusé. Clé invalide, suspendue ou démonstration verrouillée.');
       }
     } catch {
+      const targetUrl = apiUrl('/api/license/verify');
       setErrorMessage(
-        'Connexion au serveur Render/API impossible. Vérifiez votre connexion internet ou l\'URL Render.'
+        `Connexion au serveur API impossible (${targetUrl}). Si vous êtes sur Render gratuit, attendez 30s qu'il se réveille puis réessayez, ou vérifiez votre connexion.`
       );
     } finally {
       setIsVerifying(false);
@@ -374,14 +394,27 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
                 <label className="block text-xs font-semibold text-amber-300 mb-1.5">
                   Code Secret Administrateur :
                 </label>
-                <input
-                  type="password"
-                  placeholder="Entrez votre code secret Admin"
-                  value={adminPasscode}
-                  onChange={(e) => setAdminPasscode(e.target.value)}
-                  autoComplete="current-password"
-                  className="w-full bg-slate-950 border border-amber-500/40 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono tracking-wider placeholder-slate-600 focus:outline-none focus:border-amber-400 transition-colors"
-                />
+                <div className="relative">
+                  <input
+                    type={showAdminPasscode ? 'text' : 'password'}
+                    placeholder="Entrez votre code secret Admin"
+                    value={adminPasscode}
+                    onChange={(e) => setAdminPasscode(e.target.value)}
+                    autoComplete="current-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="w-full bg-slate-950 border border-amber-500/40 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-white font-mono tracking-wider placeholder-slate-600 focus:outline-none focus:border-amber-400 transition-colors"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminPasscode(prev => !prev)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-amber-300 cursor-pointer"
+                    title={showAdminPasscode ? 'Masquer' : 'Afficher le mot de passe'}
+                  >
+                    {showAdminPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               {errorMessage && (
