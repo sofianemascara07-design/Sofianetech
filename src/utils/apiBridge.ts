@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'autopro_render_backend_url';
+export const DEFAULT_RENDER_BACKEND_URL = 'https://autopro-suitebacken.onrender.com';
 
 function isFullStackSelfHost(): boolean {
   if (typeof window === 'undefined') return false;
@@ -46,7 +47,7 @@ export function getBackendBaseUrl(): string {
     // Ignore storage errors
   }
 
-  return '';
+  return DEFAULT_RENDER_BACKEND_URL;
 }
 
 export function setBackendBaseUrl(url: string): string {

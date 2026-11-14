@@ -1172,6 +1172,14 @@ app.post('/api/cameras/command', (req, res) => {
   });
 });
 
+// Ensure unmatched /api/* routes always return JSON 404 instead of HTML
+app.all('/api/*', (req, res) => {
+  return res.status(404).json({
+    success: false,
+    error: `Route API introuvable : ${req.method} ${req.originalUrl}`,
+  });
+});
+
 // Mount Vite or static files
 async function startServer() {
   if (process.env.NODE_ENV === 'production') {

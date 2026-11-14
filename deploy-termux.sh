@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+DEFAULT_RENDER_URL="https://autopro-suitebacken.onrender.com"
+
 echo "============================================================"
 echo "  AUTOPRO DZ - DEPLOIEMENT TERMUX -> RENDER & FIREBASE"
 echo "  Projet Firebase : autoprodz-a7071.web.app"
@@ -12,30 +14,21 @@ if [ -d ".git" ]; then
   git pull --ff-only || true
 fi
 
-# 1. Resolve Render Backend URL (arg $1 > env VITE_API_URL > .env.production.local)
+# 1. Resolve Render Backend URL (arg $1 > env VITE_API_URL > .env.production.local > DEFAULT_RENDER_URL)
 if [ -n "$1" ]; then
   export VITE_API_URL="${1%/}"
-  echo "VITE_API_URL=$VITE_API_URL" > .env.production.local
-  echo "[INFO] URL Backend Render enregistree : $VITE_API_URL"
-elif [ -n "$VITE_API_URL" ]; then
-  export VITE_API_URL="${VITE_API_URL%/}"
-  echo "VITE_API_URL=$VITE_API_URL" > .env.production.local
-elif [ -f ".env.production.local" ]; then
+elif [ -z "$VITE_API_URL" ] && [ -f ".env.production.local" ]; then
   set -a
   . ./.env.production.local
   set +a
-  echo "[INFO] URL Backend Render chargee depuis .env.production.local : $VITE_API_URL"
-elif [ -t 0 ]; then
-  echo ""
-  echo "[IMPORTANT] Pour que Firebase Hosting (autoprodz-a7071.web.app) communique"
-  echo "avec votre serveur Render (Admin, Abonnés, Verrouillage Démos) :"
-  printf "Entrez l'URL de votre backend Render (ex: https://autopro-dz-backend.onrender.com) : "
-  read -r INPUT_RENDER_URL
-  if [ -n "$INPUT_RENDER_URL" ]; then
-    export VITE_API_URL="${INPUT_RENDER_URL%/}"
-    echo "VITE_API_URL=$VITE_API_URL" > .env.production.local
-  fi
 fi
+
+if [ -z "$VITE_API_URL" ]; then
+  export VITE_API_URL="$DEFAULT_RENDER_URL"
+fi
+
+echo "VITE_API_URL=$VITE_API_URL" > .env.production.local
+echo "[INFO] Backend Render lie : $VITE_API_URL"
 
 echo "[1/4] Nettoyage de l'ancien build (dist)..."
 rm -rf dist
