@@ -1,0 +1,41 @@
+[
+  {
+    "id": "SUB-DZ-001",
+    "clientName": "Garage Mascara Auto Pro",
+    "phone": "0557767804",
+    "licenseKey": "AP-DZ26-MST-MASC-2026-8801",
+    "boundHwid": null,
+    "tier": "master",
+    "status": "active",
+    "maxDemoMinutes": null,
+    "demoExpiresAt": null,
+    "createdAt": "2026-11-10T08:00:00Z",
+    "notes": "Abonné officiel Master DZ (Illimité)"
+  },
+  {
+    "id": "SUB-DZ-002",
+    "clientName": "Tafraoui Diag & Flash Oran",
+    "phone": "0661223344",
+    "licenseKey": "AP-DZ26-STG-ORAN-3100-2026",
+    "boundHwid": "HWID-DZ-3109-F188-9A11-PC",
+    "tier": "reprog",
+    "status": "active",
+    "maxDemoMinutes": null,
+    "demoExpiresAt": null,
+    "createdAt": "2026-11-11T10:30:00Z",
+    "notes": "Abonné Reprog Oran"
+  },
+  {
+    "id": "SUB-DZ-003",
+    "clientName": "Ancien Lien Démo Partagé (Bloqué)",
+    "phone": "",
+    "licenseKey": "AP-DZ26-MST-9882-7EAB-5A63",
+    "boundHwid": null,
+    "tier": "demo",
+    "status": "revoked",
+    "maxDemoMinutes": 10,
+    "demoExpiresAt": "2026-11-12T00:00:00Z",
+    "createdAt": "2026-11-01T00:00:00Z",
+    "notes": "Désactivé globalement — ancienne clé démo sans limite bloquée"
+  }
+]

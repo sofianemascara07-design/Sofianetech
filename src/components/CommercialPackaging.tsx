@@ -45,18 +45,20 @@ interface CommercialPackagingProps {
   appUrl: string;
   onSelectTab?: (tab: any) => void;
   onSelectVehicle?: (vehicle: Vehicle) => void;
+  isAdmin?: boolean;
 }
 
 export const CommercialPackaging: React.FC<CommercialPackagingProps> = ({
   appUrl,
   onSelectTab,
   onSelectVehicle,
+  isAdmin = false,
 }) => {
   const [activeSection, setActiveSection] = useState<'share' | 'simulator' | 'feasibility' | 'licenses'>('simulator');
   const [workshopName, setWorkshopName] = useState('Garage Auto Tech Mascara');
   const [hwid, setHwid] = useState('HWID-DZ-9882-1270-1770-WIN11');
   const [licenseType, setLicenseType] = useState<'master' | 'reprog' | 'standard'>('master');
-  const [generatedKey, setGeneratedKey] = useState<string>('AP-DZ26-MST-9882-7EAB-5A63');
+  const [generatedKey, setGeneratedKey] = useState<string>('Générer depuis la console Admin & Abonnés');
   const [copiedKey, setCopiedKey] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedPitch, setCopiedPitch] = useState(false);
@@ -291,18 +293,19 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
 
   return (
     <div className="space-y-6">
-      {/* Top Banner: Sharing & Live Demonstration Showcase */}
+      {/* Top Banner: Only shown for Admin (clients cannot share unlocked demo links) */}
+      {isAdmin && (
       <div className="p-5 rounded-2xl bg-gradient-to-r from-cyan-950/60 via-slate-900/90 to-blue-950/60 border border-cyan-500/40 shadow-xl relative overflow-hidden">
         <div className="absolute top-0 right-0 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-5">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                Lien Public Actif &amp; Partageable
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                Lien Protégé par Pass Démo Limité
               </span>
               <span className="text-xs text-slate-400 font-medium">
-                Accès instantané sans installation préalable
+                Clé Admin ou Pass Démo requis à l'ouverture
               </span>
             </div>
 
@@ -443,6 +446,7 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
           </div>
         )}
       </div>
+      )}
 
       {/* Sub Navigation Bar for Commercial & Feasibility Hub */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
@@ -482,17 +486,19 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
           <span>Démos Guidées &amp; WhatsApp</span>
         </button>
 
-        <button
-          onClick={() => setActiveSection('licenses')}
-          className={`px-4 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
-            activeSection === 'licenses'
-              ? 'bg-purple-500 text-slate-950 shadow-md ring-2 ring-purple-400/30'
-              : 'bg-slate-900 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
-          }`}
-        >
-          <Key className="w-4 h-4" />
-          <span>Générateur de Licences &amp; Fichiers Micro PC</span>
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setActiveSection('licenses')}
+            className={`px-4 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+              activeSection === 'licenses'
+                ? 'bg-purple-500 text-slate-950 shadow-md ring-2 ring-purple-400/30'
+                : 'bg-slate-900 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
+            }`}
+          >
+            <Key className="w-4 h-4" />
+            <span>Installateurs PC &amp; Certificats (Admin)</span>
+          </button>
+        )}
       </div>
 
       {/* SECTION 1: INTERACTIVE ROI SIMULATOR & BUSINESS PLAN DZ */}
@@ -1230,8 +1236,8 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
         </div>
       )}
 
-      {/* SECTION 4: LICENSES & WINDOWS PACKAGES */}
-      {activeSection === 'licenses' && (
+      {/* SECTION 4: LICENSES & WINDOWS PACKAGES (ADMIN ONLY) */}
+      {isAdmin && activeSection === 'licenses' && (
         <div className="space-y-6 animate-in fade-in">
 
       {/* Commercial Pitch & Workshop ROI Arguments (Why Garagistes Buy) */}

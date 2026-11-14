@@ -20,7 +20,7 @@ const port =
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-passcode');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
@@ -687,83 +687,260 @@ app.post('/api/keyless/emergency-action', (req, res) => {
 });
 
 // API: Commercial License Verification & Activation Gate
+// API: Cryptographic License & Admin Verification (Strict Subscriber Whitelist + Limited Demo)
 app.post('/api/license/verify', (req, res) => {
-  const { key, clientName, hwid } = req.body;
-  if (!key || typeof key !== 'string') {
-    return res.status(400).json({ valid: false, message: 'Clé d\'activation manquante' });
-  }
+  const { key, clientName, hwid, adminPasscode, mode } = req.body;
 
-  const cleanKey = key.trim().toUpperCase();
+  // 1. Admin Direct Access (Sofiane Master Control)
+  if (mode === 'admin' || adminPasscode) {
+    if (!saasDatabase.verifyAdminPasscode(adminPasscode || key || '')) {
+      return res.status(403).json({
+        valid: false,
+        message: 'Mot de passe Administrateur incorrect.',
+      });
+    }
 
-  // Master presets & algorithmic keys
-  const isMasterVip = cleanKey === 'AP-SOFIANE-MASTER-2026-VIP' || cleanKey === 'AP-DZ26-MST-9882-7EAB-5A63';
-  const isReprogPreset = cleanKey === 'AP-DZ26-STG-COOL-7788-2026';
-  const isStdPreset = cleanKey === 'AP-DZ26-STD-ORAN-3100-2026';
+    const adminKey = 'AP-ADMIN-SOFIANE-MASTER';
+    saasDatabase.logActivity({
+      clientName: 'Admin Sofiane Mascara',
+      hwid: hwid || 'ADMIN-CONSOLE',
+      actionType: 'activation',
+      actionDetails: 'Connexion Administrateur Principal (Accès Ouvert Complet)',
+      locationCity: 'Mascara, Algérie',
+      durationMinutes: 1,
+    });
 
-  // Format regex: AP-DZ26-(MST|STG|STD)-[A-Z0-9]{4}-[A-Z0-9]{4}-[0-9]{4} or AP-DZ-...
-  const pattern = /^AP-(DZ26|DZ)-(MST|STG|STD)-[A-Z0-9]{4}-[A-Z0-9]{4}-[0-9]{4}$/;
-  const isFormatMatch = pattern.test(cleanKey);
-
-  if (!isMasterVip && !isReprogPreset && !isStdPreset && !isFormatMatch) {
-    return res.status(403).json({
-      valid: false,
-      message: 'Clé d\'activation invalide ou non enregistrée sur le serveur de licences AutoPro DZ.',
+    return res.json({
+      valid: true,
+      message: 'Accès Administrateur complet ouvert.',
+      license: {
+        key: adminKey,
+        clientName: 'Admin Sofiane (Propriétaire)',
+        hwid: hwid || 'ADMIN-MASTER',
+        tier: 'admin',
+        tierLabel: 'ADMIN PROPRIÉTAIRE · Accès Ouvert & Contrôle Abonnés',
+        activatedAt: new Date().toISOString(),
+        expiresAt: 'Illimitée (Administrateur)',
+        demoExpiresAt: null,
+        isValid: true,
+        isAdmin: true,
+        signature: 'SIG-ADMIN-SOFIANE-DZ-ROOT',
+        allowedModules: [
+          'diagnostic',
+          'history',
+          'cameras',
+          'flash',
+          'comfort',
+          'keyless',
+          'chinese_flasher',
+          'smartech',
+          'connection',
+          'apps',
+          'translator',
+          'packaging',
+          'admin',
+        ],
+      },
     });
   }
 
-  const tier = (cleanKey.includes('-MST') || cleanKey.includes('MASTER') || cleanKey.includes('VIP'))
-    ? 'master'
-    : (cleanKey.includes('-STG') ? 'reprog' : 'standard');
+  // 2. Client / Subscriber / Limited Demo Pass Verification
+  if (!key || typeof key !== 'string') {
+    return res.status(400).json({ valid: false, message: 'Clé d\'activation ou Pass Démo manquant.' });
+  }
 
-  const tierLabel = tier === 'master'
-    ? 'Pack MASTER DZ (Tous Modules Débloqués : Diag, Flash, Smartech DZ, Écrans Chinois)'
-    : (tier === 'reprog' ? 'Pack REPROG PRO (Chiptuning & Flash Calculateur)' : 'Pack DIAGNOSTIC STD (Diagnostic Multimarque)');
+  const check = saasDatabase.verifyLicenseOrDemo({
+    key,
+    hwid,
+    clientName,
+  });
 
-  const allowedModules = tier === 'master'
-    ? ['diagnostic', 'flash', 'chinese_flasher', 'smartech', 'connection', 'apps', 'translator', 'packaging']
-    : tier === 'reprog'
-      ? ['diagnostic', 'flash', 'chinese_flasher', 'connection', 'translator']
-      : ['diagnostic', 'connection', 'apps', 'translator'];
+  if (!check.valid || !check.subscriber) {
+    return res.status(403).json({
+      valid: false,
+      message: check.message,
+    });
+  }
 
-  const signature = `SIG-${Buffer.from(`${cleanKey}:${clientName || 'Atelier'}:${hwid || 'HWID'}:AUTOPRO-DZ-LIC-2026`).toString('base64').substring(0, 24)}`;
+  const sub = check.subscriber;
+  const tier = sub.tier;
 
-  // Log client license activation in SaaS Activity Tracker
+  const tierLabel =
+    tier === 'master'
+      ? 'Pack MASTER DZ (Abonné Illimité · Tous Modules)'
+      : tier === 'reprog'
+      ? 'Pack REPROG PRO (Abonné · Flash & Diag)'
+      : tier === 'demo'
+      ? `Pass Démo Limité (${sub.maxDemoMinutes || 10} min max)`
+      : 'Pack DIAGNOSTIC STD (Abonné · Multimarque)';
+
+  const allowedModules =
+    tier === 'master'
+      ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'smartech', 'connection', 'apps', 'translator']
+      : tier === 'reprog'
+      ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'connection', 'translator']
+      : tier === 'demo'
+      ? ['diagnostic', 'cameras', 'history']
+      : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'translator'];
+
+  const signature = `SIG-${Buffer.from(`${sub.licenseKey}:${sub.clientName}:${sub.boundHwid || hwid || 'HWID'}:AUTOPRO-DZ-2026`).toString('base64').substring(0, 24)}`;
+
   saasDatabase.logActivity({
-    clientName: clientName || 'Client Licencié AutoPro DZ',
-    hwid: hwid || 'HWID-AUTO-DETECTED',
+    clientName: sub.clientName,
+    hwid: sub.boundHwid || hwid || 'HWID-AUTO-DETECTED',
     actionType: 'activation',
-    actionDetails: `Activation clé ${cleanKey.substring(0, 14)}... (${tier.toUpperCase()} - Durée Illimitée)`,
+    actionDetails: `${tier === 'demo' ? 'Pass Démo Limité' : 'Abonnement'} activé (${sub.licenseKey.substring(0, 14)}...)`,
     locationCity: 'Algérie (Passerelle DZ)',
     durationMinutes: 1,
   });
 
   return res.json({
     valid: true,
-    message: 'Licence authentifiée avec succès sur le serveur AutoPro DZ',
+    message: check.message,
     license: {
-      key: cleanKey,
-      clientName: clientName || 'Client Licencié AutoPro DZ',
-      hwid: hwid || 'HWID-AUTO-DETECTED',
+      key: sub.licenseKey,
+      clientName: sub.clientName,
+      hwid: sub.boundHwid || hwid || 'HWID-AUTO-DETECTED',
       tier,
       tierLabel,
       activatedAt: new Date().toISOString(),
-      expiresAt: 'À vie (Licence Définitive Atelier)',
+      expiresAt: tier === 'demo' && sub.demoExpiresAt
+        ? `Démo expire à ${new Date(sub.demoExpiresAt).toLocaleTimeString('fr-FR')}`
+        : 'À vie (Abonnement Définitif)',
+      demoExpiresAt: sub.demoExpiresAt || null,
       isValid: true,
+      isAdmin: false,
       signature,
       allowedModules,
     },
   });
 });
 
-// API: Check Current License Status
-app.get('/api/license/status', (_req, res) => {
+// API: Real-time Session Heartbeat & Kill-Switch (kicks out blocked clients or expired demos)
+app.post('/api/license/check-session', (req, res) => {
+  const { key, hwid, isAdmin, activatedAt, adminPasscode } = req.body || {};
+  if (isAdmin && !saasDatabase.verifyAdminPasscode(adminPasscode || '')) {
+    return res.status(403).json({
+      valid: false,
+      blocked: true,
+      reason: 'Session Administrateur expirée ou non authentifiée. Reconnectez-vous en mode Admin.',
+    });
+  }
+  const result = saasDatabase.checkSessionHeartbeat({ key, hwid, isAdmin, activatedAt });
+  if (!result.valid) {
+    return res.status(403).json({
+      valid: false,
+      blocked: true,
+      reason: result.reason,
+    });
+  }
   return res.json({
-    system: 'AutoPro Licensing Server v3.8',
-    status: 'ACTIVE_GUARD',
-    licenseServerRegion: 'Algeria / Oran Gateway',
-    supportContact: 'sofianemascara07@gmail.com',
-    protectionMode: 'HARDWARE_LOCKED_CRYPTOGRAPHIC',
+    valid: true,
+    blocked: false,
+    demoExpiresAt: result.demoExpiresAt || null,
   });
+});
+
+// API: Public License & Demo Lock Status (shows whether free demo is locked)
+app.get('/api/license/status', (_req, res) => {
+  const sec = saasDatabase.getPublicSecuritySettings();
+  return res.json({
+    system: 'AutoPro Licensing Server v4.0 (Whitelist & Anti-Abus)',
+    status: 'STRICT_WHITELIST_LOCKED',
+    demoLinksEnabled: sec.demoLinksEnabled,
+    defaultDemoMinutes: sec.defaultDemoMinutes,
+    supportPhone: '05 57 76 78 04',
+    supportContact: 'sofianemascara07@gmail.com',
+  });
+});
+
+// ==========================================
+// ADMIN CONSOLE APIS (PROTECTED BY ADMIN PASSCODE)
+// ==========================================
+const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const headerPass = req.headers['x-admin-passcode'];
+  const bodyPass = req.body?.adminPasscode;
+  const pass = (typeof headerPass === 'string' ? headerPass : '') || (typeof bodyPass === 'string' ? bodyPass : '');
+  if (!saasDatabase.verifyAdminPasscode(pass)) {
+    return res.status(401).json({ success: false, error: 'Accès Administrateur refusé.' });
+  }
+  return next();
+};
+
+app.get('/api/admin/overview', requireAdmin, (_req, res) => {
+  return res.json({
+    success: true,
+    subscribers: saasDatabase.getSubscribers(),
+    securitySettings: saasDatabase.getPublicSecuritySettings(),
+  });
+});
+
+app.post('/api/admin/subscribers', requireAdmin, (req, res) => {
+  const { clientName, phone, tier, boundHwid, maxDemoMinutes, notes } = req.body;
+  if (!clientName || typeof clientName !== 'string') {
+    return res.status(400).json({ success: false, error: 'Nom du client ou garage requis.' });
+  }
+  const created = saasDatabase.addSubscriber({
+    clientName,
+    phone,
+    tier: tier || 'master',
+    boundHwid,
+    maxDemoMinutes: maxDemoMinutes ? Number(maxDemoMinutes) : null,
+    notes,
+  });
+  return res.status(201).json({ success: true, subscriber: created });
+});
+
+app.patch('/api/admin/subscribers/:id/status', requireAdmin, (req, res) => {
+  const { status, notes } = req.body;
+  if (!['active', 'suspended', 'revoked'].includes(status)) {
+    return res.status(400).json({ success: false, error: 'Statut invalide.' });
+  }
+  const updated = saasDatabase.updateSubscriberStatus(req.params.id, status, notes);
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Abonné introuvable.' });
+  }
+  return res.json({ success: true, subscriber: updated });
+});
+
+app.post('/api/admin/subscribers/:id/reset-hwid', requireAdmin, (req, res) => {
+  const updated = saasDatabase.resetSubscriberHwid(req.params.id);
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Abonné introuvable.' });
+  }
+  return res.json({ success: true, subscriber: updated });
+});
+
+app.delete('/api/admin/subscribers/:id', requireAdmin, (req, res) => {
+  const ok = saasDatabase.deleteSubscriber(req.params.id);
+  if (!ok) {
+    return res.status(404).json({ success: false, error: 'Abonné introuvable.' });
+  }
+  return res.json({ success: true });
+});
+
+app.post('/api/admin/security/revoke-demos', requireAdmin, (_req, res) => {
+  const result = saasDatabase.revokeAllDemosNow();
+  return res.json({
+    success: true,
+    message: `Toutes les démonstrations partagées ont été coupées et verrouillées (${result.revokedCount} pass révoqué(s)).`,
+    ...result,
+  });
+});
+
+app.patch('/api/admin/security', requireAdmin, (req, res) => {
+  const { demoLinksEnabled, defaultDemoMinutes, newAdminPasscode } = req.body;
+  if (newAdminPasscode && typeof newAdminPasscode === 'string') {
+    const ok = saasDatabase.updateAdminPasscode(newAdminPasscode);
+    if (!ok) {
+      return res.status(400).json({ success: false, error: 'Le mot de passe admin doit contenir au moins 4 caractères.' });
+    }
+  }
+  const settings = saasDatabase.updateSecuritySettings({
+    ...(typeof demoLinksEnabled === 'boolean' ? { demoLinksEnabled } : {}),
+    ...(typeof defaultDemoMinutes === 'number' ? { defaultDemoMinutes } : {}),
+  });
+  return res.json({ success: true, securitySettings: settings });
 });
 
 // ==========================================

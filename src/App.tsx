@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ConnectionMode, Vehicle, LicenseSession } from './types/automotive';
 import { VEHICLE_PRESETS } from './data/mockVehicles';
-import { Header } from './components/Header';
+import { Header, NavTab } from './components/Header';
 import { ConnectionManager } from './components/ConnectionManager';
 import { DiagnosticScanner } from './components/DiagnosticScanner';
 import { DiagnosticHistory } from './components/DiagnosticHistory';
@@ -14,21 +14,43 @@ import { ChineseTabletFlasher } from './components/ChineseTabletFlasher';
 import { BodyComfortControl } from './components/BodyComfortControl';
 import { KeylessProximitySecurity } from './components/KeylessProximitySecurity';
 import { CameraIntegration } from './components/CameraIntegration';
+import { AdminSubscribersPanel } from './components/AdminSubscribersPanel';
 import { ConnectModal } from './components/ConnectModal';
 import { LicenseGate } from './components/LicenseGate';
 import { LicenseModal } from './components/LicenseModal';
 import { VoiceAssistantModal } from './components/VoiceAssistantModal';
 import { INITIAL_DTC_CODES } from './data/mockVehicles';
-import { ShieldCheck, Cpu, HardDrive } from 'lucide-react';
+import { ShieldCheck, Cpu } from 'lucide-react';
 import { apiFetch } from './utils/apiBridge';
 
+const REVOKED_LEGACY_DEMO_KEYS = new Set([
+  'AP-DZ26-MST-9882-7EAB-5A63',
+  'DEMO-FREE',
+  'AUTOPRO-DEMO',
+  'AP-SOFIANE-MASTER-2026-VIP',
+]);
+
 export default function App() {
+  const [blockReason, setBlockReason] = useState<string | null>(null);
   const [licenseSession, setLicenseSession] = useState<LicenseSession | null>(() => {
     try {
       const saved = localStorage.getItem('autopro_license_session');
       if (saved) {
-        const parsed = JSON.parse(saved);
+        const parsed: LicenseSession = JSON.parse(saved);
         if (parsed && parsed.isValid) {
+          const upperKey = (parsed.key || '').trim().toUpperCase();
+          if (REVOKED_LEGACY_DEMO_KEYS.has(upperKey)) {
+            localStorage.removeItem('autopro_license_session');
+            return null;
+          }
+          if (parsed.isAdmin && !sessionStorage.getItem('autopro_admin_passcode')) {
+            localStorage.removeItem('autopro_license_session');
+            return null;
+          }
+          if (parsed.tier === 'demo' && parsed.demoExpiresAt && Date.now() > new Date(parsed.demoExpiresAt).getTime()) {
+            localStorage.removeItem('autopro_license_session');
+            return null;
+          }
           return parsed;
         }
       }
@@ -37,12 +59,15 @@ export default function App() {
     }
     return null;
   });
+
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState<boolean>(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
-  const [matrixName, setMatrixName] = useState<string>(() => {
+  const [matrixName] = useState<string>(() => {
     return localStorage.getItem('autopro_matrix_name') || 'Jarvis';
   });
-  const [activeTab, setActiveTab] = useState<'diagnostic' | 'history' | 'flash' | 'connection' | 'apps' | 'translator' | 'smartech' | 'packaging' | 'chinese_flasher' | 'comfort' | 'keyless' | 'cameras'>('history');
+  const [activeTab, setActiveTab] = useState<NavTab>(() => {
+    return licenseSession?.isAdmin ? 'admin' : 'diagnostic';
+  });
   const [atelierMode, setAtelierMode] = useState<boolean>(() => {
     return localStorage.getItem('autopro_atelier_mode') === 'true';
   });
@@ -51,7 +76,18 @@ export default function App() {
   const [isConnected, setIsConnected] = useState<boolean>(true);
   const [batteryVoltage, setBatteryVoltage] = useState<number>(13.8);
   const [isConnectModalOpen, setIsConnectModalOpen] = useState<boolean>(false);
-  const [dtcCodes, setDtcCodes] = useState(INITIAL_DTC_CODES);
+  const [dtcCodes] = useState(INITIAL_DTC_CODES);
+  const [demoRemainingText, setDemoRemainingText] = useState<string | null>(null);
+
+  const lockSession = useCallback((reason?: string) => {
+    localStorage.removeItem('autopro_license_session');
+    sessionStorage.removeItem('autopro_admin_passcode');
+    if (reason) {
+      setBlockReason(reason);
+    }
+    setDemoRemainingText(null);
+    setLicenseSession(null);
+  }, []);
 
   const toggleAtelierMode = () => {
     setAtelierMode(prev => {
@@ -61,6 +97,73 @@ export default function App() {
     });
   };
 
+  // Enforce module restrictions whenever licenseSession changes
+  useEffect(() => {
+    if (!licenseSession?.isValid) return;
+    if (licenseSession.isAdmin) return;
+    const allowed = licenseSession.allowedModules || [];
+    if (allowed.length > 0 && !allowed.includes(activeTab)) {
+      setActiveTab((allowed[0] as NavTab) || 'diagnostic');
+    }
+  }, [licenseSession, activeTab]);
+
+  // Real-time Kill-Switch polling (checks suspended/revoked clients & expired demos every 15s)
+  useEffect(() => {
+    if (!licenseSession?.isValid) return;
+
+    const verifySession = async () => {
+      try {
+        const res = await apiFetch('/api/license/check-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            key: licenseSession.key,
+            hwid: licenseSession.hwid,
+            isAdmin: Boolean(licenseSession.isAdmin),
+            activatedAt: licenseSession.activatedAt,
+            adminPasscode: sessionStorage.getItem('autopro_admin_passcode') || '',
+          }),
+        });
+        const data = await res.json();
+        if (res.status === 403 || data?.blocked || data?.valid === false) {
+          lockSession(data?.reason || 'Votre accès a été désactivé par l\'administrateur.');
+        }
+      } catch {
+        // Ignore transient network hiccups during polling
+      }
+    };
+
+    verifySession();
+    const timer = setInterval(verifySession, 15000);
+    return () => clearInterval(timer);
+  }, [licenseSession, lockSession]);
+
+  // Limited Demo Pass live countdown + automatic lock at 00:00
+  useEffect(() => {
+    if (!licenseSession?.isValid || licenseSession.tier !== 'demo' || !licenseSession.demoExpiresAt) {
+      setDemoRemainingText(null);
+      return;
+    }
+
+    const expiryMs = new Date(licenseSession.demoExpiresAt).getTime();
+    const tick = () => {
+      const diff = expiryMs - Date.now();
+      if (diff <= 0) {
+        lockSession('Durée du Pass Démo Limité écoulée. Demandez une licence Abonné à Sofiane (05 57 76 78 04).');
+        return;
+      }
+      const totalSec = Math.ceil(diff / 1000);
+      const mins = Math.floor(totalSec / 60);
+      const secs = totalSec % 60;
+      setDemoRemainingText(`${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`);
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [licenseSession, lockSession]);
+
+  // Log client activity heartbeat
   useEffect(() => {
     if (licenseSession?.isValid) {
       apiFetch('/api/clients/activity', {
@@ -81,18 +184,40 @@ export default function App() {
   }, [licenseSession?.key]);
 
   const handleDeactivateLicense = () => {
-    localStorage.removeItem('autopro_license_session');
-    setLicenseSession(null);
+    lockSession();
+  };
+
+  const handleLicenseActivated = (session: LicenseSession) => {
+    setBlockReason(null);
+    setLicenseSession(session);
+    if (session.isAdmin) {
+      setActiveTab('admin');
+    } else if (session.tier === 'demo') {
+      setActiveTab('diagnostic');
+    } else {
+      setActiveTab('diagnostic');
+    }
   };
 
   // If no valid license is activated, lock the application behind the License Gate
   if (!licenseSession || !licenseSession.isValid) {
-    return <LicenseGate onLicenseActivated={(session) => setLicenseSession(session)} />;
+    return (
+      <LicenseGate
+        onLicenseActivated={handleLicenseActivated}
+        blockReason={blockReason}
+      />
+    );
   }
+
+  const isAdmin = Boolean(licenseSession.isAdmin);
+  const canRenderTab = (tab: NavTab) => {
+    if (isAdmin) return true;
+    if (tab === 'admin' || tab === 'packaging') return false;
+    return !licenseSession.allowedModules || licenseSession.allowedModules.includes(tab);
+  };
 
   return (
     <div className={`min-h-screen bg-[#070b14] text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-slate-950 ${atelierMode ? 'atelier-mode' : ''}`}>
-      {/* Top Bar adhering to Top Bar Contract */}
       <Header
         activeTab={activeTab}
         onSelectTab={setActiveTab}
@@ -105,11 +230,16 @@ export default function App() {
         onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
         atelierMode={atelierMode}
         onToggleAtelierMode={toggleAtelierMode}
+        isAdmin={isAdmin}
+        demoRemainingText={demoRemainingText}
       />
 
-      {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
-        {activeTab === 'diagnostic' && (
+        {activeTab === 'admin' && isAdmin && (
+          <AdminSubscribersPanel onAdminSessionInvalid={lockSession} />
+        )}
+
+        {activeTab === 'diagnostic' && canRenderTab('diagnostic') && (
           <DiagnosticScanner
             selectedVehicle={selectedVehicle}
             setSelectedVehicle={setSelectedVehicle}
@@ -120,7 +250,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'history' && (
+        {activeTab === 'history' && canRenderTab('history') && (
           <DiagnosticHistory
             selectedVehicle={selectedVehicle}
             onSelectVehicle={setSelectedVehicle}
@@ -128,7 +258,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'flash' && (
+        {activeTab === 'flash' && canRenderTab('flash') && (
           <EcuFlashing
             selectedVehicle={selectedVehicle}
             setSelectedVehicle={setSelectedVehicle}
@@ -139,7 +269,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'connection' && (
+        {activeTab === 'connection' && canRenderTab('connection') && (
           <ConnectionManager
             connectionMode={connectionMode}
             setConnectionMode={setConnectionMode}
@@ -150,7 +280,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'apps' && (
+        {activeTab === 'apps' && canRenderTab('apps') && (
           <TabletAppInstaller
             connectionMode={connectionMode}
             isConnected={isConnected}
@@ -158,7 +288,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'translator' && (
+        {activeTab === 'translator' && canRenderTab('translator') && (
           <AppTranslator
             connectionMode={connectionMode}
             isConnected={isConnected}
@@ -166,7 +296,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'smartech' && (
+        {activeTab === 'smartech' && canRenderTab('smartech') && (
           <SmartechDzBridge
             selectedVehicle={selectedVehicle}
             dtcList={dtcCodes}
@@ -176,15 +306,16 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'packaging' && (
+        {activeTab === 'packaging' && isAdmin && (
           <CommercialPackaging
-            appUrl="https://ais-pre-kd2bgrq3vtrufter4hwxrg-988212701770.europe-west2.run.app"
+            appUrl="https://autoprodz-a7071.web.app"
             onSelectTab={setActiveTab}
             onSelectVehicle={setSelectedVehicle}
+            isAdmin={isAdmin}
           />
         )}
 
-        {activeTab === 'chinese_flasher' && (
+        {activeTab === 'chinese_flasher' && canRenderTab('chinese_flasher') && (
           <ChineseTabletFlasher
             connectionMode={connectionMode}
             isConnected={isConnected}
@@ -192,7 +323,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'comfort' && (
+        {activeTab === 'comfort' && canRenderTab('comfort') && (
           <BodyComfortControl
             selectedVehicle={selectedVehicle}
             connectionMode={connectionMode}
@@ -203,7 +334,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'keyless' && (
+        {activeTab === 'keyless' && canRenderTab('keyless') && (
           <KeylessProximitySecurity
             selectedVehicle={selectedVehicle}
             connectionMode={connectionMode}
@@ -213,7 +344,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'cameras' && (
+        {activeTab === 'cameras' && canRenderTab('cameras') && (
           <CameraIntegration
             selectedVehicle={selectedVehicle}
             connectionMode={connectionMode}
@@ -225,7 +356,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Clean Professional Automotive Footer */}
       <footer className="border-t border-slate-900 bg-slate-950/80 px-6 py-5 text-xs text-slate-500">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -248,7 +378,6 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Connect Modal */}
       <ConnectModal
         isOpen={isConnectModalOpen}
         onClose={() => setIsConnectModalOpen(false)}
@@ -259,7 +388,6 @@ export default function App() {
         batteryVoltage={batteryVoltage}
       />
 
-      {/* License Inspector & Management Modal */}
       {licenseSession && (
         <LicenseModal
           isOpen={isLicenseModalOpen}
@@ -269,7 +397,6 @@ export default function App() {
         />
       )}
 
-      {/* Intelligent AI Voice Assistant Modal */}
       <VoiceAssistantModal
         isOpen={isVoiceModalOpen}
         onClose={() => setIsVoiceModalOpen(false)}

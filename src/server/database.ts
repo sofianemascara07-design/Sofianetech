@@ -1,13 +1,66 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { DiagnosticScanSession, DatabaseStats, ClientActivityRecord } from '../types/automotive';
+import { DiagnosticScanSession, DatabaseStats, ClientActivityRecord, SubscriberRecord, SecuritySettings, LicenseTier } from '../types/automotive';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, '../../data');
 const DB_FILE = path.resolve(DATA_DIR, 'autopro_database.json');
 const ACTIVITIES_FILE = path.resolve(DATA_DIR, 'autopro_activities.json');
+const SUBSCRIBERS_FILE = path.resolve(DATA_DIR, 'autopro_subscribers.json');
+const SECURITY_FILE = path.resolve(DATA_DIR, 'autopro_security.json');
+
+const DEFAULT_SECURITY_SETTINGS: SecuritySettings & { adminPasscode: string } = {
+  demoLinksEnabled: false,
+  defaultDemoMinutes: 10,
+  revokedAllDemosBefore: new Date().toISOString(),
+  blockedDemoKeys: ['AP-DZ26-MST-9882-7EAB-5A63', 'DEMO-FREE', 'AUTOPRO-DEMO'],
+  adminPasscode: process.env.ADMIN_PASSCODE || 'SOFIANE-DZ-2026',
+  adminPasscodeUpdatedAt: new Date().toISOString(),
+};
+
+const INITIAL_SEEDED_SUBSCRIBERS: SubscriberRecord[] = [
+  {
+    id: 'SUB-DZ-001',
+    clientName: 'Garage Mascara Auto Pro',
+    phone: '0557767804',
+    licenseKey: 'AP-DZ26-MST-MASC-2026-8801',
+    boundHwid: null,
+    tier: 'master',
+    status: 'active',
+    maxDemoMinutes: null,
+    demoExpiresAt: null,
+    createdAt: '2026-11-10T08:00:00Z',
+    notes: 'Abonné officiel Master DZ (Illimité)',
+  },
+  {
+    id: 'SUB-DZ-002',
+    clientName: 'Tafraoui Diag & Flash Oran',
+    phone: '0661223344',
+    licenseKey: 'AP-DZ26-STG-ORAN-3100-2026',
+    boundHwid: 'HWID-DZ-3109-F188-9A11-PC',
+    tier: 'reprog',
+    status: 'active',
+    maxDemoMinutes: null,
+    demoExpiresAt: null,
+    createdAt: '2026-11-11T10:30:00Z',
+    notes: 'Abonné Reprog Oran',
+  },
+  {
+    id: 'SUB-DZ-003',
+    clientName: 'Ancien Lien Démo Partagé (Bloqué)',
+    phone: '',
+    licenseKey: 'AP-DZ26-MST-9882-7EAB-5A63',
+    boundHwid: null,
+    tier: 'demo',
+    status: 'revoked',
+    maxDemoMinutes: 10,
+    demoExpiresAt: '2026-11-12T00:00:00Z',
+    createdAt: '2026-11-01T00:00:00Z',
+    notes: 'Désactivé globalement — ancienne clé démo sans limite bloquée',
+  },
+];
 
 const INITIAL_SEEDED_ACTIVITIES: ClientActivityRecord[] = [
   {
@@ -245,6 +298,8 @@ const INITIAL_SEEDED_SCANS: DiagnosticScanSession[] = [
 export class AutoProDatabase {
   private scans: Map<string, DiagnosticScanSession> = new Map();
   private activities: ClientActivityRecord[] = [];
+  private subscribers: SubscriberRecord[] = [];
+  private securitySettings: SecuritySettings & { adminPasscode: string } = { ...DEFAULT_SECURITY_SETTINGS };
   private vinIndex: Map<string, string[]> = new Map(); // VIN -> array of scan IDs
   private codeIndex: Map<string, string[]> = new Map(); // DTC code -> array of scan IDs
   private isInitialized = false;
@@ -281,6 +336,37 @@ export class AutoProDatabase {
         this.saveActivitiesToFile();
       }
 
+      if (fs.existsSync(SECURITY_FILE)) {
+        try {
+          const rawSec = JSON.parse(fs.readFileSync(SECURITY_FILE, 'utf-8'));
+          this.securitySettings = { ...DEFAULT_SECURITY_SETTINGS, ...rawSec };
+        } catch {
+          this.securitySettings = { ...DEFAULT_SECURITY_SETTINGS };
+          this.saveSecurityToFile();
+        }
+      } else {
+        this.securitySettings = { ...DEFAULT_SECURITY_SETTINGS };
+        this.saveSecurityToFile();
+      }
+
+      if (fs.existsSync(SUBSCRIBERS_FILE)) {
+        try {
+          const rawSubs = JSON.parse(fs.readFileSync(SUBSCRIBERS_FILE, 'utf-8'));
+          if (Array.isArray(rawSubs) && rawSubs.length > 0) {
+            this.subscribers = rawSubs;
+          } else {
+            this.subscribers = [...INITIAL_SEEDED_SUBSCRIBERS];
+            this.saveSubscribersToFile();
+          }
+        } catch {
+          this.subscribers = [...INITIAL_SEEDED_SUBSCRIBERS];
+          this.saveSubscribersToFile();
+        }
+      } else {
+        this.subscribers = [...INITIAL_SEEDED_SUBSCRIBERS];
+        this.saveSubscribersToFile();
+      }
+
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed: DiagnosticScanSession[] = JSON.parse(raw);
@@ -299,6 +385,7 @@ export class AutoProDatabase {
       console.error('[AutoProDatabase] Initialization fallback to seed:', err);
       this.loadData(INITIAL_SEEDED_SCANS);
       this.activities = [...INITIAL_SEEDED_ACTIVITIES];
+      this.subscribers = [...INITIAL_SEEDED_SUBSCRIBERS];
       this.isInitialized = true;
     }
   }
@@ -348,6 +435,275 @@ export class AutoProDatabase {
     }
   }
 
+  private saveSubscribersToFile() {
+    try {
+      const tempFile = `${SUBSCRIBERS_FILE}.tmp`;
+      fs.writeFileSync(tempFile, JSON.stringify(this.subscribers, null, 2), 'utf-8');
+      fs.renameSync(tempFile, SUBSCRIBERS_FILE);
+    } catch (err) {
+      console.error('[AutoProDatabase] Save subscribers error:', err);
+    }
+  }
+
+  private saveSecurityToFile() {
+    try {
+      const tempFile = `${SECURITY_FILE}.tmp`;
+      fs.writeFileSync(tempFile, JSON.stringify(this.securitySettings, null, 2), 'utf-8');
+      fs.renameSync(tempFile, SECURITY_FILE);
+    } catch (err) {
+      console.error('[AutoProDatabase] Save security error:', err);
+    }
+  }
+
+  // =========================================================
+  // ADMIN SECURITY, SUBSCRIBER WHITELIST & DEMO KILL-SWITCH
+  // =========================================================
+  public verifyAdminPasscode(passcode: string): boolean {
+    if (!passcode || typeof passcode !== 'string') return false;
+    return passcode.trim() === this.securitySettings.adminPasscode;
+  }
+
+  public updateAdminPasscode(newPasscode: string): boolean {
+    const clean = newPasscode.trim();
+    if (clean.length < 4) return false;
+    this.securitySettings.adminPasscode = clean;
+    this.securitySettings.adminPasscodeUpdatedAt = new Date().toISOString();
+    this.saveSecurityToFile();
+    return true;
+  }
+
+  public getPublicSecuritySettings(): SecuritySettings {
+    const { adminPasscode: _hidden, ...publicSettings } = this.securitySettings;
+    return publicSettings;
+  }
+
+  public updateSecuritySettings(patch: Partial<SecuritySettings>): SecuritySettings {
+    if (typeof patch.demoLinksEnabled === 'boolean') {
+      this.securitySettings.demoLinksEnabled = patch.demoLinksEnabled;
+    }
+    if (typeof patch.defaultDemoMinutes === 'number' && patch.defaultDemoMinutes >= 1 && patch.defaultDemoMinutes <= 120) {
+      this.securitySettings.defaultDemoMinutes = patch.defaultDemoMinutes;
+    }
+    if (Array.isArray(patch.blockedDemoKeys)) {
+      this.securitySettings.blockedDemoKeys = patch.blockedDemoKeys;
+    }
+    this.saveSecurityToFile();
+    return this.getPublicSecuritySettings();
+  }
+
+  public revokeAllDemosNow(): { settings: SecuritySettings; revokedCount: number } {
+    this.securitySettings.demoLinksEnabled = false;
+    this.securitySettings.revokedAllDemosBefore = new Date().toISOString();
+    let revokedCount = 0;
+    this.subscribers = this.subscribers.map(sub => {
+      if (sub.tier === 'demo' && sub.status === 'active') {
+        revokedCount++;
+        return { ...sub, status: 'revoked' as const, notes: `${sub.notes || ''} [Démo coupée par Admin]`.trim() };
+      }
+      return sub;
+    });
+    this.saveSecurityToFile();
+    this.saveSubscribersToFile();
+    return { settings: this.getPublicSecuritySettings(), revokedCount };
+  }
+
+  public getSubscribers(): SubscriberRecord[] {
+    return [...this.subscribers].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  public addSubscriber(input: {
+    clientName: string;
+    phone?: string;
+    tier: LicenseTier;
+    boundHwid?: string | null;
+    maxDemoMinutes?: number | null;
+    notes?: string;
+    customKey?: string;
+  }): SubscriberRecord {
+    const prefix =
+      input.tier === 'master'
+        ? 'AP-DZ26-MST'
+        : input.tier === 'reprog'
+        ? 'AP-DZ26-STG'
+        : input.tier === 'demo'
+        ? 'AP-DEMO-LIM'
+        : 'AP-DZ26-STD';
+
+    const r1 = Math.random().toString(36).substring(2, 6).toUpperCase().padEnd(4, 'X');
+    const r2 = Math.random().toString(36).substring(2, 6).toUpperCase().padEnd(4, '7');
+    const r3 = Math.floor(1000 + Math.random() * 9000);
+    const licenseKey = (input.customKey && input.customKey.trim().toUpperCase()) || `${prefix}-${r1}-${r2}-${r3}`;
+
+    const demoMins = input.tier === 'demo' ? (input.maxDemoMinutes || this.securitySettings.defaultDemoMinutes || 10) : null;
+
+    const record: SubscriberRecord = {
+      id: `SUB-DZ-${Math.floor(100 + Math.random() * 900)}-${Date.now().toString().slice(-3)}`,
+      clientName: input.clientName.trim(),
+      phone: input.phone?.trim() || '',
+      licenseKey,
+      boundHwid: input.boundHwid?.trim() ? input.boundHwid.trim() : null,
+      tier: input.tier,
+      status: 'active',
+      maxDemoMinutes: demoMins,
+      demoExpiresAt: null,
+      createdAt: new Date().toISOString(),
+      lastUsedAt: null,
+      notes: input.notes?.trim() || (input.tier === 'demo' ? `Pass démo limité ${demoMins} min` : 'Abonné officiel'),
+    };
+
+    this.subscribers.unshift(record);
+    this.saveSubscribersToFile();
+    return record;
+  }
+
+  public updateSubscriberStatus(id: string, status: 'active' | 'suspended' | 'revoked', notes?: string): SubscriberRecord | null {
+    const idx = this.subscribers.findIndex(s => s.id === id);
+    if (idx === -1) return null;
+
+    const updated: SubscriberRecord = {
+      ...this.subscribers[idx],
+      status,
+      ...(notes !== undefined ? { notes } : {}),
+    };
+    if (status === 'active' && updated.tier === 'demo' && updated.maxDemoMinutes) {
+      updated.demoExpiresAt = new Date(Date.now() + updated.maxDemoMinutes * 60_000).toISOString();
+    }
+    this.subscribers[idx] = updated;
+    this.saveSubscribersToFile();
+    return updated;
+  }
+
+  public resetSubscriberHwid(id: string): SubscriberRecord | null {
+    const idx = this.subscribers.findIndex(s => s.id === id);
+    if (idx === -1) return null;
+    this.subscribers[idx] = { ...this.subscribers[idx], boundHwid: null };
+    this.saveSubscribersToFile();
+    return this.subscribers[idx];
+  }
+
+  public deleteSubscriber(id: string): boolean {
+    const before = this.subscribers.length;
+    this.subscribers = this.subscribers.filter(s => s.id !== id);
+    if (this.subscribers.length === before) return false;
+    this.saveSubscribersToFile();
+    return true;
+  }
+
+  public verifyLicenseOrDemo(params: { key: string; hwid?: string; clientName?: string }): {
+    valid: boolean;
+    message: string;
+    subscriber?: SubscriberRecord;
+  } {
+    const cleanKey = params.key.trim().toUpperCase();
+
+    if (this.securitySettings.blockedDemoKeys.includes(cleanKey)) {
+      return {
+        valid: false,
+        message: 'Cette clé ou lien de démonstration gratuit a été désactivé par l\'administrateur. Contactez Sofiane au 05 57 76 78 04.',
+      };
+    }
+
+    const idx = this.subscribers.findIndex(s => s.licenseKey.toUpperCase() === cleanKey);
+    if (idx === -1) {
+      return {
+        valid: false,
+        message: 'Clé introuvable dans la liste officielle des abonnés AutoPro DZ. Demandez votre accès à Sofiane (05 57 76 78 04).',
+      };
+    }
+
+    const sub = this.subscribers[idx];
+
+    if (sub.status === 'suspended' || sub.status === 'revoked') {
+      return {
+        valid: false,
+        message: 'Votre accès a été désactivé par l\'administrateur (licence suspendue ou révoquée).',
+      };
+    }
+
+    if (sub.tier === 'demo') {
+      if (!this.securitySettings.demoLinksEnabled) {
+        return {
+          valid: false,
+          message: 'Les pass de démonstration gratuits sont actuellement verrouillés par l\'administrateur.',
+        };
+      }
+      if (!sub.demoExpiresAt) {
+        const mins = sub.maxDemoMinutes || this.securitySettings.defaultDemoMinutes || 10;
+        sub.demoExpiresAt = new Date(Date.now() + mins * 60_000).toISOString();
+      } else if (Date.now() > new Date(sub.demoExpiresAt).getTime()) {
+        sub.status = 'revoked';
+        this.subscribers[idx] = sub;
+        this.saveSubscribersToFile();
+        return {
+          valid: false,
+          message: 'Votre pass démonstration limité a expiré. Passez en licence abonné auprès de Sofiane (05 57 76 78 04).',
+        };
+      }
+    }
+
+    // Enforce HWID lock (anti-sharing)
+    const incomingHwid = params.hwid?.trim();
+    if (sub.boundHwid && incomingHwid && sub.boundHwid !== incomingHwid) {
+      return {
+        valid: false,
+        message: `Partage refusé : cette clé est déjà verrouillée sur une autre machine (${sub.boundHwid}).`,
+      };
+    }
+
+    if (!sub.boundHwid && incomingHwid) {
+      sub.boundHwid = incomingHwid;
+    }
+
+    sub.lastUsedAt = new Date().toISOString();
+    this.subscribers[idx] = sub;
+    this.saveSubscribersToFile();
+
+    return {
+      valid: true,
+      message: sub.tier === 'demo' ? 'Pass Démonstration Limité activé.' : 'Abonnement officiel authentifié.',
+      subscriber: sub,
+    };
+  }
+
+  public checkSessionHeartbeat(params: { key: string; hwid?: string; isAdmin?: boolean; activatedAt?: string }): {
+    valid: boolean;
+    reason?: string;
+    demoExpiresAt?: string | null;
+  } {
+    if (params.isAdmin) {
+      return { valid: true };
+    }
+    const cleanKey = (params.key || '').trim().toUpperCase();
+    if (!cleanKey || this.securitySettings.blockedDemoKeys.includes(cleanKey)) {
+      return { valid: false, reason: 'Lien / clé de démonstration désactivé par l\'administrateur.' };
+    }
+    const sub = this.subscribers.find(s => s.licenseKey.toUpperCase() === cleanKey);
+    if (!sub) {
+      return { valid: false, reason: 'Abonnement introuvable ou supprimé par l\'administrateur.' };
+    }
+    if (sub.status !== 'active') {
+      return { valid: false, reason: 'Accès désactivé par l\'administrateur (client suspendu).' };
+    }
+    if (sub.boundHwid && params.hwid && sub.boundHwid !== params.hwid) {
+      return { valid: false, reason: 'Session invalide : clé liée à un autre appareil.' };
+    }
+    if (sub.tier === 'demo') {
+      if (!this.securitySettings.demoLinksEnabled) {
+        return { valid: false, reason: 'Les démonstrations partagées ont été fermées par l\'administrateur.' };
+      }
+      if (this.securitySettings.revokedAllDemosBefore && params.activatedAt) {
+        if (new Date(params.activatedAt).getTime() < new Date(this.securitySettings.revokedAllDemosBefore).getTime()) {
+          return { valid: false, reason: 'Toutes les démonstrations précédentes ont été révoquées par l\'administrateur.' };
+        }
+      }
+      if (sub.demoExpiresAt && Date.now() > new Date(sub.demoExpiresAt).getTime()) {
+        return { valid: false, reason: 'Durée de la démonstration gratuite expirée.' };
+      }
+      return { valid: true, demoExpiresAt: sub.demoExpiresAt };
+    }
+    return { valid: true };
+  }
+
   public logActivity(record: Omit<ClientActivityRecord, 'id' | 'timestamp'> & { id?: string; timestamp?: string }): ClientActivityRecord {
     const newRecord: ClientActivityRecord = {
       ...record,
@@ -391,6 +747,8 @@ export class AutoProDatabase {
       guarantee: 'Licence Illimitée à Vie · Sauvegarde Intégrale',
       scans: Array.from(this.scans.values()),
       clientActivities: this.activities,
+      subscribers: this.subscribers,
+      securitySettings: this.getPublicSecuritySettings(),
       stats: this.getStats(),
     };
   }

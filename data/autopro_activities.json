@@ -1,0 +1,66 @@
+[
+  {
+    "clientName": "Admin Sofiane Mascara",
+    "hwid": "ADMIN-CONSOLE",
+    "actionType": "activation",
+    "actionDetails": "Connexion Administrateur Principal (Accès Ouvert Complet)",
+    "locationCity": "Mascara, Algérie",
+    "durationMinutes": 1,
+    "id": "ACT-DZ-2956",
+    "timestamp": "2026-11-14T08:33:43.726Z"
+  },
+  {
+    "id": "ACT-DZ-9014",
+    "clientName": "Garage Mascara Auto Pro",
+    "hwid": "HWID-DZ-9882-7EAB-5A63-PC",
+    "actionType": "activation",
+    "actionDetails": "Activation de licence Master DZ (À Vie) validée sur tablette d'atelier",
+    "timestamp": "2026-11-12T08:15:00Z",
+    "locationCity": "Mascara, Algérie",
+    "durationMinutes": 45
+  },
+  {
+    "id": "ACT-DZ-9013",
+    "clientName": "Atelier Express Relizane",
+    "hwid": "HWID-DZ-4412-9C01-3B22-PC",
+    "actionType": "scan_started",
+    "actionDetails": "Scan complet UDS & Lecture 2 codes défauts (P0302)",
+    "timestamp": "2026-11-11T16:42:00Z",
+    "vehicleName": "Jetour Dashing 1.6 TGDI",
+    "locationCity": "Relizane, Algérie",
+    "durationMinutes": 18
+  },
+  {
+    "id": "ACT-DZ-9012",
+    "clientName": "Tafraoui Diag & Flash Oran",
+    "hwid": "HWID-DZ-3109-F188-9A11-PC",
+    "actionType": "flash_executed",
+    "actionDetails": "Reprogrammation Stage 1 + Checksum CRC32 validé",
+    "timestamp": "2026-11-11T14:20:00Z",
+    "vehicleName": "Fiat Doblò 1.6 MultiJet",
+    "locationCity": "Oran, Algérie",
+    "durationMinutes": 27
+  },
+  {
+    "id": "ACT-DZ-9011",
+    "clientName": "Sidi Bel Abbès ÉlectroAuto",
+    "hwid": "HWID-DZ-7741-B204-8E19-PC",
+    "actionType": "camera_view",
+    "actionDetails": "Connexion caméras ADAS / Recul 360° et calibration angle de braquage",
+    "timestamp": "2026-11-10T11:05:00Z",
+    "vehicleName": "Geely Coolray 1.5 TD",
+    "locationCity": "Sidi Bel Abbès, Algérie",
+    "durationMinutes": 12
+  },
+  {
+    "id": "ACT-DZ-9010",
+    "clientName": "Chlef Auto Tech",
+    "hwid": "HWID-DZ-5580-A310-1C44-PC",
+    "actionType": "keyless_toggle",
+    "actionDetails": "Configuration Clé Mains-Libres 3m & Test code PIN urgence 884926",
+    "timestamp": "2026-11-09T17:30:00Z",
+    "vehicleName": "Chery Tiggo 8 Pro Max",
+    "locationCity": "Chlef, Algérie",
+    "durationMinutes": 15
+  }
+]

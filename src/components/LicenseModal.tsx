@@ -130,15 +130,33 @@ export const LicenseModal: React.FC<LicenseModalProps> = ({
             </div>
           </div>
 
-          <div className="p-3 bg-emerald-950/30 rounded-xl border border-emerald-600/50 space-y-1">
-            <div className="flex items-center gap-2 text-emerald-300 font-bold text-[11px]">
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Garantie Durée Illimitée &amp; Sauvegarde Intégrale Active</span>
+          {license.tier === 'demo' ? (
+            <div className="p-3 bg-amber-950/30 rounded-xl border border-amber-500/50 space-y-1">
+              <div className="flex items-center gap-2 text-amber-300 font-bold text-[11px]">
+                <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Pass Démo Limité &amp; Verrouillé (1 Seul Appareil)</span>
+              </div>
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                Cet accès temporaire est limité aux modules de démonstration et expirera automatiquement à la fin du compte à rebours. Contactez Sofiane (05 57 76 78 04) pour passer en licence Abonné.
+              </p>
             </div>
-            <p className="text-[11px] text-slate-300 leading-relaxed">
-              Votre licence est permanente, sans abonnement caché et sauvegardée sur notre serveur SaaS. Exportez à tout moment une sauvegarde complète (.JSON) depuis l'onglet Historique SaaS.
-            </p>
-          </div>
+          ) : (
+            <div className="p-3 bg-emerald-950/30 rounded-xl border border-emerald-600/50 space-y-1">
+              <div className="flex items-center gap-2 text-emerald-300 font-bold text-[11px]">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>
+                  {license.isAdmin
+                    ? 'Accès Propriétaire Admin · Contrôle Total Activé'
+                    : 'Abonnement Officiel Validé & Sauvegardé'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                {license.isAdmin
+                  ? 'Vous disposez d\'un accès complet ouvert avec gestion des abonnés, création de Pass Démo limités et blocage instantané des clients manipulateurs.'
+                  : 'Votre licence abonné est enregistrée sur la liste blanche officielle et liée à votre appareil.'}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Deactivation / Sign out Zone */}

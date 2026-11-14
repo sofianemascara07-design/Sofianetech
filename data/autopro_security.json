@@ -1,0 +1,12 @@
+{
+  "demoLinksEnabled": false,
+  "defaultDemoMinutes": 10,
+  "revokedAllDemosBefore": "2026-11-14T08:33:43.774Z",
+  "blockedDemoKeys": [
+    "AP-DZ26-MST-9882-7EAB-5A63",
+    "DEMO-FREE",
+    "AUTOPRO-DEMO"
+  ],
+  "adminPasscode": "SOFIANE-DZ-2026",
+  "adminPasscodeUpdatedAt": "2026-11-14T08:33:29.945Z"
+}

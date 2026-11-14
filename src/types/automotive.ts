@@ -81,7 +81,7 @@ export interface SmartechDzConfig {
   tokenStatus: 'Validé' | 'En attente' | 'Non détecté';
 }
 
-export type LicenseTier = 'master' | 'reprog' | 'standard';
+export type LicenseTier = 'admin' | 'master' | 'reprog' | 'standard' | 'demo';
 
 export interface LicenseSession {
   key: string;
@@ -91,9 +91,34 @@ export interface LicenseSession {
   tierLabel: string;
   activatedAt: string;
   expiresAt: string;
+  demoExpiresAt?: string | null;
   isValid: boolean;
+  isAdmin?: boolean;
   signature: string;
   allowedModules: string[];
+}
+
+export interface SubscriberRecord {
+  id: string;
+  clientName: string;
+  phone?: string;
+  licenseKey: string;
+  boundHwid: string | null;
+  tier: LicenseTier;
+  status: 'active' | 'suspended' | 'revoked';
+  maxDemoMinutes?: number | null;
+  demoExpiresAt?: string | null;
+  createdAt: string;
+  lastUsedAt?: string | null;
+  notes?: string;
+}
+
+export interface SecuritySettings {
+  demoLinksEnabled: boolean;
+  defaultDemoMinutes: number;
+  revokedAllDemosBefore?: string | null;
+  blockedDemoKeys: string[];
+  adminPasscodeUpdatedAt?: string;
 }
 
 export interface ComfortState {
