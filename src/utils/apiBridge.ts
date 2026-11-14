@@ -2,17 +2,31 @@ const STORAGE_KEY = 'autopro_render_backend_url';
 
 export function getBackendBaseUrl(): string {
   try {
+    if (typeof window !== 'undefined' && window.location?.search) {
+      const params = new URLSearchParams(window.location.search);
+      const apiParam = params.get('api');
+      if (apiParam && apiParam.trim().startsWith('http')) {
+        const cleanParam = apiParam.trim().replace(/\/+$/, '');
+        localStorage.setItem(STORAGE_KEY, cleanParam);
+        return cleanParam;
+      }
+    }
+  } catch {
+    // Ignore URL/storage errors
+  }
+
+  const envUrl = (import.meta as any).env?.VITE_API_URL;
+  if (typeof envUrl === 'string' && envUrl.trim()) {
+    return envUrl.trim().replace(/\/+$/, '');
+  }
+
+  try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved && saved.trim()) {
       return saved.trim().replace(/\/+$/, '');
     }
   } catch {
     // Ignore storage errors
-  }
-
-  const envUrl = (import.meta as any).env?.VITE_API_URL;
-  if (typeof envUrl === 'string' && envUrl.trim()) {
-    return envUrl.trim().replace(/\/+$/, '');
   }
 
   return '';
@@ -30,6 +44,13 @@ export function setBackendBaseUrl(url: string): string {
     // Ignore storage errors
   }
   return clean;
+}
+
+export function isStaticFirebaseWithoutBackend(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location?.hostname || '';
+  const isFirebase = host.endsWith('.web.app') || host.endsWith('.firebaseapp.com');
+  return isFirebase && !getBackendBaseUrl();
 }
 
 export function apiUrl(path: string): string {

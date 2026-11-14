@@ -14,9 +14,15 @@ import {
   Phone,
   Clock,
   UserCog,
+  Server,
 } from 'lucide-react';
 import { LicenseSession } from '../types/automotive';
-import { apiFetch } from '../utils/apiBridge';
+import {
+  apiFetch,
+  getBackendBaseUrl,
+  isStaticFirebaseWithoutBackend,
+  setBackendBaseUrl,
+} from '../utils/apiBridge';
 
 interface LicenseGateProps {
   onLicenseActivated: (session: LicenseSession) => void;
@@ -39,21 +45,21 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
   const [demoLinksEnabled, setDemoLinksEnabled] = useState<boolean>(false);
   const [defaultDemoMinutes, setDefaultDemoMinutes] = useState<number>(10);
 
-  // Auto-detect or generate persistent machine HWID
-  useEffect(() => {
-    let savedHwid = localStorage.getItem('autopro_machine_hwid');
-    if (!savedHwid) {
-      const randHex1 = Math.random().toString(16).substring(2, 6).toUpperCase();
-      const randHex2 = Math.random().toString(16).substring(2, 6).toUpperCase();
-      savedHwid = `HWID-DZ-9882-${randHex1}-${randHex2}-PC`;
-      localStorage.setItem('autopro_machine_hwid', savedHwid);
-    }
-    setHwid(savedHwid);
+  // Render Backend Config helper (especially for Firebase Hosting autoprodz-a7071.web.app)
+  const [renderUrlInput, setRenderUrlInput] = useState<string>(() => getBackendBaseUrl());
+  const [showRenderConfig, setShowRenderConfig] = useState<boolean>(() => isStaticFirebaseWithoutBackend());
+  const [renderStatusMsg, setRenderStatusMsg] = useState<string | null>(null);
+  const [testingRender, setTestingRender] = useState<boolean>(false);
 
-    // Fetch live demo lock status from backend
+  const fetchLicenseStatus = () => {
     apiFetch('/api/license/status')
-      .then(res => res.json())
+      .then(async res => {
+        const text = await res.text();
+        if (text.trim().startsWith('<')) return null;
+        return JSON.parse(text);
+      })
       .then(data => {
+        if (!data) return;
         if (typeof data?.demoLinksEnabled === 'boolean') {
           setDemoLinksEnabled(data.demoLinksEnabled);
         }
@@ -64,6 +70,19 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
       .catch(() => {
         setDemoLinksEnabled(false);
       });
+  };
+
+  // Auto-detect or generate persistent machine HWID
+  useEffect(() => {
+    let savedHwid = localStorage.getItem('autopro_machine_hwid');
+    if (!savedHwid) {
+      const randHex1 = Math.random().toString(16).substring(2, 6).toUpperCase();
+      const randHex2 = Math.random().toString(16).substring(2, 6).toUpperCase();
+      savedHwid = `HWID-DZ-9882-${randHex1}-${randHex2}-PC`;
+      localStorage.setItem('autopro_machine_hwid', savedHwid);
+    }
+    setHwid(savedHwid);
+    fetchLicenseStatus();
   }, []);
 
   const handleCopyHwid = () => {
@@ -71,6 +90,33 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
     navigator.clipboard.writeText(hwid);
     setCopiedHwid(true);
     setTimeout(() => setCopiedHwid(false), 2000);
+  };
+
+  const handleSaveAndTestRender = async () => {
+    const clean = setBackendBaseUrl(renderUrlInput);
+    setRenderUrlInput(clean);
+    setTestingRender(true);
+    setRenderStatusMsg(null);
+    try {
+      const res = await apiFetch('/api/health');
+      const text = await res.text();
+      if (text.trim().startsWith('<')) {
+        setRenderStatusMsg('❌ Cette URL renvoie une page HTML au lieu de l\'API Node/Render.');
+        return;
+      }
+      const data = JSON.parse(text);
+      if (data?.status === 'ok') {
+        setRenderStatusMsg(`✅ Connecté à Render (${data.version || 'OK'})`);
+        setErrorMessage(null);
+        fetchLicenseStatus();
+      } else {
+        setRenderStatusMsg('⚠️ Serveur joignable mais réponse inattendue.');
+      }
+    } catch {
+      setRenderStatusMsg('❌ Impossible de joindre ce serveur Render (vérifiez l\'URL https://...onrender.com).');
+    } finally {
+      setTestingRender(false);
+    }
   };
 
   const handleActivate = async (e: React.FormEvent) => {
@@ -110,7 +156,16 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
         ),
       });
 
-      const data = await response.json();
+      const rawText = await response.text();
+      if (rawText.trim().startsWith('<')) {
+        setShowRenderConfig(true);
+        setErrorMessage(
+          'Firebase Hosting n\'est pas encore relié à votre backend Render (réponse HTML reçue). Renseignez votre URL Render ci-dessous ou redéployez avec VITE_API_URL.'
+        );
+        return;
+      }
+
+      const data = JSON.parse(rawText);
 
       if (response.ok && data.valid && data.license) {
         if (authMode === 'admin' && data.license.isAdmin) {
@@ -129,7 +184,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
       }
     } catch {
       setErrorMessage(
-        'Connexion au serveur de licences obligatoire. Vérifiez votre connexion internet (mode hors-ligne non autorisé).'
+        'Connexion au serveur Render/API impossible. Vérifiez votre connexion internet ou l\'URL Render.'
       );
     } finally {
       setIsVerifying(false);
@@ -172,7 +227,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
             </span>
           </div>
           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800 shrink-0">
-            Anti-Abus v4
+            v3.0 Lock
           </span>
         </div>
 
@@ -360,7 +415,59 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
                   </>
                 )}
               </button>
+
+              {/* Render Backend Link Helper for Firebase Hosting */}
+              <div className="pt-2 border-t border-slate-800/70">
+                <button
+                  type="button"
+                  onClick={() => setShowRenderConfig(prev => !prev)}
+                  className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1.5 font-semibold cursor-pointer"
+                >
+                  <Server className="w-3.5 h-3.5" />
+                  <span>
+                    {showRenderConfig ? 'Masquer la liaison Render' : 'Configurer l\'URL Backend Render (Firebase Hosting)'}
+                  </span>
+                </button>
+              </div>
             </form>
+          )}
+
+          {/* Render Backend URL Configuration Box (visible when needed or toggled in Admin) */}
+          {showRenderConfig && (
+            <div className="p-3.5 rounded-xl bg-slate-950 border border-cyan-500/40 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-cyan-300 flex items-center gap-1.5">
+                  <Server className="w-3.5 h-3.5" />
+                  <span>Liaison Serveur Backend Render</span>
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono">Firebase → Render</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Si vous utilisez <strong>autoprodz-a7071.web.app</strong> sans <code className="text-cyan-300">VITE_API_URL</code>, collez ici l'URL de votre service Render :
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="url"
+                  placeholder="https://votre-backend.onrender.com"
+                  value={renderUrlInput}
+                  onChange={(e) => setRenderUrlInput(e.target.value)}
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveAndTestRender}
+                  disabled={testingRender}
+                  className="px-3 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-lg cursor-pointer shrink-0 disabled:opacity-50"
+                >
+                  {testingRender ? 'Test...' : 'Lier'}
+                </button>
+              </div>
+              {renderStatusMsg && (
+                <div className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-slate-200">
+                  {renderStatusMsg}
+                </div>
+              )}
+            </div>
           )}
         </div>
 

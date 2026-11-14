@@ -34,8 +34,8 @@ app.get('/api/health', (_req, res) => {
   return res.json({
     status: 'ok',
     service: 'AutoPro Diagnostic & Flash Backend DZ',
-    version: '2.6.0-cameras',
-    features: ['cameras', 'atelier-mode', 'pdf-reports', 'client-activity', 'backup'],
+    version: '3.0.0-admin-lock',
+    features: ['admin-whitelist', 'limited-demo', 'cameras', 'atelier-mode', 'pdf-reports', 'client-activity', 'backup'],
     timestamp: new Date().toISOString(),
   });
 });
