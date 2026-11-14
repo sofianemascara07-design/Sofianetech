@@ -27,7 +27,6 @@ const REVOKED_LEGACY_DEMO_KEYS = new Set([
   'AP-DZ26-MST-9882-7EAB-5A63',
   'DEMO-FREE',
   'AUTOPRO-DEMO',
-  'AP-SOFIANE-MASTER-2026-VIP',
 ]);
 
 export default function App() {
@@ -124,7 +123,9 @@ export default function App() {
             adminPasscode: sessionStorage.getItem('autopro_admin_passcode') || '',
           }),
         });
-        const data = await res.json();
+        const raw = await res.text();
+        if (raw.trim().startsWith('<')) return;
+        const data = JSON.parse(raw);
         if (res.status === 403 || data?.blocked || data?.valid === false) {
           lockSession(data?.reason || 'Votre accès a été désactivé par l\'administrateur.');
         }

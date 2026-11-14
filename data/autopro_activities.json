@@ -1,6 +1,26 @@
 [
   {
     "clientName": "Admin Sofiane Mascara",
+    "hwid": "ADMIN-CONSOLE",
+    "actionType": "activation",
+    "actionDetails": "Connexion Administrateur Principal (Accès Ouvert Complet)",
+    "locationCity": "Mascara, Algérie",
+    "durationMinutes": 1,
+    "id": "ACT-DZ-1036",
+    "timestamp": "2026-11-14T12:11:35.264Z"
+  },
+  {
+    "clientName": "Admin Sofiane Mascara",
+    "hwid": "ADMIN-CONSOLE",
+    "actionType": "activation",
+    "actionDetails": "Connexion Administrateur Principal (Accès Ouvert Complet)",
+    "locationCity": "Mascara, Algérie",
+    "durationMinutes": 1,
+    "id": "ACT-DZ-5540",
+    "timestamp": "2026-11-14T12:11:35.237Z"
+  },
+  {
+    "clientName": "Admin Sofiane Mascara",
     "hwid": "HWID-CHECK",
     "actionType": "activation",
     "actionDetails": "Connexion Administrateur Principal (Accès Ouvert Complet)",

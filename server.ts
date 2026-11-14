@@ -691,16 +691,20 @@ app.post('/api/keyless/emergency-action', (req, res) => {
 app.post('/api/license/verify', (req, res) => {
   const { key, clientName, hwid, adminPasscode, mode } = req.body;
 
-  // 1. Admin Direct Access (Sofiane Master Control)
-  if (mode === 'admin' || adminPasscode) {
-    if (!saasDatabase.verifyAdminPasscode(adminPasscode || key || '')) {
+  // 1. Admin Direct Access (Sofiane Master Control via AP-SOFIANE-MASTER-2026-VIP or Admin Passcode)
+  const candidateAdminSecret = (typeof adminPasscode === 'string' && adminPasscode.trim())
+    ? adminPasscode.trim()
+    : (typeof key === 'string' ? key.trim() : '');
+
+  if (mode === 'admin' || saasDatabase.verifyAdminPasscode(candidateAdminSecret)) {
+    if (!saasDatabase.verifyAdminPasscode(candidateAdminSecret)) {
       return res.status(403).json({
         valid: false,
-        message: 'Mot de passe Administrateur incorrect.',
+        message: 'Clé Maître Administrateur incorrecte.',
       });
     }
 
-    const adminKey = 'AP-ADMIN-SOFIANE-MASTER';
+    const adminKey = 'AP-SOFIANE-MASTER-2026-VIP';
     saasDatabase.logActivity({
       clientName: 'Admin Sofiane Mascara',
       hwid: hwid || 'ADMIN-CONSOLE',
@@ -819,11 +823,11 @@ app.post('/api/license/verify', (req, res) => {
 // API: Real-time Session Heartbeat & Kill-Switch (kicks out blocked clients or expired demos)
 app.post('/api/license/check-session', (req, res) => {
   const { key, hwid, isAdmin, activatedAt, adminPasscode } = req.body || {};
-  if (isAdmin && !saasDatabase.verifyAdminPasscode(adminPasscode || '')) {
+  if (isAdmin && !saasDatabase.verifyAdminPasscode(adminPasscode || key || '')) {
     return res.status(403).json({
       valid: false,
       blocked: true,
-      reason: 'Session Administrateur expirée ou non authentifiée. Reconnectez-vous en mode Admin.',
+      reason: 'Session Administrateur expirée ou non authentifiée.',
     });
   }
   const result = saasDatabase.checkSessionHeartbeat({ key, hwid, isAdmin, activatedAt });

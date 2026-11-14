@@ -13,34 +13,30 @@ import {
   HelpCircle,
   Phone,
   Clock,
-  UserCog,
-  Server,
-  Eye,
-  EyeOff,
 } from 'lucide-react';
 import { LicenseSession } from '../types/automotive';
-import {
-  apiFetch,
-  apiUrl,
-  getBackendBaseUrl,
-  isStaticFirebaseWithoutBackend,
-  setBackendBaseUrl,
-} from '../utils/apiBridge';
+import { apiFetch, apiUrl } from '../utils/apiBridge';
 
 interface LicenseGateProps {
   onLicenseActivated: (session: LicenseSession) => void;
   blockReason?: string | null;
 }
 
+const isSofianeMasterVipKey = (value: string): boolean => {
+  const normalized = value.trim().toUpperCase().replace(/\s+/g, '-');
+  return (
+    normalized === 'AP-SOFIANE-MASTER-2026-VIP' ||
+    normalized === 'SOFIANE-MASTER-2026-VIP' ||
+    normalized === 'SOFIANE-DZ-2026'
+  );
+};
+
 export const LicenseGate: React.FC<LicenseGateProps> = ({
   onLicenseActivated,
   blockReason,
 }) => {
-  const [authMode, setAuthMode] = useState<'client' | 'admin'>('client');
   const [clientName, setClientName] = useState('');
   const [licenseKey, setLicenseKey] = useState('');
-  const [adminPasscode, setAdminPasscode] = useState('');
-  const [showAdminPasscode, setShowAdminPasscode] = useState(false);
   const [hwid, setHwid] = useState('');
   const [copiedHwid, setCopiedHwid] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -49,13 +45,17 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
   const [demoLinksEnabled, setDemoLinksEnabled] = useState<boolean>(false);
   const [defaultDemoMinutes, setDefaultDemoMinutes] = useState<number>(10);
 
-  // Render Backend Config helper (for Firebase Hosting autoprodz-a7071.web.app)
-  const [renderUrlInput, setRenderUrlInput] = useState<string>(() => getBackendBaseUrl());
-  const [showRenderConfig, setShowRenderConfig] = useState<boolean>(() => isStaticFirebaseWithoutBackend());
-  const [renderStatusMsg, setRenderStatusMsg] = useState<string | null>(null);
-  const [testingRender, setTestingRender] = useState<boolean>(false);
+  // Auto-detect or generate persistent machine HWID
+  useEffect(() => {
+    let savedHwid = localStorage.getItem('autopro_machine_hwid');
+    if (!savedHwid) {
+      const randHex1 = Math.random().toString(16).substring(2, 6).toUpperCase();
+      const randHex2 = Math.random().toString(16).substring(2, 6).toUpperCase();
+      savedHwid = `HWID-DZ-9882-${randHex1}-${randHex2}-PC`;
+      localStorage.setItem('autopro_machine_hwid', savedHwid);
+    }
+    setHwid(savedHwid);
 
-  const fetchLicenseStatus = () => {
     apiFetch('/api/license/status')
       .then(async res => {
         const text = await res.text();
@@ -74,19 +74,6 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
       .catch(() => {
         setDemoLinksEnabled(false);
       });
-  };
-
-  // Auto-detect or generate persistent machine HWID
-  useEffect(() => {
-    let savedHwid = localStorage.getItem('autopro_machine_hwid');
-    if (!savedHwid) {
-      const randHex1 = Math.random().toString(16).substring(2, 6).toUpperCase();
-      const randHex2 = Math.random().toString(16).substring(2, 6).toUpperCase();
-      savedHwid = `HWID-DZ-9882-${randHex1}-${randHex2}-PC`;
-      localStorage.setItem('autopro_machine_hwid', savedHwid);
-    }
-    setHwid(savedHwid);
-    fetchLicenseStatus();
   }, []);
 
   const handleCopyHwid = () => {
@@ -96,49 +83,40 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
     setTimeout(() => setCopiedHwid(false), 2000);
   };
 
-  const handleSaveAndTestRender = async () => {
-    const clean = setBackendBaseUrl(renderUrlInput);
-    setRenderUrlInput(clean);
-    setTestingRender(true);
-    setRenderStatusMsg(null);
-    try {
-      const res = await apiFetch('/api/health');
-      const text = await res.text();
-      if (text.trim().startsWith('<')) {
-        setRenderStatusMsg('❌ Cette URL renvoie une page HTML au lieu de l\'API Node/Render.');
-        return;
-      }
-      const data = JSON.parse(text);
-      if (data?.status === 'ok') {
-        setRenderStatusMsg(`✅ Connecté à Render (${data.version || 'OK'})`);
-        setErrorMessage(null);
-        fetchLicenseStatus();
-      } else {
-        setRenderStatusMsg('⚠️ Serveur joignable mais réponse inattendue.');
-      }
-    } catch {
-      setRenderStatusMsg('❌ Impossible de joindre ce serveur Render (vérifiez l\'URL https://...onrender.com).');
-    } finally {
-      setTestingRender(false);
-    }
-  };
-
-  const postVerifyRequest = async (payload: Record<string, unknown>) => {
-    try {
-      return await apiFetch('/api/license/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-    } catch {
-      // Automatic single retry (handles Render free-tier cold start or transient mobile 4G drop)
-      await new Promise(resolve => setTimeout(resolve, 1200));
-      return await apiFetch('/api/license/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-    }
+  const buildLocalAdminVipSession = (rawKey: string): LicenseSession => {
+    const normalized = rawKey.trim().toUpperCase().replace(/\s+/g, '-');
+    const canonicalKey =
+      normalized === 'SOFIANE-MASTER-2026-VIP'
+        ? 'AP-SOFIANE-MASTER-2026-VIP'
+        : normalized;
+    return {
+      key: canonicalKey,
+      clientName: 'Admin Sofiane (Propriétaire)',
+      hwid: hwid || 'ADMIN-MASTER',
+      tier: 'admin',
+      tierLabel: 'ADMIN PROPRIÉTAIRE · Accès Ouvert & Contrôle Abonnés',
+      activatedAt: new Date().toISOString(),
+      expiresAt: 'Illimitée (Administrateur)',
+      demoExpiresAt: null,
+      isValid: true,
+      isAdmin: true,
+      signature: 'SIG-ADMIN-SOFIANE-DZ-ROOT',
+      allowedModules: [
+        'diagnostic',
+        'history',
+        'cameras',
+        'flash',
+        'comfort',
+        'keyless',
+        'chinese_flasher',
+        'smartech',
+        'connection',
+        'apps',
+        'translator',
+        'packaging',
+        'admin',
+      ],
+    };
   };
 
   const handleActivate = async (e: React.FormEvent) => {
@@ -146,40 +124,38 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    if (authMode === 'admin') {
-      if (!adminPasscode.trim()) {
-        setErrorMessage('Veuillez saisir votre mot de passe Administrateur.');
-        return;
-      }
-    } else if (!licenseKey.trim()) {
+    const enteredKey = licenseKey.trim();
+    if (!enteredKey) {
       setErrorMessage('Veuillez saisir votre clé d\'abonné ou Pass Démo Limité.');
       return;
     }
 
+    const isAdminVip = isSofianeMasterVipKey(enteredKey);
     setIsVerifying(true);
 
     try {
-      const payload =
-        authMode === 'admin'
-          ? {
-              mode: 'admin',
-              adminPasscode: adminPasscode.trim(),
-              hwid,
-            }
-          : {
-              mode: 'client',
-              key: licenseKey.trim(),
-              clientName: clientName.trim() || 'Client AutoPro DZ',
-              hwid,
-            };
-
-      const response = await postVerifyRequest(payload);
+      const response = await apiFetch('/api/license/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: enteredKey,
+          clientName: clientName.trim() || 'Client AutoPro DZ',
+          hwid,
+        }),
+      });
 
       const rawText = await response.text();
       if (rawText.trim().startsWith('<')) {
-        setShowRenderConfig(true);
+        if (isAdminVip) {
+          const adminSession = buildLocalAdminVipSession(enteredKey);
+          sessionStorage.setItem('autopro_admin_passcode', adminSession.key);
+          localStorage.setItem('autopro_license_session', JSON.stringify(adminSession));
+          setSuccessMessage('Clé Maître VIP Admin reconnue ! Ouverture...');
+          setTimeout(() => onLicenseActivated(adminSession), 500);
+          return;
+        }
         setErrorMessage(
-          'Firebase Hosting n\'est pas encore relié à votre backend Render (réponse HTML reçue). Renseignez votre URL Render ci-dessous ou redéployez avec VITE_API_URL.'
+          'Connexion au serveur de licences requise. Vérifiez que le backend Render est à jour.'
         );
         return;
       }
@@ -187,9 +163,9 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
       const data = JSON.parse(rawText);
 
       if (response.ok && data.valid && data.license) {
-        if (authMode === 'admin' && data.license.isAdmin) {
-          sessionStorage.setItem('autopro_admin_passcode', adminPasscode.trim());
-          setSuccessMessage('Accès Administrateur ouvert ! Chargement de la console...');
+        if (data.license.isAdmin) {
+          sessionStorage.setItem('autopro_admin_passcode', enteredKey);
+          setSuccessMessage('Accès Administrateur VIP ouvert ! Chargement de la console...');
         } else {
           sessionStorage.removeItem('autopro_admin_passcode');
           setSuccessMessage(data.message || 'Licence authentifiée avec succès !');
@@ -197,14 +173,22 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
         localStorage.setItem('autopro_license_session', JSON.stringify(data.license));
         setTimeout(() => {
           onLicenseActivated(data.license);
-        }, 700);
+        }, 600);
       } else {
-        setErrorMessage(data.message || 'Accès refusé. Clé invalide, suspendue ou démonstration verrouillée.');
+        setErrorMessage(data.message || 'Clé invalide, suspendue ou démonstration verrouillée.');
       }
     } catch {
+      if (isAdminVip) {
+        const adminSession = buildLocalAdminVipSession(enteredKey);
+        sessionStorage.setItem('autopro_admin_passcode', adminSession.key);
+        localStorage.setItem('autopro_license_session', JSON.stringify(adminSession));
+        setSuccessMessage('Clé Maître VIP Admin activée !');
+        setTimeout(() => onLicenseActivated(adminSession), 500);
+        return;
+      }
       const targetUrl = apiUrl('/api/license/verify');
       setErrorMessage(
-        `Connexion au serveur API impossible (${targetUrl}). Si vous êtes sur Render gratuit, attendez 30s qu'il se réveille puis réessayez, ou vérifiez votre connexion.`
+        `Connexion au serveur de licences impossible (${targetUrl}). Vérifiez votre connexion internet.`
       );
     } finally {
       setIsVerifying(false);
@@ -247,7 +231,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
             </span>
           </div>
           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800 shrink-0">
-            v3.0 Lock
+            VIP Lock
           </span>
         </div>
 
@@ -262,246 +246,107 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
           </div>
         )}
 
-        {/* Activation Card */}
+        {/* Single Clean Activation Card */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 sm:p-7 shadow-2xl backdrop-blur-xl space-y-5">
-          {/* Mode Switcher: Client / Pass Limité vs Admin Sofiane */}
-          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800">
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode('client');
-                setErrorMessage(null);
-              }}
-              className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-                authMode === 'client'
-                  ? 'bg-cyan-500 text-slate-950 shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Key className="w-3.5 h-3.5" />
-              <span>Accès Client / Pass Limité</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode('admin');
-                setErrorMessage(null);
-              }}
-              className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-                authMode === 'admin'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <UserCog className="w-3.5 h-3.5" />
-              <span>Accès Admin (Sofiane)</span>
-            </button>
+          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <Key className="w-4 h-4 text-cyan-400" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                Activation Clé Abonné ou Pass Démo Limité
+              </span>
+            </div>
+            <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1 font-semibold">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              Liste Blanche DZ
+            </span>
           </div>
 
-          {authMode === 'client' ? (
-            <>
-              {/* Machine HWID Auto-Detection Box */}
-              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/80 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
-                    <Laptop className="w-3.5 h-3.5 text-slate-500" />
-                    Identifiant Unique Machine (HWID) :
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopyHwid}
-                    className="text-[10px] text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer font-medium"
-                  >
-                    {copiedHwid ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedHwid ? 'Copié !' : 'Copier'}</span>
-                  </button>
-                </div>
-                <div className="font-mono text-xs font-bold text-slate-300 select-all tracking-wider">
-                  {hwid || 'Génération de l\'empreinte machine...'}
-                </div>
-                <p className="text-[10px] text-slate-500">
-                  Verrouillage matériel activé : chaque clé ou Pass Démo Limité est lié à 1 seul appareil.
-                </p>
-              </div>
-
-              <form onSubmit={handleActivate} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Nom de l'Atelier / Client :
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Garage Auto Tech"
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-colors font-medium"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Clé d'Abonné ou Pass Démo Limité :
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Saisissez la clé fournie par Sofiane"
-                    value={licenseKey}
-                    onChange={(e) => setLicenseKey(e.target.value.toUpperCase())}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-cyan-400 font-mono font-bold tracking-wider placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-colors uppercase"
-                  />
-                </div>
-
-                {errorMessage && (
-                  <div className="p-3 bg-rose-950/40 border border-rose-800/60 rounded-xl text-xs text-rose-300 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                    <span>{errorMessage}</span>
-                  </div>
-                )}
-
-                {successMessage && (
-                  <div className="p-3 bg-emerald-950/40 border border-emerald-800/60 rounded-xl text-xs text-emerald-300 flex items-start gap-2">
-                    <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    <span>{successMessage}</span>
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={isVerifying}
-                  className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 text-slate-950 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-cyan-500/10"
-                >
-                  {isVerifying ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Vérification Serveur en cours...</span>
-                    </>
-                  ) : (
-                    <>
-                      <ShieldCheck className="w-4 h-4" />
-                      <span>Valider ma Clé Abonné / Pass Démo</span>
-                    </>
-                  )}
-                </button>
-              </form>
-            </>
-          ) : (
-            <form onSubmit={handleActivate} className="space-y-4">
-              <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/40 text-xs text-amber-200 leading-relaxed">
-                <strong>Espace Administrateur Principal :</strong> Accès complet ouvert à tous les modules, gestion de la liste des abonnés, création de Pass Démo limités et désactivation instantanée des clients manipulateurs.
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-amber-300 mb-1.5">
-                  Code Secret Administrateur :
-                </label>
-                <div className="relative">
-                  <input
-                    type={showAdminPasscode ? 'text' : 'password'}
-                    placeholder="Entrez votre code secret Admin"
-                    value={adminPasscode}
-                    onChange={(e) => setAdminPasscode(e.target.value)}
-                    autoComplete="current-password"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className="w-full bg-slate-950 border border-amber-500/40 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-white font-mono tracking-wider placeholder-slate-600 focus:outline-none focus:border-amber-400 transition-colors"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowAdminPasscode(prev => !prev)}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-amber-300 cursor-pointer"
-                    title={showAdminPasscode ? 'Masquer' : 'Afficher le mot de passe'}
-                  >
-                    {showAdminPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              {errorMessage && (
-                <div className="p-3 bg-rose-950/40 border border-rose-800/60 rounded-xl text-xs text-rose-300 flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                  <span>{errorMessage}</span>
-                </div>
-              )}
-
-              {successMessage && (
-                <div className="p-3 bg-emerald-950/40 border border-emerald-800/60 rounded-xl text-xs text-emerald-300 flex items-start gap-2">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>{successMessage}</span>
-                </div>
-              )}
-
+          {/* Machine HWID Auto-Detection Box */}
+          <div className="p-3 bg-slate-950 rounded-xl border border-slate-800/80 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+                <Laptop className="w-3.5 h-3.5 text-slate-500" />
+                Identifiant Unique Machine (HWID) :
+              </span>
               <button
-                type="submit"
-                disabled={isVerifying}
-                className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 text-slate-950 font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+                type="button"
+                onClick={handleCopyHwid}
+                className="text-[10px] text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer font-medium"
               >
-                {isVerifying ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Authentification Admin...</span>
-                  </>
-                ) : (
-                  <>
-                    <UserCog className="w-4 h-4" />
-                    <span>Ouvrir la Console Admin &amp; Abonnés</span>
-                  </>
-                )}
+                {copiedHwid ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedHwid ? 'Copié !' : 'Copier'}</span>
               </button>
-
-              {/* Render Backend Link Helper for Firebase Hosting */}
-              <div className="pt-2 border-t border-slate-800/70">
-                <button
-                  type="button"
-                  onClick={() => setShowRenderConfig(prev => !prev)}
-                  className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1.5 font-semibold cursor-pointer"
-                >
-                  <Server className="w-3.5 h-3.5" />
-                  <span>
-                    {showRenderConfig ? 'Masquer la liaison Render' : 'Configurer l\'URL Backend Render (Firebase Hosting)'}
-                  </span>
-                </button>
-              </div>
-            </form>
-          )}
-
-          {/* Render Backend URL Configuration Box (visible when needed or toggled in Admin) */}
-          {showRenderConfig && (
-            <div className="p-3.5 rounded-xl bg-slate-950 border border-cyan-500/40 space-y-2 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-cyan-300 flex items-center gap-1.5">
-                  <Server className="w-3.5 h-3.5" />
-                  <span>Liaison Serveur Backend Render</span>
-                </span>
-                <span className="text-[10px] text-slate-400 font-mono">Firebase → Render</span>
-              </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                Si vous utilisez <strong>autoprodz-a7071.web.app</strong> sans <code className="text-cyan-300">VITE_API_URL</code>, collez ici l'URL de votre service Render :
-              </p>
-              <div className="flex items-center gap-2">
-                <input
-                  type="url"
-                  placeholder="https://votre-backend.onrender.com"
-                  value={renderUrlInput}
-                  onChange={(e) => setRenderUrlInput(e.target.value)}
-                  className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveAndTestRender}
-                  disabled={testingRender}
-                  className="px-3 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-lg cursor-pointer shrink-0 disabled:opacity-50"
-                >
-                  {testingRender ? 'Test...' : 'Lier'}
-                </button>
-              </div>
-              {renderStatusMsg && (
-                <div className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-slate-200">
-                  {renderStatusMsg}
-                </div>
-              )}
             </div>
-          )}
+            <div className="font-mono text-xs font-bold text-slate-300 select-all tracking-wider">
+              {hwid || 'Génération de l\'empreinte machine...'}
+            </div>
+            <p className="text-[10px] text-slate-500">
+              Verrouillage matériel activé : chaque clé ou Pass Démo Limité est lié à 1 seul appareil.
+            </p>
+          </div>
+
+          <form onSubmit={handleActivate} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Nom de l'Atelier / Client :
+              </label>
+              <input
+                type="text"
+                placeholder="Ex: Garage Auto Tech"
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-colors font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Clé d'Activation :
+              </label>
+              <input
+                type="text"
+                placeholder="Saisissez votre clé d'accès"
+                value={licenseKey}
+                onChange={(e) => setLicenseKey(e.target.value.toUpperCase())}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-cyan-400 font-mono font-bold tracking-wider placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-colors uppercase"
+              />
+            </div>
+
+            {errorMessage && (
+              <div className="p-3 bg-rose-950/40 border border-rose-800/60 rounded-xl text-xs text-rose-300 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
+            {successMessage && (
+              <div className="p-3 bg-emerald-950/40 border border-emerald-800/60 rounded-xl text-xs text-emerald-300 flex items-start gap-2">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <span>{successMessage}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isVerifying}
+              className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 text-slate-950 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-cyan-500/10"
+            >
+              {isVerifying ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Vérification en cours...</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Valider et Déverrouiller</span>
+                </>
+              )}
+            </button>
+          </form>
         </div>
 
         {/* Contact & Support Box for Acquiring a License */}

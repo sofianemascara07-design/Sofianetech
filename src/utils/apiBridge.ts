@@ -83,7 +83,7 @@ export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   const target = apiUrl(input);
   const isCrossOrigin = target.startsWith('http://') || target.startsWith('https://');
   return globalThis.fetch(target, {
-    credentials: isCrossOrigin ? 'omit' : 'same-origin',
+    credentials: isCrossOrigin ? 'omit' : 'include',
     ...init,
   });
 }
