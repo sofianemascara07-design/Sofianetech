@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Vehicle, DtcCode } from '../types/automotive';
 import { VEHICLE_PRESETS, INITIAL_DTC_CODES } from '../data/mockVehicles';
-import { AlertCircle, CheckCircle2, RotateCcw, Wrench, Sparkles, Activity, ShieldAlert, Cpu, Database, History, Save } from 'lucide-react';
+import { AlertCircle, CheckCircle2, RotateCcw, Wrench, Sparkles, Activity, Cpu, Database, History, Bluetooth, Cable, Play, AlertTriangle } from 'lucide-react';
 import { apiFetch } from '../utils/apiBridge';
+import { obdHardwareBridge, ObdHardwareStatus } from '../utils/obdHardwareBridge';
 
 interface DiagnosticScannerProps {
   selectedVehicle: Vehicle;
@@ -21,22 +22,28 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
   onOpenConnectModal,
   onSelectTab,
 }) => {
-  const [dtcList, setDtcList] = useState<DtcCode[]>(INITIAL_DTC_CODES);
+  const [hwStatus, setHwStatus] = useState<ObdHardwareStatus>(() => obdHardwareBridge.getStatus());
+  const isRealHardware = hwStatus.connected && (hwStatus.transport === 'ble' || hwStatus.transport === 'serial');
+  const isDemoMode = hwStatus.connected && hwStatus.transport === 'demo';
+
+  const [dtcList, setDtcList] = useState<DtcCode[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [scannedSystem, setScannedSystem] = useState('');
-  const [selectedDtc, setSelectedDtc] = useState<DtcCode | null>(INITIAL_DTC_CODES[0]);
+  const [selectedDtc, setSelectedDtc] = useState<DtcCode | null>(null);
   const [clearingDtc, setClearingDtc] = useState(false);
   const [clearedNotice, setClearedNotice] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [hasScannedOnce, setHasScannedOnce] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Live telemetry oscillating values
-  const [liveRpm, setLiveRpm] = useState(820);
-  const [liveBoost, setLiveBoost] = useState(0.05);
-  const [liveCoolant, setLiveCoolant] = useState(88);
-  const [liveRailBar, setLiveRailBar] = useState(320);
-  const [liveMaf, setLiveMaf] = useState(12.4);
+  // Live telemetry values
+  const [liveRpm, setLiveRpm] = useState(0);
+  const [liveBoost, setLiveBoost] = useState(0);
+  const [liveCoolant, setLiveCoolant] = useState(0);
+  const [liveRailBar, setLiveRailBar] = useState(0);
+  const [liveMaf, setLiveMaf] = useState(0);
 
   // AI Mechanic state
   const [aiLoading, setAiLoading] = useState(false);
@@ -50,25 +57,103 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
     ? VEHICLE_PRESETS
     : VEHICLE_PRESETS.filter((v) => v.marketSegment === selectedCategory);
 
-  // Live telemetry oscillation
+  useEffect(() => {
+    return obdHardwareBridge.subscribe(setHwStatus);
+  }, []);
+
+  // Load demo codes only when explicitly in Demo mode; reset when disconnected
+  useEffect(() => {
+    if (isDemoMode && !hasScannedOnce) {
+      setDtcList(INITIAL_DTC_CODES);
+      setSelectedDtc(INITIAL_DTC_CODES[0]);
+    } else if (!hwStatus.connected) {
+      setDtcList([]);
+      setSelectedDtc(null);
+      setLiveRpm(0);
+      setLiveBoost(0);
+      setLiveCoolant(0);
+      setLiveRailBar(0);
+      setLiveMaf(0);
+    }
+  }, [isDemoMode, hwStatus.connected, hasScannedOnce]);
+
+  // Live telemetry polling: REAL OBD-II PIDs when hardware is connected, simulated ONLY in Demo mode
   useEffect(() => {
     if (!isConnected) return;
-    const interval = setInterval(() => {
-      setLiveRpm(800 + Math.floor(Math.sin(Date.now() / 1000) * 40));
-      setLiveBoost(parseFloat((0.02 + Math.abs(Math.sin(Date.now() / 1500) * 0.15)).toFixed(2)));
-      setLiveCoolant(88 + Math.floor(Math.sin(Date.now() / 4000) * 2));
-      setLiveRailBar(310 + Math.floor(Math.sin(Date.now() / 800) * 25));
-      setLiveMaf(parseFloat((12.2 + Math.random() * 0.8).toFixed(1)));
-    }, 1200);
-    return () => clearInterval(interval);
-  }, [isConnected]);
 
-  // Run full system scan
-  const handleStartScan = () => {
-    setIsScanning(true);
-    setScanProgress(0);
+    if (isRealHardware) {
+      let cancelled = false;
+      const pollReal = async () => {
+        if (cancelled) return;
+        const snap = await obdHardwareBridge.readLiveTelemetry();
+        if (cancelled) return;
+        if (snap.rpm !== null) setLiveRpm(snap.rpm);
+        if (snap.coolantTempC !== null) setLiveCoolant(snap.coolantTempC);
+        if (snap.boostBar !== null) setLiveBoost(snap.boostBar);
+        if (snap.mafGs !== null) setLiveMaf(snap.mafGs);
+        if (snap.railPressureBar !== null) setLiveRailBar(snap.railPressureBar);
+      };
+      void pollReal();
+      const interval = setInterval(() => {
+        void pollReal();
+      }, 1500);
+      return () => {
+        cancelled = true;
+        clearInterval(interval);
+      };
+    }
+
+    if (isDemoMode) {
+      const interval = setInterval(() => {
+        setLiveRpm(800 + Math.floor(Math.sin(Date.now() / 1000) * 40));
+        setLiveBoost(parseFloat((0.02 + Math.abs(Math.sin(Date.now() / 1500) * 0.15)).toFixed(2)));
+        setLiveCoolant(88 + Math.floor(Math.sin(Date.now() / 4000) * 2));
+        setLiveRailBar(310 + Math.floor(Math.sin(Date.now() / 800) * 25));
+        setLiveMaf(parseFloat((12.2 + Math.random() * 0.8).toFixed(1)));
+      }, 1200);
+      return () => clearInterval(interval);
+    }
+  }, [isConnected, isRealHardware, isDemoMode]);
+
+  // Run full system scan (Real OBD-II Mode 03/07 OR Demo)
+  const handleStartScan = async () => {
+    setScanError(null);
     setClearedNotice(false);
 
+    if (!hwStatus.connected) {
+      setScanError('Veuillez d’abord connecter un boîtier OBD2 réel (Bluetooth BLE ou USB) ou activer le Mode Démo Atelier.');
+      onOpenConnectModal();
+      return;
+    }
+
+    if (isRealHardware) {
+      setIsScanning(true);
+      setScanProgress(25);
+      setScannedSystem('Interrogation OBD-II réelle (Mode 03 Défauts confirmés & Mode 07 Fugitifs)...');
+      try {
+        const res = await obdHardwareBridge.readDtcCodes();
+        setScanProgress(85);
+        setScannedSystem('Décodage trames SAE J2012 & vérification VIN...');
+        setHasScannedOnce(true);
+        setDtcList(res.dtcs);
+        setSelectedDtc(res.dtcs[0] || null);
+        if (!res.ecuResponded && !hwStatus.ecuResponding) {
+          setScanError(
+            'Le boîtier ELM327 est connecté mais le calculateur voiture n’a pas répondu (NO DATA). Vérifiez que le contact est mis (ON) et que la prise OBD2 est bien enfoncée.'
+          );
+        }
+        setScanProgress(100);
+      } catch (err) {
+        setScanError(err instanceof Error ? err.message : 'Erreur lors de la lecture OBD2 réelle.');
+      } finally {
+        setIsScanning(false);
+      }
+      return;
+    }
+
+    // Demo mode simulation
+    setIsScanning(true);
+    setScanProgress(0);
     const systems = [
       'Calculateur Moteur (ECM/ECU)',
       'Boîte de Vitesses Robotisée (TCU)',
@@ -88,21 +173,44 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
       if (step >= systems.length) {
         clearInterval(interval);
         setIsScanning(false);
-        // Refresh codes
+        setHasScannedOnce(true);
         setDtcList(INITIAL_DTC_CODES);
+        setSelectedDtc(INITIAL_DTC_CODES[0]);
       }
-    }, 400);
+    }, 350);
   };
 
-  // Clear DTC
-  const handleClearDtc = () => {
+  // Clear DTC (Real Mode 04 OR Demo)
+  const handleClearDtc = async () => {
+    setScanError(null);
+    if (!hwStatus.connected) return;
+
     setClearingDtc(true);
+    if (isRealHardware) {
+      try {
+        const res = await obdHardwareBridge.clearDtcCodes();
+        if (res.success) {
+          const verify = await obdHardwareBridge.readDtcCodes();
+          setDtcList(verify.dtcs);
+          setSelectedDtc(verify.dtcs[0] || null);
+          setClearedNotice(verify.dtcs.length === 0);
+        } else {
+          setScanError(`Le calculateur a refusé l’effacement (${res.rawResponse}). Contact ON moteur arrêté requis.`);
+        }
+      } catch (err) {
+        setScanError(err instanceof Error ? err.message : 'Erreur effacement OBD2.');
+      } finally {
+        setClearingDtc(false);
+      }
+      return;
+    }
+
     setTimeout(() => {
       setDtcList([]);
       setSelectedDtc(null);
       setClearingDtc(false);
       setClearedNotice(true);
-    }, 1200);
+    }, 1000);
   };
 
   // Ask AI Mechanic
@@ -139,7 +247,7 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
       const payload = {
         vehicleId: selectedVehicle.id,
         vehicleName: `${selectedVehicle.brand} ${selectedVehicle.model}`,
-        vin: `${selectedVehicle.brand.substring(0, 3).toUpperCase()}-DZ26-${Math.floor(1000 + Math.random() * 9000)}`,
+        vin: hwStatus.vin || `${selectedVehicle.brand.substring(0, 3).toUpperCase()}-DZ26-${Math.floor(1000 + Math.random() * 9000)}`,
         year: selectedVehicle.year,
         engine: selectedVehicle.engine,
         mileageKm: 32000,
@@ -245,6 +353,90 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Hardware vs Demo Banner */}
+      {isRealHardware ? (
+        <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-600/60 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="font-bold text-emerald-300 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>CONNEXION VOITURE RÉELLE ACTIVE : {hwStatus.deviceName}</span>
+            </div>
+            <div className="text-slate-300 font-mono text-[11px]">
+              {hwStatus.adapterVersion} · Protocole : {hwStatus.protocolName || 'Auto'}
+              {hwStatus.vin ? ` · VIN : ${hwStatus.vin}` : ''}
+              {!hwStatus.ecuResponding && ' · ⚠️ Calculateur muet (vérifiez contact ON)'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenConnectModal}
+            className="px-3 py-1.5 rounded-lg bg-slate-900 border border-emerald-700/60 text-emerald-300 hover:bg-slate-800 font-semibold shrink-0 cursor-pointer"
+          >
+            Détails / Déconnecter
+          </button>
+        </div>
+      ) : isDemoMode ? (
+        <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-600/50 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-amber-200">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>MODE DÉMO ATELIER</strong> (données fictives simulées sans véhicule). Pour tester une vraie voiture, connectez votre ELM327 BLE ou USB.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenConnectModal}
+            className="px-3 py-1.5 rounded-lg bg-cyan-500 text-slate-950 hover:bg-cyan-400 font-bold shrink-0 cursor-pointer"
+          >
+            Connecter Vraie Voiture
+          </button>
+        </div>
+      ) : (
+        <div className="p-4 rounded-xl bg-slate-900/80 border border-cyan-500/40 text-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <span className="font-bold text-white block">
+              Aucun adaptateur OBD2 connecté au véhicule
+            </span>
+            <span className="text-slate-400 block">
+              Branchez votre prise ELM327 (Bluetooth BLE 4.0 sur Android/PC ou Câble USB sur PC), mettez le contact ON, puis lancez la connexion :
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => obdHardwareBridge.connectBluetoothBLE().catch((e) => setScanError(e.message))}
+              className="px-3 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Bluetooth className="w-3.5 h-3.5" />
+              <span>Bluetooth BLE</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => obdHardwareBridge.connectUsbSerial(38400).catch((e) => setScanError(e.message))}
+              className="px-3 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Cable className="w-3.5 h-3.5" />
+              <span>USB PC</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => obdHardwareBridge.activateDemoMode()}
+              className="px-3 py-2 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Play className="w-3.5 h-3.5" />
+              <span>Mode Démo</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {scanError && (
+        <div className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-700/60 text-rose-200 text-xs flex items-start gap-2.5">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+          <span className="leading-relaxed">{scanError}</span>
+        </div>
+      )}
 
       {/* Control Banner: Scan & Clear */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl bg-slate-900/40 border border-slate-800">

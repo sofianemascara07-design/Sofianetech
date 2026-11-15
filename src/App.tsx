@@ -22,6 +22,7 @@ import { VoiceAssistantModal } from './components/VoiceAssistantModal';
 import { INITIAL_DTC_CODES } from './data/mockVehicles';
 import { ShieldCheck, Cpu } from 'lucide-react';
 import { apiFetch } from './utils/apiBridge';
+import { obdHardwareBridge, ObdHardwareStatus } from './utils/obdHardwareBridge';
 
 const REVOKED_LEGACY_DEMO_KEYS = new Set([
   'AP-DZ26-MST-9882-7EAB-5A63',
@@ -71,12 +72,25 @@ export default function App() {
     return localStorage.getItem('autopro_atelier_mode') === 'true';
   });
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle>(VEHICLE_PRESETS[0]);
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>('cable');
-  const [isConnected, setIsConnected] = useState<boolean>(true);
-  const [batteryVoltage, setBatteryVoltage] = useState<number>(13.8);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>('bluetooth');
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [batteryVoltage, setBatteryVoltage] = useState<number>(12.6);
+  const [hardwareStatus, setHardwareStatus] = useState<ObdHardwareStatus>(() => obdHardwareBridge.getStatus());
   const [isConnectModalOpen, setIsConnectModalOpen] = useState<boolean>(false);
   const [dtcCodes] = useState(INITIAL_DTC_CODES);
   const [demoRemainingText, setDemoRemainingText] = useState<string | null>(null);
+
+  useEffect(() => {
+    return obdHardwareBridge.subscribe((status) => {
+      setHardwareStatus(status);
+      setIsConnected(status.connected);
+      if (status.transport === 'ble') setConnectionMode('bluetooth');
+      if (status.transport === 'serial') setConnectionMode('cable');
+      if (typeof status.batteryVoltage === 'number') {
+        setBatteryVoltage(status.batteryVoltage);
+      }
+    });
+  }, []);
 
   const lockSession = useCallback((reason?: string) => {
     localStorage.removeItem('autopro_license_session');
@@ -224,6 +238,7 @@ export default function App() {
         onSelectTab={setActiveTab}
         isConnected={isConnected}
         connectionMode={connectionMode}
+        hardwareTransport={hardwareStatus.transport}
         onOpenConnectModal={() => setIsConnectModalOpen(true)}
         licenseSession={licenseSession}
         onOpenLicenseModal={() => setIsLicenseModalOpen(true)}

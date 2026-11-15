@@ -22,6 +22,7 @@ interface HeaderProps {
   onSelectTab: (tab: NavTab) => void;
   isConnected: boolean;
   connectionMode: ConnectionMode;
+  hardwareTransport?: 'none' | 'ble' | 'serial' | 'demo';
   onOpenConnectModal: () => void;
   licenseSession?: LicenseSession | null;
   onOpenLicenseModal?: () => void;
@@ -38,6 +39,7 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectTab,
   isConnected,
   connectionMode,
+  hardwareTransport = 'none',
   onOpenConnectModal,
   licenseSession,
   onOpenLicenseModal,
@@ -49,13 +51,16 @@ export const Header: React.FC<HeaderProps> = ({
   demoRemainingText,
 }) => {
   const getModeLabel = (mode: ConnectionMode) => {
+    if (hardwareTransport === 'ble') return 'ELM327 BLE Réel';
+    if (hardwareTransport === 'serial') return 'ELM327 USB Réel';
+    if (hardwareTransport === 'demo') return 'Démo Atelier';
     switch (mode) {
       case 'cable':
         return 'Câble USB-C';
       case 'wifi':
         return 'WiFi Direct';
       case 'bluetooth':
-        return 'Bluetooth 5.0';
+        return 'Bluetooth BLE';
     }
   };
 
@@ -147,20 +152,26 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onOpenConnectModal}
               className={`px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer ${
-                isConnected
-                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60 hover:bg-emerald-900/60'
+                isConnected && (hardwareTransport === 'ble' || hardwareTransport === 'serial')
+                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-600/70 hover:bg-emerald-900/60'
+                  : isConnected && hardwareTransport === 'demo'
+                  ? 'bg-amber-950/80 text-amber-300 border border-amber-600/60 hover:bg-amber-900/60'
                   : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400'
               }`}
             >
               <span
                 className={`w-2 h-2 rounded-full ${
-                  isConnected ? 'bg-emerald-400' : 'bg-slate-900'
+                  isConnected && (hardwareTransport === 'ble' || hardwareTransport === 'serial')
+                    ? 'bg-emerald-400 animate-pulse'
+                    : isConnected && hardwareTransport === 'demo'
+                    ? 'bg-amber-400'
+                    : 'bg-slate-900'
                 }`}
               />
               <span>
                 {isConnected
-                  ? `Liaison Active (${getModeLabel(connectionMode)})`
-                  : 'Connecter Tablette'}
+                  ? getModeLabel(connectionMode)
+                  : 'Connecter Voiture (OBD2)'}
               </span>
             </button>
           </div>

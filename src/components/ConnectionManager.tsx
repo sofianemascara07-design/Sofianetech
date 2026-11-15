@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ConnectionMode } from '../types/automotive';
-import { Cable, Wifi, Bluetooth, CheckCircle2, AlertTriangle, RefreshCw, Cpu, Activity, ShieldCheck, Smartphone, Tablet, Car, Key, Radio, Sparkles, ExternalLink, Play } from 'lucide-react';
+import { Cable, Wifi, Bluetooth, CheckCircle2, AlertTriangle, RefreshCw, Cpu, Activity, ShieldCheck, Smartphone, Tablet, Car, Key, Radio, Sparkles, Play, Send } from 'lucide-react';
+import { obdHardwareBridge, ObdHardwareStatus } from '../utils/obdHardwareBridge';
 
 interface ConnectionManagerProps {
   connectionMode: ConnectionMode;
@@ -19,59 +20,78 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   batteryVoltage,
   setBatteryVoltage,
 }) => {
-  const [baudRate, setBaudRate] = useState<string>('500000'); // 500k CAN
+  const [baudRate, setBaudRate] = useState<string>('38400');
   const [protocol, setProtocol] = useState<string>('ISO 14229 UDS over CAN');
   const [connecting, setConnecting] = useState(false);
-  const [logs, setLogs] = useState<string[]>([
-    'Interface AutoPro initialisée.',
-    'Pilotes matériels USB-OTG / BLE / WiFi Direct prêts.',
-    'En attente d\'établissement de liaison avec la tablette automobile...',
-  ]);
-  const [packetCount, setPacketCount] = useState(14820);
-  const [pingMs, setPingMs] = useState(4);
+  const [hwStatus, setHwStatus] = useState<ObdHardwareStatus>(() => obdHardwareBridge.getStatus());
+  const [customAtCmd, setCustomAtCmd] = useState<string>('ATRV');
+  const [sendingCmd, setSendingCmd] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [packetCount, setPacketCount] = useState(0);
+  const [pingMs, setPingMs] = useState(0);
 
-  // Periodic packets simulation when connected
   useEffect(() => {
-    if (!isConnected) return;
+    return obdHardwareBridge.subscribe(setHwStatus);
+  }, []);
+
+  const isRealHw = hwStatus.connected && (hwStatus.transport === 'ble' || hwStatus.transport === 'serial');
+
+  // Update ping/packets when connected
+  useEffect(() => {
+    if (!isConnected) {
+      setPingMs(0);
+      return;
+    }
     const interval = setInterval(() => {
-      setPacketCount((prev) => prev + Math.floor(Math.random() * 15) + 5);
-      setPingMs(connectionMode === 'cable' ? 2 + Math.floor(Math.random() * 3) : connectionMode === 'wifi' ? 6 + Math.floor(Math.random() * 5) : 18 + Math.floor(Math.random() * 10));
+      setPacketCount((prev) => prev + (isRealHw ? 6 : 12));
+      setPingMs(connectionMode === 'cable' ? 4 : connectionMode === 'wifi' ? 9 : 22);
     }, 1500);
     return () => clearInterval(interval);
-  }, [isConnected, connectionMode]);
+  }, [isConnected, connectionMode, isRealHw]);
 
-  const handleToggleConnect = () => {
+  const handleToggleConnect = async () => {
+    setConnectionError(null);
     if (isConnected) {
+      await obdHardwareBridge.disconnect();
       setIsConnected(false);
-      setLogs((prev) => [
-        `[${new Date().toLocaleTimeString()}] Liaison déconnectée par l'opérateur.`,
-        ...prev.slice(0, 8),
-      ]);
+      return;
+    }
+
+    if (connectionMode === 'wifi') {
+      setConnectionError(
+        'Les navigateurs web HTTPS (Chrome / PWA) bloquent l’accès direct aux sockets TCP bruts 192.168.0.10:35000 des boîtiers ELM327 WiFi. Utilisez plutôt Bluetooth BLE 4.0 (sur Android/PC) ou Câble USB (sur PC).'
+      );
       return;
     }
 
     setConnecting(true);
-    setLogs((prev) => [
-      `[${new Date().toLocaleTimeString()}] Recherche de la tablette automobile via canal ${connectionMode.toUpperCase()}...`,
-      ...prev,
-    ]);
-
-    setTimeout(() => {
-      setLogs((prev) => [
-        `[${new Date().toLocaleTimeString()}] Négociation handshake protocole ${protocol} (Baudrate: ${baudRate} bps)...`,
-        ...prev,
-      ]);
-    }, 700);
-
-    setTimeout(() => {
-      setConnecting(false);
+    try {
+      if (connectionMode === 'bluetooth') {
+        await obdHardwareBridge.connectBluetoothBLE();
+      } else {
+        const parsedBaud = parseInt(baudRate, 10) || 38400;
+        await obdHardwareBridge.connectUsbSerial(parsedBaud);
+      }
       setIsConnected(true);
-      setLogs((prev) => [
-        `[${new Date().toLocaleTimeString()}] SUCCÈS : Liaison établie avec Head-Unit Android Automotive (ID: 0x9AF2).`,
-        `[${new Date().toLocaleTimeString()}] Passerelle CAN/OBD active. Tension mesurée : ${batteryVoltage.toFixed(1)}V.`,
-        ...prev.slice(0, 8),
-      ]);
-    }, 1400);
+    } catch (err) {
+      setConnectionError(err instanceof Error ? err.message : 'Échec de connexion matérielle.');
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleSendAtCommand = async (cmdToSend?: string) => {
+    const cmd = (cmdToSend || customAtCmd).trim();
+    if (!cmd || !isRealHw) return;
+    setSendingCmd(true);
+    setConnectionError(null);
+    try {
+      await obdHardwareBridge.sendCommand(cmd, 5000, true);
+    } catch (err) {
+      setConnectionError(err instanceof Error ? err.message : 'Erreur envoi commande.');
+    } finally {
+      setSendingCmd(false);
+    }
   };
 
   return (
@@ -128,6 +148,14 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Hardware Connection Error Notice */}
+      {connectionError && (
+        <div className="p-4 rounded-xl bg-rose-950/50 border border-rose-700/60 text-rose-200 text-xs flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+          <div className="leading-relaxed">{connectionError}</div>
+        </div>
+      )}
 
       {/* Battery Security Warning */}
       {batteryVoltage < 12.5 && (
@@ -325,10 +353,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                   onChange={(e) => setBaudRate(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
                 >
-                  <option value="500000">500 000 bps (Standard High-Speed)</option>
-                  <option value="250000">250 000 bps (Medium-Speed)</option>
-                  <option value="1000000">1 000 000 bps (CAN-FD Fast)</option>
-                  <option value="10400">10 400 bps (K-Line)</option>
+                  <option value="38400">38 400 bps (ELM327 USB Standard)</option>
+                  <option value="115200">115 200 bps (STN / vLinker Rapide)</option>
+                  <option value="500000">500 000 bps (CAN High-Speed)</option>
+                  <option value="9600">9 600 bps (Ancien adaptateur)</option>
                 </select>
               </div>
 
@@ -372,26 +400,74 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               </div>
             </div>
 
-            <div className="bg-slate-950 rounded-lg p-3 font-mono text-[11px] text-slate-300 h-36 overflow-y-auto space-y-1 border border-slate-800">
-              {logs.map((log, idx) => (
+            <div className="bg-slate-950 rounded-lg p-3 font-mono text-[11px] text-slate-300 h-44 overflow-y-auto space-y-1 border border-slate-800">
+              {hwStatus.logs.map((log, idx) => (
                 <div key={idx} className="leading-tight">
                   <span className="text-slate-500 mr-2">&gt;</span>
-                  <span className={log.includes('SUCCÈS') ? 'text-emerald-400 font-semibold' : log.includes('Avertissement') ? 'text-amber-400' : 'text-slate-300'}>
+                  <span
+                    className={
+                      log.includes('SUCCÈS')
+                        ? 'text-emerald-400 font-semibold'
+                        : log.includes('AVERTISSEMENT') || log.includes('ALERTE')
+                        ? 'text-amber-400'
+                        : log.includes('ERREUR') || log.includes('ÉCHEC')
+                        ? 'text-rose-400'
+                        : 'text-slate-300'
+                    }
+                  >
                     {log}
                   </span>
                 </div>
               ))}
             </div>
+
+            {isRealHw && (
+              <div className="mt-3 space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {['ATZ', 'ATRV', 'ATDP', '0100', '010C', '03', '0902'].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      disabled={sendingCmd}
+                      onClick={() => void handleSendAtCommand(preset)}
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 font-mono text-[10px] cursor-pointer"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={customAtCmd}
+                    onChange={(e) => setCustomAtCmd(e.target.value)}
+                    placeholder="Commande AT ou OBD2 (ex: 0105)"
+                    className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={sendingCmd}
+                    onClick={() => void handleSendAtCommand()}
+                    className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Envoyer</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
-            <span>Statut Socket :</span>
+            <span>Statut Matériel :</span>
             <span className="flex items-center gap-1.5 font-medium text-slate-200">
-              {isConnected ? (
+              {isRealHw ? (
                 <>
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Connecté (Canal Crypté AES-256)</span>
+                  <span>{hwStatus.deviceName} ({hwStatus.ecuResponding ? 'ECU OK' : 'ECU muet'})</span>
                 </>
+              ) : isConnected ? (
+                <span className="text-amber-300">Mode Démo Atelier (Simulation)</span>
               ) : (
                 <span className="text-slate-500">Hors ligne</span>
               )}

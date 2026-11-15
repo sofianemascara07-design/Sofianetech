@@ -56,13 +56,95 @@ const getAIClient = () => {
   });
 };
 
+// Groq OpenAI-compatible Server Helper (GROQ_API_KEY in Render / .env)
+const callGroqAI = async (prompt: string, jsonMode = false, timeoutMs = 12000): Promise<string | null> => {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey || !groqKey.trim()) return null;
+
+  const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${groqKey.trim()}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: jsonMode ? 0.2 : 0.4,
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Groq HTTP ${res.status}: ${errText}`);
+    }
+
+    const data: any = await res.json();
+    return data?.choices?.[0]?.message?.content?.trim() || null;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+// Unified AI Runner: tries Groq if preferred or Gemini is absent/fails, and vice-versa
+const generateUnifiedAI = async (prompt: string, options?: { jsonMode?: boolean; timeoutMs?: number }): Promise<string | null> => {
+  const jsonMode = Boolean(options?.jsonMode);
+  const timeoutMs = options?.timeoutMs || 15000;
+  const preferGroq = (process.env.AI_PROVIDER || '').toLowerCase() === 'groq' || (!process.env.GEMINI_API_KEY && Boolean(process.env.GROQ_API_KEY));
+
+  if (preferGroq) {
+    try {
+      const groqText = await callGroqAI(prompt, jsonMode, timeoutMs);
+      if (groqText) return groqText;
+    } catch (err: any) {
+      console.warn('Groq primary call failed, checking Gemini fallback:', err.message);
+    }
+  }
+
+  const ai = getAIClient();
+  if (ai) {
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('GEMINI_TIMEOUT')), timeoutMs)
+      );
+      const aiPromise = ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: prompt,
+        ...(jsonMode ? { config: { responseMimeType: 'application/json', temperature: 0.2 } } : {}),
+      });
+      const response: any = await Promise.race([aiPromise, timeoutPromise]);
+      if (response?.text) return response.text;
+    } catch (err: any) {
+      console.warn('Gemini call failed, checking Groq fallback:', err.message);
+    }
+  }
+
+  if (!preferGroq && process.env.GROQ_API_KEY) {
+    try {
+      const groqText = await callGroqAI(prompt, jsonMode, timeoutMs);
+      if (groqText) return groqText;
+    } catch (err: any) {
+      console.warn('Groq fallback failed:', err.message);
+    }
+  }
+
+  return null;
+};
+
 // API: AI Diagnostic Expert
 app.post('/api/diagnose/ai', async (req, res) => {
   try {
     const { brand, model, year, engine, dtcCodes, symptoms } = req.body;
-    const ai = getAIClient();
+    const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
 
-    if (!ai) {
+    if (!hasAi) {
       return res.status(200).json({
         analysis: `Diagnostic mécanique généré (Mode Hors-Ligne) pour ${brand} ${model} (${year || '2022'}) - ${engine || 'Moteur Standard'}.\n\nCodes détectés: ${(dtcCodes || []).join(', ') || 'Aucun code DTC actif'}.\n\nRecommandations:\n1. Vérifier la tension de batterie (min. 12.4V au repos, 14.2V en charge).\n2. Contrôler les faisceaux CAN High / CAN Low (60 Ohms entre broches 6 et 14 OBD2).\n3. Inspecter les capteurs de suralimentation et d'admission d'air.\n4. Effacement des codes recommandé après vérification physique.`,
         urgency: 'Moyenne',
@@ -97,12 +179,11 @@ Donne une analyse technique approfondie, en français clair et professionnel, co
 
 Reste concis, structuré et directement exploitable par un technicien d'atelier.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-    });
+    const analysis = await generateUnifiedAI(prompt);
+    if (!analysis) {
+      throw new Error('Aucun fournisseur IA disponible');
+    }
 
-    const analysis = response.text || 'Analyse terminée.';
     return res.json({
       analysis,
       urgency: dtcCodes?.some((c: string) => c.startsWith('P02') || c.startsWith('P03')) ? 'Élevée' : 'Modérée',
@@ -121,9 +202,9 @@ Reste concis, structuré et directement exploitable par un technicien d'atelier.
 app.post('/api/translate/ai', async (req, res) => {
   try {
     const { targetLanguage, sourceStrings, appName } = req.body;
-    const ai = getAIClient();
+    const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
 
-    if (!ai) {
+    if (!hasAi) {
       // Fallback translation dictionary
       const translatedMap: Record<string, string> = {};
       const sample = sourceStrings || [];
@@ -154,16 +235,13 @@ Règles impératives :
   "notes": "Courte remarque sur les adaptations ergonomiques pour conduite sécurisée"
 }`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-      },
-    });
+    const aiText = await generateUnifiedAI(prompt, { jsonMode: true });
+    if (!aiText) {
+      throw new Error('Traduction IA indisponible');
+    }
 
     try {
-      const parsed = JSON.parse(response.text || '{}');
+      const parsed = JSON.parse(aiText);
       const translatedMap: Record<string, string> = {};
       (parsed.translations || []).forEach((t: { key: string; translated: string }) => {
         translatedMap[t.key] = t.translated;
@@ -174,7 +252,7 @@ Règles impératives :
       });
     } catch {
       return res.json({
-        raw: response.text,
+        raw: aiText,
         translatedStrings: {},
         notes: 'Traduction terminée.',
       });
@@ -218,9 +296,9 @@ Règles impératives :
 app.post('/api/flash/recommendations', async (req, res) => {
   try {
     const { brand, model, ecuType, flashStage } = req.body;
-    const ai = getAIClient();
+    const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
 
-    if (!ai) {
+    if (!hasAi) {
       return res.json({
         stage: flashStage || 'Stage 1',
         estimatedGainHp: '+35 ch',
@@ -245,13 +323,13 @@ Donne les paramètres techniques optimaux :
 
 Rends une réponse technique, concise et précise.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-    });
+    const recommendation = await generateUnifiedAI(prompt);
+    if (!recommendation) {
+      throw new Error('IA reprog indisponible');
+    }
 
     return res.json({
-      recommendation: response.text,
+      recommendation,
       estimatedGainHp: flashStage.includes('Stage 2') ? '+55 à +75 ch' : flashStage.includes('Eco') ? '+15 ch & -15% Conso' : '+30 à +45 ch',
       estimatedGainTorque: flashStage.includes('Stage 2') ? '+110 Nm' : '+65 Nm',
       checksumVerified: true,
@@ -429,7 +507,7 @@ app.post('/api/ai/voice-command', async (req, res) => {
       return res.status(400).json({ error: 'Texte vocal manquant' });
     }
 
-    const ai = getAIClient();
+    const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
     const prompt = `Tu es la Matrice IA Automobile "${matrixName}" intégrée dans un véhicule moderne (${vehicle?.brand || 'Véhicule'} ${vehicle?.model || ''}).
 L'utilisateur vient de donner cette commande vocale (en français, arabe/darija ou anglais) : "${transcript}".
 
@@ -460,30 +538,20 @@ Règles de mapping :
 
 Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentaire.`;
 
-    if (ai) {
+    if (hasAi) {
       try {
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('AI_TIMEOUT')), 2500)
-        );
-        const aiPromise = ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-            temperature: 0.2,
-          },
-        });
-        const response: any = await Promise.race([aiPromise, timeoutPromise]);
-        const text = response.text?.trim() || '';
-        const parsed = JSON.parse(text);
-        return res.json({
-          success: true,
-          matrixName,
-          transcript,
-          ...parsed,
-        });
+        const text = await generateUnifiedAI(prompt, { jsonMode: true, timeoutMs: 3000 });
+        if (text) {
+          const parsed = JSON.parse(text);
+          return res.json({
+            success: true,
+            matrixName,
+            transcript,
+            ...parsed,
+          });
+        }
       } catch (aiErr) {
-        console.warn('Gemini voice fallback:', aiErr);
+        console.warn('AI voice fallback:', aiErr);
       }
     }
 
