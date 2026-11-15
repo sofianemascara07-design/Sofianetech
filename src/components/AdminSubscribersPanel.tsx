@@ -19,9 +19,12 @@ import {
   RefreshCw,
   AlertTriangle,
   Sliders,
+  FileText,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { LicenseTier, SecuritySettings, SubscriberRecord } from '../types/automotive';
 import { apiFetch } from '../utils/apiBridge';
+import { downloadCommercialPacksPdf, downloadCommercialPacksExcel } from '../utils/commercialCatalogExport';
 
 interface AdminSubscribersPanelProps {
   onAdminSessionInvalid?: (reason: string) => void;
@@ -395,6 +398,30 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
+              onClick={() => {
+                const file = downloadCommercialPacksPdf();
+                showMsg('success', `PDF téléchargé : ${file}`);
+              }}
+              className="px-3.5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <FileText className="w-4 h-4" />
+              <span>Grille 3 Packs (PDF)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const file = downloadCommercialPacksExcel();
+                showMsg('success', `Fichier Excel téléchargé : ${file}`);
+              }}
+              className="px-3.5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>Tableau Excel</span>
+            </button>
+
+            <button
+              type="button"
               onClick={loadOverview}
               disabled={loading}
               className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 flex items-center gap-1.5 cursor-pointer"
@@ -499,6 +526,7 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
                 <option value="master">Abonné MASTER DZ (Illimité · Tous Modules)</option>
                 <option value="reprog">Abonné REPROG PRO (Diag + Flash + Caméras)</option>
                 <option value="standard">Abonné STANDARD (Diag + Caméras + Apps)</option>
+                <option value="tablette_chinois">Pack TABLETTE CHINOISE ONLY (Écrans Chinois + Apps + Traducteur)</option>
                 <option value="demo">Pass Démo LIMITÉ (Chrono + 3 Modules Seulement)</option>
               </select>
             </div>

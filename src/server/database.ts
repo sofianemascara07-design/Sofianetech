@@ -534,6 +534,8 @@ export class AutoProDatabase {
         ? 'AP-DZ26-MST'
         : input.tier === 'reprog'
         ? 'AP-DZ26-STG'
+        : input.tier === 'tablette_chinois'
+        ? 'AP-DZ26-CHN'
         : input.tier === 'demo'
         ? 'AP-DEMO-LIM'
         : 'AP-DZ26-STD';

@@ -81,7 +81,7 @@ export interface SmartechDzConfig {
   tokenStatus: 'Validé' | 'En attente' | 'Non détecté';
 }
 
-export type LicenseTier = 'admin' | 'master' | 'reprog' | 'standard' | 'demo';
+export type LicenseTier = 'admin' | 'master' | 'reprog' | 'standard' | 'tablette_chinois' | 'demo';
 
 export interface LicenseSession {
   key: string;

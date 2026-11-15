@@ -35,11 +35,13 @@ import {
   HelpCircle,
   Camera,
   Server,
-  Terminal
+  Terminal,
+  FileSpreadsheet
 } from 'lucide-react';
 import { Vehicle } from '../types/automotive';
 import { VEHICLE_PRESETS } from '../data/mockVehicles';
 import { getBackendBaseUrl, setBackendBaseUrl } from '../utils/apiBridge';
+import { downloadCommercialPacksPdf, downloadCommercialPacksExcel } from '../utils/commercialCatalogExport';
 
 interface CommercialPackagingProps {
   appUrl: string;
@@ -354,6 +356,24 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
             >
               <QrCode className="w-4 h-4 text-cyan-400" />
               <span>{showQrModal ? 'Masquer QR' : 'QR Code'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => downloadCommercialPacksPdf()}
+              className="px-3.5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <FileText className="w-4 h-4" />
+              <span>Catalogue PDF</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => downloadCommercialPacksExcel()}
+              className="px-3.5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>Tableau Excel</span>
             </button>
 
             <a

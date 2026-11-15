@@ -842,6 +842,8 @@ app.post('/api/license/verify', (req, res) => {
       ? 'Pack MASTER DZ (Abonné Illimité · Tous Modules)'
       : tier === 'reprog'
       ? 'Pack REPROG PRO (Abonné · Flash & Diag)'
+      : tier === 'tablette_chinois'
+      ? 'Pack TABLETTE CHINOISE ONLY (Écrans Chinois · Apps · Traducteur)'
       : tier === 'demo'
       ? `Pass Démo Limité (${sub.maxDemoMinutes || 10} min max)`
       : 'Pack DIAGNOSTIC STD (Abonné · Multimarque)';
@@ -851,6 +853,8 @@ app.post('/api/license/verify', (req, res) => {
       ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'smartech', 'connection', 'apps', 'translator']
       : tier === 'reprog'
       ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'connection', 'translator']
+      : tier === 'tablette_chinois'
+      ? ['chinese_flasher', 'apps', 'translator', 'connection']
       : tier === 'demo'
       ? ['diagnostic', 'cameras', 'history']
       : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'translator'];
