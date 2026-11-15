@@ -684,6 +684,33 @@ class ObdHardwareBridge {
     return null;
   }
 
+  public async readCalibrationId(): Promise<string | null> {
+    if (!this.isRealHardwareConnected()) return null;
+    try {
+      const raw = await this.sendCommand('0904', 5000, true);
+      const bytes = extractHexBytesAfterHeader(raw, '49');
+      const asciiChars: string[] = [];
+      let startIdx = 0;
+      if (bytes[0] === 0x49 && bytes[1] === 0x04) {
+        startIdx = bytes[2] <= 0x08 ? 3 : 2;
+      }
+      for (let i = startIdx; i < bytes.length; i++) {
+        const b = bytes[i];
+        if ((b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a) || b === 0x2d || b === 0x5f || b === 0x2e) {
+          asciiChars.push(String.fromCharCode(b));
+        }
+      }
+      const calId = asciiChars.join('').trim();
+      if (calId.length >= 4) {
+        this.pushLog(`Calibration / Build ID ECU lu (0904) : ${calId}`);
+        return calId;
+      }
+    } catch {
+      // Many ECUs do not expose Mode 09 PID 04 over generic ELM327
+    }
+    return null;
+  }
+
   public async readLiveTelemetry(): Promise<RealTelemetrySnapshot> {
     const snap: RealTelemetrySnapshot = {
       rpm: null,

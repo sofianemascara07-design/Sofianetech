@@ -6,6 +6,16 @@
     "actionDetails": "Connexion Administrateur Principal (Accès Ouvert Complet)",
     "locationCity": "Mascara, Algérie",
     "durationMinutes": 1,
+    "id": "ACT-DZ-4708",
+    "timestamp": "2026-11-15T18:48:13.290Z"
+  },
+  {
+    "clientName": "Admin Sofiane Mascara",
+    "hwid": "ADMIN-CONSOLE",
+    "actionType": "activation",
+    "actionDetails": "Connexion Administrateur Principal (Accès Ouvert Complet)",
+    "locationCity": "Mascara, Algérie",
+    "durationMinutes": 1,
     "id": "ACT-DZ-1036",
     "timestamp": "2026-11-14T12:11:35.264Z"
   },

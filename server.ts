@@ -11,31 +11,162 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
 const port =
   process.env.RENDER || (process.env.NODE_ENV === 'production' && process.env.PORT && process.env.PORT !== '8080')
     ? Number(process.env.PORT) || 3000
     : 3000;
 
-// CORS for separated Firebase Hosting (https://autoprodz-a7071.web.app) & Render Backend
+// Strict CORS Origin Allowlist (Firebase Hosting, Render, AI Studio Preview, Localhost)
+const EXTRA_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const isAllowedOrigin = (origin: string | undefined): boolean => {
+  if (!origin) return true; // Non-browser tools / healthchecks / same-origin
+  if (
+    origin === 'https://autoprodz-a7071.web.app' ||
+    origin === 'https://autoprodz-a7071.firebaseapp.com' ||
+    origin === 'https://autopro-suitebacken.onrender.com' ||
+    origin.startsWith('http://localhost:') ||
+    origin.startsWith('http://127.0.0.1:') ||
+    EXTRA_ORIGINS.includes(origin)
+  ) {
+    return true;
+  }
+  try {
+    const parsed = new URL(origin);
+    if (
+      parsed.protocol === 'https:' &&
+      (parsed.hostname.endsWith('.europe-west2.run.app') ||
+        parsed.hostname.endsWith('.aistudio.google.com') ||
+        parsed.hostname.endsWith('.onrender.com'))
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+};
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (origin && isAllowedOrigin(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+  } else if (!origin) {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-passcode');
+
+  // Production HTTP Security Headers
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.header('Permissions-Policy', 'camera=(self), microphone=(self), bluetooth=(self), serial=(self), usb=(self), geolocation=()');
+  if (process.env.NODE_ENV === 'production') {
+    res.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+
   if (req.method === 'OPTIONS') {
+    if (origin && !isAllowedOrigin(origin)) {
+      return res.sendStatus(403);
+    }
     return res.sendStatus(204);
   }
   return next();
 });
 
-app.use(express.json({ limit: '10mb' }));
+// In-memory Sliding-Window Rate Limiter (Anti-Brute-Force & Anti-Quota-Drain)
+const createRateLimiter = (options: {
+  windowMs: number;
+  max: number;
+  message: string;
+  keyPrefix: string;
+}) => {
+  const buckets = new Map<string, { count: number; resetAt: number }>();
+
+  // Periodic garbage collection every 2 minutes
+  const gc = setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of buckets.entries()) {
+      if (now >= v.resetAt) buckets.delete(k);
+    }
+  }, 120_000);
+  gc.unref?.();
+
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const ip = (req.ip || req.socket.remoteAddress || 'unknown').replace(/^::ffff:/, '');
+    const key = `${options.keyPrefix}:${ip}`;
+    const now = Date.now();
+    const entry = buckets.get(key);
+
+    if (!entry || now >= entry.resetAt) {
+      buckets.set(key, { count: 1, resetAt: now + options.windowMs });
+      return next();
+    }
+
+    entry.count += 1;
+    if (entry.count > options.max) {
+      const retrySec = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+      res.setHeader('Retry-After', String(retrySec));
+      return res.status(429).json({
+        success: false,
+        valid: false,
+        error: options.message,
+        message: options.message,
+        retryAfterSeconds: retrySec,
+      });
+    }
+    return next();
+  };
+};
+
+const authBruteForceLimiter = createRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  max: 25,
+  keyPrefix: 'auth',
+  message: 'Trop de tentatives de connexion détectées. Veuillez patienter quelques minutes par sécurité.',
+});
+
+const aiQuotaLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 25,
+  keyPrefix: 'ai',
+  message: 'Limite de requêtes IA atteinte (25/min). Patientez quelques secondes.',
+});
+
+const globalApiLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 240,
+  keyPrefix: 'api',
+  message: 'Trafic API excessif détecté. Réessayez dans un instant.',
+});
+
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health' || req.path === '/license/check-session') return next();
+  return globalApiLimiter(req, res, next);
+});
+
+app.use(['/api/license/verify', '/api/admin'], authBruteForceLimiter);
+app.use(
+  ['/api/diagnose/ai', '/api/translate/ai', '/api/flash/recommendations', '/api/ai/voice-command', '/api/chinese-tablet/ai-guard'],
+  aiQuotaLimiter
+);
+
+app.use(express.json({ limit: '2mb' }));
 
 // Health check for Render & Firebase Hosting bridge verification
 app.get('/api/health', (_req, res) => {
   return res.json({
     status: 'ok',
     service: 'AutoPro Diagnostic & Flash Backend DZ',
-    version: '3.0.0-admin-lock',
-    features: ['admin-whitelist', 'limited-demo', 'cameras', 'atelier-mode', 'pdf-reports', 'client-activity', 'backup'],
+    version: '3.1.0-prod-hardened',
+    features: ['admin-whitelist', 'limited-demo', 'cameras', 'atelier-mode', 'pdf-reports', 'client-activity', 'backup', 'hmac-security', 'rate-limit', 'ihu-antibrick'],
     timestamp: new Date().toISOString(),
   });
 });
@@ -344,6 +475,180 @@ Rends une réponse technique, concise et précise.`;
       safeBoostMax: (flashStage || '').includes('Stage 2') ? '1.85 bar' : '1.45 bar (Origine: 1.15 bar)',
       checksumVerified: true,
       recommendation: `### Recommandations Ingénierie Motoriste : ${brand} ${model}\n**Calculateur :** ${ecuType || 'Bosch EDC17 / MD1'}\n**Solution choisie :** ${flashStage || 'Stage 1'}\n\n1. **Gains & Tolérances mécaniques :**\n   - Puissance estimée : +38 ch à 3800 tr/min\n   - Couple maximal : +75 Nm (limiteur de boîte calibré à 420 Nm max pour préserver le volant moteur bi-masse et les disques d'embrayage).\n   - Température des gaz d'échappement (EGT) : Consigne cible < 780°C.\n\n2. **Protocole d'Écriture Flash :**\n   - Protocole : ISO 14229 UDS sur CAN High-Speed (500 kbps).\n   - Checksum : Algorithme RSA-2048 / CRC-32 corrigé automatiquement avant écriture du secteur 0x00010000.\n   - Alimentation électrique : Alimentation stabilisée d'atelier 13.8V impérative tout au long du flash.`,
+    });
+  }
+});
+
+// API: Chinese Car Android Head-Unit Anti-Brick AI Guard & Recovery
+app.post('/api/chinese-tablet/ai-guard', async (req, res) => {
+  try {
+    const {
+      mode = 'preflight',
+      brand = '',
+      modelYear = '',
+      ihuRef = '',
+      socChip = '',
+      mcuBuild = '',
+      intendedFile = '',
+      symptom = '',
+    } = req.body || {};
+
+    const combinedTarget = `${brand} ${modelYear} ${ihuRef} ${socChip} ${mcuBuild}`.toUpperCase();
+    const fileUpper = String(intendedFile || '').toUpperCase();
+    const ihuUpper = String(ihuRef || '').toUpperCase();
+    const brandLower = String(brand || '').toLowerCase();
+
+    // Deterministic Anti-Mismatch Hard Blocking Checks
+    let blocked = false;
+    let alertTitle = '';
+    let riskDetail = '';
+
+    if (mode !== 'recovery') {
+      if (!String(modelYear).trim() || !String(ihuRef).trim() || !String(socChip).trim() || !String(mcuBuild).trim()) {
+        blocked = true;
+        alertTitle = 'CONTRÔLE ANTI-MISMATCH INCOMPLET (4 PARAMÈTRES OBLIGATOIRES)';
+        riskDetail =
+          'Vous devez renseigner impérativement : (1) Marque/Modèle/Année, (2) Référence IHU/Carte mère, (3) Puce SoC et (4) Version MCU/Build actuelle avant toute génération de script ou flash.';
+      } else if (
+        (ihuUpper.includes('IHU715P') && (fileUpper.includes('535') || fileUpper.includes('516'))) ||
+        (ihuUpper.includes('IHU535G') && (fileUpper.includes('715') || fileUpper.includes('516'))) ||
+        (ihuUpper.includes('IHU516G') && (fileUpper.includes('715') || fileUpper.includes('535')))
+      ) {
+        blocked = true;
+        alertTitle = 'ALERTE ROUGE : INCOMPATIBILITÉ MATÉRIELLE GEELY IHU DÉTECTÉE';
+        riskDetail =
+          `Croisement interdit entre ${ihuRef} et le fichier "${intendedFile}". Risque immédiat de perte totale du son radio/ampli et de blocage des caméras 540° (perte de synchronisation MCU/LVDS).`;
+      } else if (fileUpper.includes('1.8.2.1.E') && !brandLower.includes('jetour')) {
+        blocked = true;
+        alertTitle = 'ALERTE ROUGE : FIRMWARE JETOUR SUR UNE AUTRE MARQUE';
+        riskDetail =
+          'La branche logicielle Jetour 1.8.2.1.E est strictement incompatible avec Geely / Chery / Changan / MG. Risque de briquage et coupure bus CAN/DSP.';
+      } else if (brandLower.includes('jetour') && (fileUpper.includes('1.8.2.1.E') || combinedTarget.includes('1.8.2.1.E')) && (combinedTarget.includes('2025') || combinedTarget.includes('2026')) && !fileUpper.includes('MCU')) {
+        blocked = true;
+        alertTitle = 'ALERTE CRITIQUE JETOUR 2025/2026 (RISQUE PERTE SON DSP)';
+        riskDetail =
+          'La branche 1.8.2.1.E est incompatible avec certaines révisions DSP audio Jetour 2025/2026 sans fichier MCU appairé. Vérifiez d’abord ro.board.platform via ADB en lecture seule avant toute écriture.';
+      } else if (
+        (ihuUpper.includes('DESAY') && fileUpper.includes('APTIV')) ||
+        (ihuUpper.includes('APTIV') && fileUpper.includes('DESAY')) ||
+        (ihuUpper.includes('BOSCH') && (fileUpper.includes('DESAY') || fileUpper.includes('APTIV')))
+      ) {
+        blocked = true;
+        alertTitle = 'ALERTE ROUGE : INCOMPATIBILITÉ CARTE MÈRE CHERY (DESAY SV / APTIV / BOSCH)';
+        riskDetail =
+          'Les unités Desay SV, Aptiv et Bosch n’utilisent pas le même protocole de pilotage d’amplificateur externe (Sony/Pioneer). Une mauvaise config CAN coupe le son.';
+      } else if (
+        (combinedTarget.includes('FYT') || combinedTarget.includes('UIS7862')) && (fileUpper.includes('TS10') || fileUpper.includes('TS18') || fileUpper.includes('TOPWAY')) ||
+        (combinedTarget.includes('TS10') || combinedTarget.includes('TS18') || combinedTarget.includes('TOPWAY')) && (fileUpper.includes('FYT') || fileUpper.includes('UIS7862'))
+      ) {
+        blocked = true;
+        alertTitle = 'ALERTE ROUGE : CROISEMENT FYT (UIS7862) ↔ TOPWAY (TS10/TS18)';
+        riskDetail =
+          'Le croisement de MCU ou firmware entre FYT (UIS7862) et Topway (TS10/TS18) provoque un écran noir immédiat ou l’inversion des touches tactiles.';
+      } else if (
+        brandLower.includes('changan') &&
+        (combinedTarget.includes('UNI') || fileUpper.includes('/SYSTEM') || fileUpper.includes('/VENDOR')) &&
+        (fileUpper.includes('/SYSTEM') || fileUpper.includes('/VENDOR') || fileUpper.includes('ROOT'))
+      ) {
+        blocked = true;
+        alertTitle = 'ALERTE ROUGE : INTERDICTION MODIFICATION /system OU /vendor (CHANGAN UNI)';
+        riskDetail =
+          'Sur Changan UNI-T / UNI-K, les caméras 360° et le tableau de bord sont couplés au processeur principal. Toute écriture sur /system ou /vendor est strictement interdite.';
+      }
+    }
+
+    const systemContext = `Tu es le moteur d'intelligence artificielle embarqué de "AutoPro Flash & Diagnostic Hub", expert en ingénierie automobile, systèmes d'infodivertissement Android (IHU / Head Units) et protocoles CAN/MCU pour véhicules chinois récents (2023-2026 : Geely Coolray/Emgrand/Monjaro/GX3 Pro, Jetour Dashing/X70 Plus/X90/T2, Chery Tiggo/Arrizo, Changan UNI-T/UNI-K/CS35+/CS55+/Alsvin, MG/DFSK FYT/Topway TS10/TS18).
+
+RÈGLES OBLIGATOIRES :
+1. Empêcher tout briquage, perte de son (DSP/Ampli), plantage radio ou blocage caméras 360°/540° (AVM).
+2. Protocole strict en 3 étapes : ÉTAPE 1 Fingerprinting lecture seule (adb shell getprop ro.board.platform, ro.build.display.id, vérification MCU) -> ÉTAPE 2 Backup paramètres d'origine -> ÉTAPE 3 Injection APK non destructive (adb install -r) sans JAMAIS toucher aux partitions MCU, /system, /vendor, AudioFlinger ou AVM.
+3. En cas de bug (perte de son / radio / caméras figées), interdire tout reflashage à l'aveugle et imposer les 4 étapes de secours : (1) Soft Reset 15s Power/Mute, (2) Hard Reset MCU coupure batterie (-) ou fusible Multimédia 15 min, (3) Contrôle Menu Usine (Ampli Interne/Externe, CAN, Caméra 360°/540°), (4) Rollback ADB (pm uninstall / pm clear).`;
+
+    const userPrompt =
+      mode === 'recovery'
+        ? `${systemContext}
+
+DEMANDE DE SECOURS POST-FLASH :
+- Véhicule : ${brand} ${modelYear}
+- IHU / Carte mère : ${ihuRef || 'Non précisé'} | SoC : ${socChip || 'Non précisé'} | MCU/Build : ${mcuBuild || 'Non précisé'}
+- Symptôme signalé par le technicien : ${symptom || 'Perte de son / caméras 360° ou 540° bloquées après flash'}
+
+Donne immédiatement la procédure de secours structurée en interdisant tout reflashage à l'aveugle, avec les codes usine exacts de cette marque.`
+        : `${systemContext}
+
+CONTRÔLE PRÉ-OPÉRATIONNEL :
+- Statut pare-feu déterministe : ${blocked ? `BLOQUÉ (${alertTitle} : ${riskDetail})` : 'COMPATIBILITÉ PRÉLIMINAIRE VALIDÉE'}
+- Marque / Modèle / Année : ${brand} ${modelYear}
+- Référence IHU / Carte mère : ${ihuRef}
+- Puce SoC : ${socChip}
+- Version MCU & Build actuel : ${mcuBuild}
+- Fichier / Opération envisagée : ${intendedFile || 'Sideload APK non destructif (Maps + YouTube + MicroG)'}
+
+${
+  blocked
+    ? 'Explique clairement pourquoi cette opération est BLOQUÉE, le risque matériel exact (DSP/AVM/MCU), et ce que le technicien doit vérifier avant de recommencer.'
+    : 'Fournis le protocole rigoureux en 3 étapes (1. Fingerprinting lecture seule, 2. Backup, 3. Injection adb install -r non destructive) adapté exactement à cette variante matérielle et ses codes usine.'
+}`;
+
+    const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
+    let analysis = '';
+    if (hasAi && !blocked) {
+      analysis = (await generateUnifiedAI(userPrompt, { timeoutMs: 8000 })) || '';
+    }
+
+    if (!analysis) {
+      if (mode === 'recovery') {
+        analysis = `### PROCÉDURE DE SECOURS ANTI-BRICK (${brand.toUpperCase()} ${modelYear})
+⛔ INTERDICTION ABSOLUE : Ne reflashez JAMAIS un autre firmware à l'aveugle !
+
+1. **Soft Reset IHU** : Maintenez le bouton physique **Power / Mute pendant 15 secondes** jusqu'à l'extinction totale et redémarrage du processeur.
+2. **Hard Reset MCU (Vidage condensateurs & Reset Bus CAN)** : Coupez le contact, attendez 2 minutes, débranchez la cosse négative (-) de la batterie 12V (ou retirez le fusible Multimédia/Audio) pendant **15 minutes**.
+3. **Contrôle Menu Usine** : Entrez le code ingénieur de la marque (\`8888\` / \`3368\` / \`123456\`) et vérifiez :
+   - **Amplificateur Audio (DSP)** : Interne vs Externe (Sony / Pioneer / OEM)
+   - **Protocole CAN Box** : Modèle & année exacts
+   - **Type Caméra (AVM)** : 360° / 540° LVDS / AHD
+4. **Rollback ADB propre** :
+   \`adb shell pm uninstall -k --user 0 <package_injecte>\`
+   \`adb shell pm clear com.android.systemui\``;
+      } else if (blocked) {
+        analysis = `### ⛔ OPÉRATION BLOQUÉE : ${alertTitle}
+${riskDetail}
+
+**Action obligatoire avant toute suite :**
+Exécutez d'abord ces commandes ADB en **lecture seule** pour identifier exactement le matériel :
+- \`adb shell getprop ro.board.platform\`
+- \`adb shell getprop ro.build.display.id\`
+- \`adb shell getprop ro.product.model\``;
+      } else {
+        analysis = `### ✅ PROTOCOLE SÉCURISÉ VALIDÉ (${brand.toUpperCase()} ${modelYear} · ${ihuRef})
+- **Étape 1 (Fingerprinting Lecture Seule)** :
+  \`adb shell getprop ro.board.platform\`
+  \`adb shell getprop ro.build.display.id\`
+- **Étape 2 (Backup Paramètres Avant Modification)** :
+  \`adb shell settings list global > backup_global.txt\`
+  \`adb shell dumpsys audio > backup_audio_dsp.txt\`
+- **Étape 3 (Injection APK Non Destructive — Zéro écriture /system, /vendor ou MCU)** :
+  \`adb install -r MicroG_GmsCore.apk\`
+  \`adb install -r GoogleMaps_Car.apk\`
+  \`adb install -r YouTube_Car.apk\`
+  \`adb shell am broadcast -a android.intent.action.LOCALE_CHANGED\``;
+      }
+    }
+
+    return res.json({
+      success: true,
+      blocked,
+      alertTitle,
+      riskDetail,
+      analysis,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/chinese-tablet/ai-guard:', error);
+    return res.status(500).json({
+      success: false,
+      blocked: true,
+      alertTitle: 'Erreur de vérification sécurité IHU',
+      riskDetail: 'Impossible de valider la compatibilité. Opération bloquée par sécurité.',
     });
   }
 });
@@ -859,7 +1164,11 @@ app.post('/api/license/verify', (req, res) => {
       ? ['diagnostic', 'cameras', 'history']
       : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'translator'];
 
-  const signature = `SIG-${Buffer.from(`${sub.licenseKey}:${sub.clientName}:${sub.boundHwid || hwid || 'HWID'}:AUTOPRO-DZ-2026`).toString('base64').substring(0, 24)}`;
+  const signature = saasDatabase.signLicensePayload(
+    sub.licenseKey,
+    sub.clientName,
+    sub.boundHwid || hwid || 'HWID'
+  );
 
   saasDatabase.logActivity({
     clientName: sub.clientName,
@@ -1194,10 +1503,13 @@ app.post('/api/clients/activity', (req, res) => {
   }
 });
 
-// GET /api/db/backup - Full JSON backup guarantee download
-app.get('/api/db/backup', (_req, res) => {
+// GET /api/db/backup - Sanitized JSON backup (Admin gets full subscribers, non-admin gets scans & stats only)
+app.get('/api/db/backup', (req, res) => {
   try {
-    const backup = saasDatabase.exportFullBackup();
+    const headerPass = req.headers['x-admin-passcode'];
+    const pass = typeof headerPass === 'string' ? headerPass : '';
+    const isAdmin = saasDatabase.verifyAdminPasscode(pass);
+    const backup = saasDatabase.exportFullBackup(isAdmin);
     return res.json({ success: true, backup });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -1259,9 +1571,26 @@ app.all('/api/*', (req, res) => {
 // Mount Vite or static files
 async function startServer() {
   if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    const distDir = path.resolve(__dirname, 'dist');
+    app.use(
+      '/assets',
+      express.static(path.join(distDir, 'assets'), {
+        maxAge: '365d',
+        immutable: true,
+      })
+    );
+    app.use(
+      express.static(distDir, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          }
+        },
+      })
+    );
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.sendFile(path.resolve(distDir, 'index.html'));
     });
   } else {
     const { createServer: createViteServer } = await import('vite');
@@ -1272,9 +1601,17 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  app.listen(port, '0.0.0.0', () => {
+  const server = app.listen(port, '0.0.0.0', () => {
     console.log(`AutoPro Diagnostic & Flash Hub running on http://0.0.0.0:${port}`);
   });
+
+  const shutdown = () => {
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 startServer();

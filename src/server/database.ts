@@ -1,7 +1,17 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { DiagnosticScanSession, DatabaseStats, ClientActivityRecord, SubscriberRecord, SecuritySettings, LicenseTier } from '../types/automotive';
+
+const SERVER_HMAC_SECRET = process.env.SESSION_SECRET || process.env.ADMIN_PASSCODE || 'AUTOPRO-DZ-2026-HMAC-ROOT';
+
+function constantTimeMatch(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -462,14 +472,24 @@ export class AutoProDatabase {
     if (!passcode || typeof passcode !== 'string') return false;
     const raw = passcode.trim();
     const upper = raw.toUpperCase().replace(/\s+/g, '-');
-    if (
-      upper === 'AP-SOFIANE-MASTER-2026-VIP' ||
-      upper === 'SOFIANE-MASTER-2026-VIP' ||
-      upper === 'SOFIANE-DZ-2026'
-    ) {
-      return true;
-    }
-    return raw === this.securitySettings.adminPasscode;
+    return (
+      constantTimeMatch(upper, 'AP-SOFIANE-MASTER-2026-VIP') ||
+      constantTimeMatch(upper, 'SOFIANE-MASTER-2026-VIP') ||
+      constantTimeMatch(upper, 'SOFIANE-DZ-2026') ||
+      constantTimeMatch(raw, this.securitySettings.adminPasscode)
+    );
+  }
+
+  public signLicensePayload(licenseKey: string, clientName: string, hwid: string): string {
+    return (
+      'HMAC-' +
+      crypto
+        .createHmac('sha256', SERVER_HMAC_SECRET)
+        .update(`${licenseKey}:${clientName}:${hwid}`)
+        .digest('hex')
+        .slice(0, 28)
+        .toUpperCase()
+    );
   }
 
   public updateAdminPasscode(newPasscode: string): boolean {
@@ -751,15 +771,21 @@ export class AutoProDatabase {
     return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
-  public exportFullBackup() {
+  public exportFullBackup(includeSensitive = false) {
     return {
       exportedAt: new Date().toISOString(),
       platform: 'AutoPro Suite Automobile DZ',
       guarantee: 'Licence Illimitée à Vie · Sauvegarde Intégrale',
       scans: Array.from(this.scans.values()),
-      clientActivities: this.activities,
-      subscribers: this.subscribers,
-      securitySettings: this.getPublicSecuritySettings(),
+      ...(includeSensitive
+        ? {
+            clientActivities: this.activities,
+            subscribers: this.subscribers,
+            securitySettings: this.getPublicSecuritySettings(),
+          }
+        : {
+            subscribersRedacted: true,
+          }),
       stats: this.getStats(),
     };
   }
