@@ -23,7 +23,13 @@ import {
   FileText,
   UserX,
   PhoneCall,
-  PowerOff
+  PowerOff,
+  Cpu,
+  Sparkles,
+  Mic,
+  Camera,
+  Upload,
+  Wrench
 } from 'lucide-react';
 import { Vehicle, ConnectionMode, DigitalKey } from '../types/automotive';
 import { apiFetch } from '../utils/apiBridge';
@@ -94,6 +100,45 @@ export const KeylessProximitySecurity: React.FC<KeylessProximitySecurityProps> =
   const [newOwnerPhone, setNewOwnerPhone] = useState('06 61 XX XX XX');
   const [transferCertificate, setTransferCertificate] = useState<string | null>(null);
   const [copiedPin, setCopiedPin] = useState(false);
+
+  // AI Key Cloning & PIN Code Extraction Tool (IMMO)
+  const [immoBrand, setImmoBrand] = useState<string>(selectedVehicle.brand || 'Fiat');
+  const [immoModel, setImmoModel] = useState<string>(selectedVehicle.model || 'Doblò');
+  const [immoYear, setImmoYear] = useState<number>(selectedVehicle.year || 2024);
+  const [immoVin, setImmoVin] = useState<string>(digitalKey.vehicleVin || '');
+  const [immoModule, setImmoModule] = useState<string>('BSI Marelli / Stellantis');
+  const [immoTransponder, setImmoTransponder] = useState<string>('Auto');
+  const [immoOpMode, setImmoOpMode] = useState<string>('Calcul PIN / CS');
+  const [dumpInfo, setDumpInfo] = useState<{
+    fileName: string;
+    sizeBytes: number;
+    sha256: string;
+    extractedVin: string | null;
+  } | null>(null);
+  const [immoLoading, setImmoLoading] = useState(false);
+  const [immoResult, setImmoResult] = useState<{
+    vehicle: string;
+    recommendedChip: string;
+    sgwRequired: boolean;
+    supportedTools: string[];
+    procedure: string;
+    timestamp: string;
+  } | null>(null);
+  const [copiedImmo, setCopiedImmo] = useState(false);
+
+  useEffect(() => {
+    setImmoBrand(selectedVehicle.brand);
+    setImmoModel(selectedVehicle.model);
+    setImmoYear(selectedVehicle.year);
+    const bUpper = selectedVehicle.brand.toUpperCase();
+    if (bUpper.includes('VW') || bUpper.includes('AUDI') || bUpper.includes('CUPRA')) {
+      setImmoModule('VW/Audi/Cupra MQB48/5C Cluster RH850');
+    } else if (bUpper.includes('FIAT') || bUpper.includes('PEUGEOT') || bUpper.includes('CITRO')) {
+      setImmoModule('BSI Marelli / Stellantis');
+    } else if (bUpper.includes('GEELY') || bUpper.includes('JETOUR') || bUpper.includes('CHERY') || bUpper.includes('CHANGAN') || bUpper.includes('LIVAN') || bUpper.includes('MG')) {
+      setImmoModule('PEPS Chinois (Geely/Jetour/Chery/MG/Livan)');
+    }
+  }, [selectedVehicle]);
 
   // Auto trigger proximity simulation when distance slider moves
   const handleDistanceChange = async (newDist: number) => {
@@ -262,6 +307,87 @@ au véhicule, ni à distance, ni via l'application mobile.
     navigator.clipboard.writeText(digitalKey.emergencyPin);
     setCopiedPin(true);
     setTimeout(() => setCopiedPin(false), 2000);
+  };
+
+  const handleDumpFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+      const sha256 = Array.from(new Uint8Array(hashBuf))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+        .toUpperCase();
+      // Scan ASCII printable range for a plausible 17-char VIN
+      const bytes = new Uint8Array(buf.slice(0, Math.min(buf.byteLength, 262144)));
+      let ascii = '';
+      for (let i = 0; i < bytes.length; i++) {
+        const c = bytes[i];
+        ascii += c >= 32 && c <= 126 ? String.fromCharCode(c) : ' ';
+      }
+      const vinMatch = ascii.match(/\b[A-HJ-NPR-Z0-9]{17}\b/);
+      setDumpInfo({
+        fileName: file.name,
+        sizeBytes: file.size,
+        sha256,
+        extractedVin: vinMatch ? vinMatch[0] : null,
+      });
+      if (vinMatch && !immoVin) {
+        setImmoVin(vinMatch[0]);
+      }
+    } catch {
+      setDumpInfo({
+        fileName: file.name,
+        sizeBytes: file.size,
+        sha256: 'NON_CALCULÉ',
+        extractedVin: null,
+      });
+    }
+  };
+
+  const handleAnalyzeImmoKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setImmoLoading(true);
+    try {
+      const response = await apiFetch('/api/immo/ai-key-tool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          brand: immoBrand,
+          model: immoModel,
+          year: immoYear,
+          vin: immoVin,
+          immoModule,
+          transponderType: immoTransponder,
+          operationMode: immoOpMode,
+          dumpInfo,
+        }),
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setImmoResult({
+          vehicle: data.vehicle,
+          recommendedChip: data.recommendedChip,
+          sgwRequired: Boolean(data.sgwRequired),
+          supportedTools: data.supportedTools || [],
+          procedure: data.procedure,
+          timestamp: data.timestamp || new Date().toLocaleTimeString('fr-FR'),
+        });
+      }
+    } catch {
+      setImmoResult({
+        vehicle: `${immoBrand} ${immoModel} (${immoYear})`,
+        recommendedChip: 'ID46 / PCF7953 HITAG-AES (433.92 MHz)',
+        sgwRequired: immoBrand.toLowerCase().includes('fiat') || immoBrand.toLowerCase().includes('vw'),
+        supportedTools: ['Autel IM508/IM608 + XP400 Pro', 'Xhorse VVDI Key Tool Plus', 'OBDStar X300 DP Plus'],
+        procedure:
+          'Mode hors-ligne : Sauvegardez obligatoirement le dump EEPROM/D-Flash avant toute écriture IMMO, utilisez le câble Bypass SGW (FCA 12+8 pour Fiat Doblò) si l’OBD est bloqué en lecture seule, et maintenez 13.5V sur la batterie.',
+        timestamp: new Date().toLocaleTimeString('fr-FR'),
+      });
+    } finally {
+      setImmoLoading(false);
+    }
   };
 
   return (
@@ -736,6 +862,246 @@ au véhicule, ni à distance, ni via l'application mobile.
             )}
           </div>
         )}
+      </div>
+
+      {/* OUTIL IA CLONAGE CLÉS, TRANSPONDEURS & CODES PIN (IMMO) */}
+      <div className="p-5 rounded-2xl bg-slate-900/90 border border-indigo-500/30 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                Atelier IMMO &amp; Transpondeurs
+              </span>
+              <span className="text-[11px] text-slate-400 font-mono">
+                MQB48/5C · HITAG-AES · BSI Marelli · PEPS Chinois
+              </span>
+            </div>
+            <h2 className="text-base font-bold text-white flex items-center gap-2 mt-1">
+              <Cpu className="w-5 h-5 text-indigo-400" />
+              <span>Outil IA de Clonage Clés &amp; Extraction Codes PIN (IMMO)</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Identifie la puce transpondeur exacte, le bypass SGW requis et génère la procédure atelier d&apos;extraction PIN/CS ou de clonage RF (avec inspection SHA-256 de dump EEPROM .bin).
+            </p>
+          </div>
+        </div>
+
+        <form onSubmit={handleAnalyzeImmoKey} className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+          <div>
+            <label className="block text-slate-400 mb-1 font-semibold">Marque</label>
+            <input
+              type="text"
+              value={immoBrand}
+              onChange={(e) => setImmoBrand(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-semibold"
+              placeholder="ex: Fiat, VW, Geely..."
+            />
+          </div>
+          <div>
+            <label className="block text-slate-400 mb-1 font-semibold">Modèle</label>
+            <input
+              type="text"
+              value={immoModel}
+              onChange={(e) => setImmoModel(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-semibold"
+              placeholder="ex: Doblò, Passat Pro..."
+            />
+          </div>
+          <div>
+            <label className="block text-slate-400 mb-1 font-semibold">Année</label>
+            <input
+              type="number"
+              min={2005}
+              max={2027}
+              value={immoYear}
+              onChange={(e) => setImmoYear(Number(e.target.value) || 2024)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-slate-400 mb-1 font-semibold">Calculateur IMMO</label>
+            <select
+              value={immoModule}
+              onChange={(e) => setImmoModule(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
+            >
+              <option value="BSI Marelli / Stellantis">BSI Marelli / Stellantis</option>
+              <option value="VW/Audi/Cupra MQB48/5C Cluster RH850">VW/Audi/Cupra MQB48/5C RH850</option>
+              <option value="PEPS Chinois (Geely/Jetour/Chery/MG/Livan)">PEPS Chinois (Geely/Jetour/MG/Livan)</option>
+              <option value="UCH / BSI PSA K9">UCH / BSI PSA K9</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-slate-400 mb-1 font-semibold">Transpondeur</label>
+            <select
+              value={immoTransponder}
+              onChange={(e) => setImmoTransponder(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
+            >
+              <option value="Auto">Détection Auto</option>
+              <option value="ID46 PCF7946 (Fiat/PSA)">ID46 PCF7946 (Fiat/PSA)</option>
+              <option value="PCF7953 HITAG-AES (Smart Key)">PCF7953 HITAG-AES (Smart Key)</option>
+              <option value="MQB48 / 5C AES (VW/Audi Chine)">MQB48 / 5C AES (VW/Audi Chine)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-slate-400 mb-1 font-semibold">Opération</label>
+            <select
+              value={immoOpMode}
+              onChange={(e) => setImmoOpMode(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white"
+            >
+              <option value="Calcul PIN / CS">Calcul PIN / CS</option>
+              <option value="Clonage Transpondeur RF">Clonage Transpondeur RF</option>
+              <option value="Ajout Clé Vierge">Ajout Clé Vierge</option>
+              <option value="All Keys Lost (AKL)">All Keys Lost (AKL)</option>
+            </select>
+          </div>
+
+          <div className="md:col-span-2 lg:col-span-3">
+            <label className="block text-slate-400 mb-1 font-semibold">Châssis VIN (Optionnel)</label>
+            <input
+              type="text"
+              value={immoVin}
+              onChange={(e) => setImmoVin(e.target.value.toUpperCase())}
+              placeholder="ex: ZFA2630000... / LSV..."
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-cyan-300 font-mono uppercase"
+            />
+          </div>
+
+          <div className="md:col-span-1 lg:col-span-2">
+            <label className="block text-slate-400 mb-1 font-semibold">Inspecteur Dump EEPROM (.bin)</label>
+            <label className="flex items-center justify-center gap-2 w-full bg-slate-950 hover:bg-slate-900 border border-dashed border-slate-700 rounded-xl px-3 py-2 text-slate-300 cursor-pointer">
+              <Upload className="w-4 h-4 text-indigo-400" />
+              <span className="truncate">{dumpInfo ? `${dumpInfo.fileName} (${dumpInfo.sizeBytes} o)` : 'Charger dump .bin (optionnel)'}</span>
+              <input type="file" accept=".bin,.eep,.hex,.ori" onChange={handleDumpFileChange} className="hidden" />
+            </label>
+          </div>
+
+          <div className="flex items-end">
+            <button
+              type="submit"
+              disabled={immoLoading}
+              className="w-full py-2 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/20"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>{immoLoading ? 'Analyse IA...' : 'Générer Protocole IMMO'}</span>
+            </button>
+          </div>
+        </form>
+
+        {dumpInfo && (
+          <div className="p-3 rounded-xl bg-slate-950 border border-indigo-800/40 text-[11px] font-mono flex flex-wrap items-center justify-between gap-2 text-slate-300">
+            <span>Dump : <strong className="text-white">{dumpInfo.fileName}</strong> ({dumpInfo.sizeBytes} octets)</span>
+            <span>SHA-256 : <strong className="text-indigo-400">{dumpInfo.sha256.slice(0, 24)}...</strong></span>
+            <span>VIN ASCII : <strong className="text-emerald-400">{dumpInfo.extractedVin || 'Chiffré / Non lisible en clair'}</strong></span>
+          </div>
+        )}
+
+        {immoResult && (
+          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold text-white">{immoResult.vehicle}</span>
+                  {immoResult.sgwRequired && (
+                    <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold">
+                      BYPASS SGW / SFD REQUIS
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] font-mono text-cyan-400">
+                  Puce recommandée : {immoResult.recommendedChip}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(immoResult.procedure);
+                  setCopiedImmo(true);
+                  setTimeout(() => setCopiedImmo(false), 2000);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs text-slate-200 flex items-center gap-1.5 cursor-pointer"
+              >
+                {copiedImmo ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedImmo ? 'Copié' : 'Copier fiche IMMO'}</span>
+              </button>
+            </div>
+
+            {immoResult.supportedTools.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="text-slate-400 font-semibold mr-1">Interface atelier recommandée :</span>
+                {immoResult.supportedTools.map((t) => (
+                  <span key={t} className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-200 font-mono text-[10px]">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <pre className="whitespace-pre-wrap text-xs text-slate-200 font-sans leading-relaxed bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
+              {immoResult.procedure}
+            </pre>
+          </div>
+        )}
+      </div>
+
+      {/* MATÉRIEL EXIGÉ & COMPATIBILITÉ FIAT DOBLÒ CAMÉRA 360° */}
+      <div className="p-5 rounded-2xl bg-slate-900/80 border border-cyan-500/30 space-y-4">
+        <div>
+          <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+            Cahier des Charges Matériel Atelier
+          </span>
+          <h2 className="text-base font-bold text-white flex items-center gap-2 mt-1">
+            <Wrench className="w-5 h-5 text-cyan-400" />
+            <span>Matériel Exigé (Clé 3m + Commande Vocale) &amp; Compatibilité Fiat Doblò Caméra 360°</span>
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
+          {/* Col 1: 3m Antivol */}
+          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <div className="flex items-center gap-2 font-bold text-emerald-400">
+              <Radio className="w-4 h-4" />
+              <span>1. Matériel Antivol Proximité 3 Mètres</span>
+            </div>
+            <ul className="space-y-1.5 text-slate-300 text-[11px] leading-relaxed list-disc pl-4">
+              <li><strong>Adaptateur OBD2 / CAN BLE 5.0</strong> (ex: <em>Vgate iCar Pro BLE</em> ou <em>vLinker FD+</em>) ou boîtier PEPS CAN-BLE raccordé au BCM (verrouillage centralisé).</li>
+              <li><strong>Relais Coupe-Circuit 12V 30A</strong> câblé sur l&apos;alimentation pompe à carburant ou solénoïde démarreur (piloté pour l&apos;anti-démarrage).</li>
+              <li><strong>Smartphone Bluetooth Low Energy (BLE 5.0+)</strong> pour la mesure RSSI continue calibrée à 3.0m.</li>
+              <li><strong>Optionnel (hors portée BT) :</strong> Traceur <strong>GPS/GSM 4G (SIM IoT)</strong> relié au relais pour coupure moteur à distance et localisation en cas de vol.</li>
+            </ul>
+          </div>
+
+          {/* Col 2: Commande Vocale */}
+          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <div className="flex items-center gap-2 font-bold text-cyan-400">
+              <Mic className="w-4 h-4" />
+              <span>2. Matériel Commande Vocale IA</span>
+            </div>
+            <ul className="space-y-1.5 text-slate-300 text-[11px] leading-relaxed list-disc pl-4">
+              <li><strong>Microphone actif</strong> (micro intégré de l&apos;écran Android ou du smartphone) avec permission micro autorisée dans le navigateur.</li>
+              <li><strong>Boîtier Décodeur CANbus</strong> compatible avec le faisceau autoradio pour traduire les ordres vocaux vers portes, vitres, coffre et climatisation.</li>
+              <li><strong>Connexion Internet 4G/Wi-Fi</strong> recommandée pour le traitement vocal IA avancé (le mode local hors-ligne couvre déjà les commandes principales en français/darija).</li>
+            </ul>
+          </div>
+
+          {/* Col 3: Fiat Doblo 360 */}
+          <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/40 space-y-2">
+            <div className="flex items-center gap-2 font-bold text-amber-400">
+              <Camera className="w-4 h-4" />
+              <span>3. Fiat Doblò + Caméra 360° : Compatibilité</span>
+            </div>
+            <p className="text-[11px] text-emerald-400 font-semibold">
+              ✅ OUI, 100 % réalisable sur Fiat Doblò (2023–2026 Tafraoui / Stellantis K9 et générations précédentes) avec 3 règles d&apos;installation :
+            </p>
+            <ul className="space-y-1.5 text-slate-300 text-[11px] leading-relaxed list-disc pl-4">
+              <li><strong>Bypass SGW (Security Gateway) :</strong> Câble <strong>FCA 12+8</strong> obligatoire pour le diagnostic/commandes OBD2 sur les Doblò récents, ou piquage du boîtier antivol directement sur le faisceau BSI/BCM.</li>
+              <li><strong>Interface CANbus Fiat / PSA K9 Plug &amp; Play :</strong> Préserve les trames de marche arrière (<code>0x3B2</code>) et les lignes de guidage dynamiques de la caméra 360°.</li>
+              <li><strong>Alimentation dédiée Caméra 360° AHD/LVDS :</strong> Séparer l&apos;alimentation du boîtier 360° (sur +12V accessoire protégé par fusible) de celle du relais coupe-circuit moteur afin de garder les caméras fonctionnelles.</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
   );

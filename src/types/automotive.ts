@@ -11,7 +11,7 @@ export interface Vehicle {
   protocol: 'UDS (ISO 14229)' | 'CAN 2.0B (500k)' | 'K-Line (ISO 9141)' | 'DoIP (ISO 13400)';
   originalHp: number;
   originalTorque: number;
-  marketSegment?: 'Chinois DZ' | 'Fiat Algérie' | 'Populaire DZ' | 'Européen' | 'Utilitaire';
+  marketSegment?: 'Chinois DZ' | 'Européen (Made in China)' | 'Fiat Algérie' | 'Populaire DZ' | 'Européen' | 'Utilitaire';
 }
 
 export interface DtcCode {

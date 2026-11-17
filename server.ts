@@ -154,7 +154,7 @@ app.use('/api', (req, res, next) => {
 
 app.use(['/api/license/verify', '/api/admin'], authBruteForceLimiter);
 app.use(
-  ['/api/diagnose/ai', '/api/translate/ai', '/api/flash/recommendations', '/api/ai/voice-command', '/api/chinese-tablet/ai-guard'],
+  ['/api/diagnose/ai', '/api/translate/ai', '/api/flash/recommendations', '/api/ai/voice-command', '/api/chinese-tablet/ai-guard', '/api/immo/ai-key-tool'],
   aiQuotaLimiter
 );
 
@@ -554,10 +554,27 @@ app.post('/api/chinese-tablet/ai-guard', async (req, res) => {
         alertTitle = 'ALERTE ROUGE : INTERDICTION MODIFICATION /system OU /vendor (CHANGAN UNI)';
         riskDetail =
           'Sur Changan UNI-T / UNI-K, les caméras 360° et le tableau de bord sont couplés au processeur principal. Toute écriture sur /system ou /vendor est strictement interdite.';
+      } else if (
+        (brandLower.includes('vw') || brandLower.includes('volkswagen') || brandLower.includes('audi') || brandLower.includes('cupra')) &&
+        (fileUpper.includes('EU_STD') || fileUpper.includes('MIB2_EU') || fileUpper.includes('HARMAN_EU')) &&
+        (ihuUpper.includes('CNS') || ihuUpper.includes('MIB3-CN') || ihuUpper.includes('AUDI-MMI-CN') || ihuUpper.includes('CUPRA-MEB'))
+      ) {
+        blocked = true;
+        alertTitle = 'ALERTE ROUGE : CROISEMENT FIRMWARE EUROPE (MIB2 EU) SUR UNITÉ CHINE (CNS 3.0 / MIB3-CN)';
+        riskDetail =
+          'Ne jamais flasher un firmware VW/Audi Europe (MIB2/MIB3 EU) sur une version chinoise SAIC/FAW (CNS 3.0, MIB3-CN, Audi MMI CN) : verrouillage Component Protection, perte affichage Virtual Cockpit et coupure ampli Dynaudio/Beats.';
+      } else if (
+        brandLower.includes('livan') &&
+        (fileUpper.includes('IHU535G') || fileUpper.includes('1.8.2.1.E'))
+      ) {
+        blocked = true;
+        alertTitle = 'ALERTE ROUGE : INCOMPATIBILITÉ PLATEFORME LIVAN (GKUI)';
+        riskDetail =
+          'Les modèles Livan (X3 Pro / X6 Pro / RL7) utilisent une branche GKUI / Jinlv dédiée. Un firmware IHU535G ou Jetour bloque le module CAN et les caméras AVM.';
       }
     }
 
-    const systemContext = `Tu es le moteur d'intelligence artificielle embarqué de "AutoPro Flash & Diagnostic Hub", expert en ingénierie automobile, systèmes d'infodivertissement Android (IHU / Head Units) et protocoles CAN/MCU pour véhicules chinois récents (2023-2026 : Geely Coolray/Emgrand/Monjaro/GX3 Pro, Jetour Dashing/X70 Plus/X90/T2, Chery Tiggo/Arrizo, Changan UNI-T/UNI-K/CS35+/CS55+/Alsvin, MG/DFSK FYT/Topway TS10/TS18).
+    const systemContext = `Tu es le moteur d'intelligence artificielle embarqué de "AutoPro Flash & Diagnostic Hub", expert en ingénierie automobile, systèmes d'infodivertissement Android (IHU / Head Units) et protocoles CAN/MCU pour véhicules chinois récents et versions européennes Made in China (2023-2026 : Geely Coolray/Emgrand/Monjaro/GX3 Pro, Livan X3 Pro/X6 Pro/RL7, Jetour Dashing/X70 Plus/X90/T2, Chery Tiggo/Arrizo, Changan UNI-T/UNI-K/CS35+/CS55+/Alsvin, MG5/MG GT/MG ZS/MG One/DFSK, VW Chine SAIC/FAW Golf/Passat Pro/Bora/T-Roc/Tharu/Tayron/Tavendor/Talagon/Teramont, Audi A3L CN, Cupra Anhui).
 
 RÈGLES OBLIGATOIRES :
 1. Empêcher tout briquage, perte de son (DSP/Ampli), plantage radio ou blocage caméras 360°/540° (AVM).
@@ -1056,6 +1073,132 @@ app.post('/api/keyless/emergency-action', (req, res) => {
 
     default:
       return res.json({ success: true, actionType, timestamp });
+  }
+});
+
+// API: Outil IA Clonage Clés, Transpondeurs & Extraction Code PIN (IMMO Atelier)
+app.post('/api/immo/ai-key-tool', async (req, res) => {
+  try {
+    const {
+      brand = 'Fiat',
+      model = 'Doblò',
+      year = 2024,
+      vin = '',
+      immoModule = 'BSI Marelli / Stellantis',
+      transponderType = 'Auto',
+      operationMode = 'Calcul PIN / CS',
+      dumpInfo = null,
+    } = req.body || {};
+
+    const vehicleLabel = `${brand} ${model} (${year})`.trim();
+    const targetUpper = `${vehicleLabel} ${immoModule} ${transponderType}`.toUpperCase();
+
+    const isFiatStellantis = targetUpper.includes('FIAT') || targetUpper.includes('DOBL') || targetUpper.includes('STELLANTIS') || targetUpper.includes('MARELLI') || targetUpper.includes('PSA');
+    const isVagCn = targetUpper.includes('VW') || targetUpper.includes('VOLKSWAGEN') || targetUpper.includes('AUDI') || targetUpper.includes('CUPRA') || targetUpper.includes('MQB');
+    const isChinesePeps = targetUpper.includes('GEELY') || targetUpper.includes('JETOUR') || targetUpper.includes('CHERY') || targetUpper.includes('CHANGAN') || targetUpper.includes('LIVAN') || targetUpper.includes('MG') || targetUpper.includes('PEPS');
+
+    let recommendedChip = 'PCF7953 / HITAG-AES (433.92 MHz FSK)';
+    let sgwRequired = false;
+    let supportedTools = ['Autel IM508 / IM608 + XP400 Pro', 'Xhorse VVDI Key Tool Plus', 'OBDStar X300 DP Plus'];
+
+    if (isFiatStellantis) {
+      recommendedChip = 'ID46 PCF7946 / PCF7953M HITAG-AES (433.92 MHz) selon plateforme Marelli vs PSA K9';
+      sgwRequired = Number(year) >= 2018;
+      supportedTools = ['Autel IM508/IM608 + Câble FCA 12+8 SGW', 'OBDStar X300 Pro4 / DP Plus', 'Xhorse VVDI Key Tool Plus + Adapter Marelli'];
+    } else if (isVagCn) {
+      recommendedChip = 'MQB48 AES / MQB49 5C (434.4 MHz FSK · Component Security 16 octets)';
+      sgwRequired = Number(year) >= 2020; // SFD / VAG China Gateway
+      supportedTools = ['Xhorse VVDI2 + VVDI Prog (RH850 / NEC35xx)', 'Autel IM608 Pro II + G-Box3 + APB131', 'Odis Online / Lonsdor K518 Pro'];
+    } else if (isChinesePeps) {
+      recommendedChip = 'PCF7953 / 4A HITAG-AES ou NCF29A1M Smart Key (433.92 MHz)';
+      supportedTools = ['Lonsdor K518 Pro / ISE', 'Autel IM508/IM608 (Pack Chine PEPS)', 'OBDStar X300 DP Plus', 'Xhorse VVDI Key Tool Max Pro'];
+    }
+
+    const dumpContext = dumpInfo
+      ? `\nAnalyse Fichier EEPROM / Dump fourni : Nom="${dumpInfo.fileName}", Taille=${dumpInfo.sizeBytes} octets, SHA-256=${dumpInfo.sha256}, VIN extrait="${dumpInfo.extractedVin || 'Non détecté en clair (zone chiffrée)'}".`
+      : '\nAucun dump EEPROM (.bin) chargé : procédure OBD2 / Bench requise avant lecture PIN/CS.';
+
+    const prompt = `Tu es un ingénieur expert en antidémarrage automobile (IMMO), transpondeurs RF et programmation de clés en atelier (Algérie / Europe / Chine).
+Génère une fiche technique stricte et sécurisée pour :
+- Véhicule : ${vehicleLabel}
+- VIN : ${vin || 'Non saisi'}
+- Calculateur IMMO cible : ${immoModule}
+- Type transpondeur souhaité : ${transponderType}
+- Mode d'opération : ${operationMode}
+${dumpContext}
+
+RÈGLES STRICTES :
+1. N'invente JAMAIS un faux code PIN aléatoire sans dump EEPROM déchiffré. Indique exactement l'adresse mémoire / MCU / outil pour extraire le vrai PIN ou les 16 octets CS (Component Security).
+2. Détaille :
+   - Puce transpondeur exacte, modulation/fréquence RF et compatibilité clonage vs apprentissage OBD.
+   - Bypass sécurité requis (ex: Câble FCA 12+8 pour Fiat Doblò/Stellantis SGW, ou SFD / lecture RH850 sur VW/Audi/Cupra Chine MQB).
+   - Procédure étape par étape en atelier (Sauvegarde EEPROM/D-Flash obligatoire avant écriture, génération Dealer Key, apprentissage clé).
+   - Précautions critiques anti-briquage BCM / Cluster (stabilisateur 13.5V, ne pas couper le contact en cours d'écriture).
+
+Sois concis, structuré en français professionnel d'atelier.`;
+
+    let procedure = '';
+    const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
+    if (hasAi) {
+      procedure = (await generateUnifiedAI(prompt, { timeoutMs: 9000 })) || '';
+    }
+
+    if (!procedure) {
+      if (isFiatStellantis) {
+        procedure = `### 🔐 PROTOCOLE IMMO & CODE PIN — ${vehicleLabel.toUpperCase()}
+**Puce & Fréquence :** ${recommendedChip}
+**Sécurité Gateway :** ${sgwRequired ? '⚠️ MODULE SGW DÉTECTÉ — Câble Bypass FCA 12+8 (ou connexion directe derrière BSI/BCM) OBLIGATOIRE' : 'Accès OBD2 direct CAN 500 kbps'}
+
+1. **Extraction du Code PIN (5 chiffres Fiat / 4 caractères PSA K9) :**
+   - **BSI Marelli (95640 / 95320 / MPC5604)** : Connecter l'outil via câble **FCA 12+8** (branché sous colonne/boîte à gants derrière le SGW) pour lecture PIN par OBD, OU lire l'EEPROM **95640** au programmeur (**XP400 Pro / VVDI Prog**) et sauvegarder le fichier .bin.
+   - **Doblò 2023+ (Plateforme Stellantis PSA K9)** : Lecture du PIN 4 caractères alphanumériques par **OBD CAN + Internet** (serveur calculateur) ou lecture flash BSI Delphi/Continental.
+2. **Clonage vs Apprentissage (${operationMode}) :**
+   - **Clonage RF (ID46 uniquement)** : Possible via **VVDI Super Chip XT27** après sniffing sur anneau transpondeur. Sur **HITAG-AES (2020+)**, le clonage simple est impossible : utiliser une clé vierge + pré-codage **Dealer Key** avec les données CS du BSI.
+   - **Apprentissage** : Renseigner le PIN extrait, présenter toutes les clés à conserver au contact (les anciennes non présentées sont verrouillées définitivement).
+3. **Sécurité Atelier :** Tension stabilisée **13.5V** impérative pendant l'écriture BSI.${dumpInfo ? `\n\n📄 **Dump chargé :** \`${dumpInfo.fileName}\` (${dumpInfo.sizeBytes} o · SHA-256 \`${String(dumpInfo.sha256 || '').slice(0, 16)}...\`). Vérifiez la sauvegarde double avant toute réécriture.` : ''}`;
+      } else if (isVagCn) {
+        procedure = `### 🔐 PROTOCOLE IMMO MQB / CS / PIN — ${vehicleLabel.toUpperCase()} (SAIC / FAW CHINE)
+**Puce & Fréquence :** ${recommendedChip}
+**Sécurité Bus :** Protection SFD / Gateway MQB Chine · 16 octets CS + Code PIN requis
+
+1. **Lecture Données IMMO (Cluster / BCM2) :**
+   - **Plateforme MQB48 (VDO / JCI NEC35xx)** : Lecture Sync Data / Immo Data par OBD2 ou Bench avec **VVDI2 / Autel IM608**.
+   - **Plateforme MQB49 / 5C (RH850 R7F7014xx — Golf 8, Passat Pro, Teramont Pro, Tavendor, Audi A3L 2022+)** : Clonage impossible par simple transpondeur ! Lecture **D-Flash / P-Flash RH850** sur banc (câble soudures sans levage de pattes + **APB131 / RH850 Adapter**) ou Calcul Serveur Sync Data en cas de *All Keys Lost*.
+2. **Génération Dealer Key & Apprentissage (${operationMode}) :**
+   - Générer une clé **Xhorse MQB / OEM 5C** pré-codée avec les 16 octets CS + ID véhicule.
+   - En *All Keys Lost* sur MQB49/5C, ne jamais effacer les données cluster avant d'avoir calculé la **Synchronization Data** (ECU + TCU DSG + ELV).
+3. **Précaution Critique :** Stabilisateur **13.8V** obligatoire ; sur VW Chine SAIC/FAW, certaines fréquences télécommande sont **434.4 MHz** (bien vérifier la référence OEM sur l'étiquette du combiné).${dumpInfo ? `\n\n📄 **Dump analysé :** \`${dumpInfo.fileName}\` (${dumpInfo.sizeBytes} o · SHA-256 \`${String(dumpInfo.sha256 || '').slice(0, 16)}...\`).` : ''}`;
+      } else {
+        procedure = `### 🔐 PROTOCOLE IMMO & PEPS — ${vehicleLabel.toUpperCase()}
+**Puce & Fréquence :** ${recommendedChip}
+**Calculateur :** ${immoModule}
+
+1. **Lecture Code PIN / Mot de passe PEPS :**
+   - **Geely / Livan / Chery / Jetour / MG** : Lecture du code PIN 4 à 8 caractères via OBD2 (protocole UDS sur module **PEPS / BCM**) à l'aide de **Lonsdor K518 / Autel IM508 / OBDStar X300** (activation fonction *Read PinCode*).
+   - Si échec OBD (modèles 2025/2026) : lecture directe du MCU/EEPROM du module **PEPS** (généralement **SPC560 / MPC5604 / 9S12**) au **XP400 Pro / VVDI Prog**.
+2. **Clonage & Apprentissage (${operationMode}) :**
+   - Les clés Smart Key **HITAG-AES (PCF7953)** ne sont pas clonables en copie brute ; programmez une **clé vierge compatible (Xhorse XM38 / OEM)** avec le PIN extrait.
+   - Posez la Smart Key sur la zone d'induction d'urgence (fond de porte-gobelet ou bouton Start/Stop) lors de l'appairage.
+3. **Vigilance Atelier :** Ne jamais débrancher le module PEPS contact mis ; sauvegarder systématiquement le dump D-Flash avant écriture.${dumpInfo ? `\n\n📄 **Dump chargé :** \`${dumpInfo.fileName}\` (${dumpInfo.sizeBytes} o · SHA-256 \`${String(dumpInfo.sha256 || '').slice(0, 16)}...\`).` : ''}`;
+      }
+    }
+
+    return res.json({
+      success: true,
+      vehicle: vehicleLabel,
+      recommendedChip,
+      sgwRequired,
+      supportedTools,
+      hasDumpAnalysis: Boolean(dumpInfo),
+      procedure,
+      timestamp: new Date().toLocaleTimeString('fr-FR'),
+    });
+  } catch (error: any) {
+    console.error('Error in /api/immo/ai-key-tool:', error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || 'Erreur outil IA IMMO',
+    });
   }
 });
 

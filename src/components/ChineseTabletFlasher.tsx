@@ -25,7 +25,7 @@ interface ChineseTabletFlasherProps {
   onOpenConnectModal: () => void;
 }
 
-type ChineseBrandId = 'geely' | 'jetour' | 'chery' | 'changan' | 'mg_dfsk';
+type ChineseBrandId = 'geely' | 'jetour' | 'chery' | 'changan' | 'mg_dfsk' | 'vw_cn';
 
 interface BrandSpec {
   id: ChineseBrandId;
@@ -43,10 +43,10 @@ interface BrandSpec {
 const BRAND_SPECS: Record<ChineseBrandId, BrandSpec> = {
   geely: {
     id: 'geely',
-    shortLabel: 'Geely (Coolray, Emgrand...)',
-    name: 'Geely OS / GKUI (Coolray 2024-2026, Emgrand, Monjaro, GX3 Pro)',
-    modelsDefault: 'Geely Coolray 2025',
-    ihuVariants: ['IHU715P (Coolray récent/restylé)', 'IHU516G', 'IHU535G', 'ECARX E01 / E02 (SD665)'],
+    shortLabel: 'Geely & Livan (Coolray, X6...)',
+    name: 'Geely OS / GKUI / Livan (Coolray 2024-2026, Emgrand, Monjaro, Livan X3/X6 Pro)',
+    modelsDefault: 'Geely Coolray / Livan X6 Pro 2025',
+    ihuVariants: ['IHU715P (Coolray récent/restylé)', 'IHU516G', 'IHU535G', 'ECARX E01 / E02 (SD665)', 'LIVAN-GKUI (X3/X6 Pro)'],
     socVariants: ['Qualcomm Snapdragon 665 / ECARX E01-E02', 'Qualcomm Snapdragon 6155 (sm6150)', 'Qualcomm Snapdragon 8155 (sm8150)'],
     defaultBuild: 'GKUI-IHU715P-2025',
     factoryCodes: ['8888', '3368', '*#*#3646633#*#*', 'Appui long Heure/Version'],
@@ -95,16 +95,29 @@ const BRAND_SPECS: Record<ChineseBrandId, BrandSpec> = {
   },
   mg_dfsk: {
     id: 'mg_dfsk',
-    shortLabel: 'MG & DFSK (FYT / Topway)',
-    name: 'MG & DFSK (MG5, MG ZS, MG GT, DFSK Glory 500/580/ix5)',
-    modelsDefault: 'MG ZS / DFSK Glory 580 2024',
-    ihuVariants: ['FYT (Unisoc UIS7862)', 'Topway TS10 / TS18', 'Teyes CC3 (FYT)'],
-    socVariants: ['Unisoc UIS7862 (FYT)', 'Unisoc UIS8581 / T5 (Topway TS10/TS18)', 'Allwinner / Rockchip PX6'],
+    shortLabel: 'MG, Livan & DFSK (FYT/Topway)',
+    name: 'MG, Livan & DFSK (MG5, MG GT, MG ZS, MG One, Livan RL7, DFSK Glory 500/580)',
+    modelsDefault: 'MG5 / MG GT / MG One 2025',
+    ihuVariants: ['MG-ISMART (SAIC Snapdragon)', 'FYT (Unisoc UIS7862)', 'Topway TS10 / TS18', 'Teyes CC3 (FYT)'],
+    socVariants: ['Qualcomm Snapdragon 6155 / 8155 (MG iSMART)', 'Unisoc UIS7862 (FYT)', 'Unisoc UIS8581 / T5 (Topway TS10/TS18)'],
     defaultBuild: 'FYT-UIS7862-ANDROID10',
     factoryCodes: ['8888', '3368', '1617', '16176699', '123456'],
     usbPort: 'Port USB OTG Data (4-pins ou 6-pins console/boîte à gants)',
     criticalWarning:
-      'VIGILANCE CRITIQUE : Bien distinguer FYT (UIS7862) de Topway (TS10/TS18). Le croisement de MCU entre FYT et TS10 provoque un écran noir ou une inversion des touches tactiles.',
+      'VIGILANCE CRITIQUE : Bien distinguer FYT (UIS7862), Topway (TS10/TS18) et MG iSMART. Le croisement de MCU entre FYT et TS10 provoque un écran noir ou une inversion des touches tactiles.',
+  },
+  vw_cn: {
+    id: 'vw_cn',
+    shortLabel: 'VW / Audi / Cupra (Chine)',
+    name: 'VW CN (Golf, Passat Pro, Bora, T-Roc, Tharu, Tayron, Tavendor, Talagon, Teramont), Audi A3L & Cupra CN',
+    modelsDefault: 'VW Passat Pro / Tharu XR / Tayron L (CN) 2025',
+    ihuVariants: ['VW CNS 3.0 (MQB Chine)', 'MIB3-CN (Qualcomm 8155 / Samsung Exynos)', 'AUDI-MMI-CN (A3L)', 'CUPRA-MEB (Tavascan Anhui)'],
+    socVariants: ['Qualcomm Snapdragon 8155 (sm8150 - Passat Pro / Teramont Pro)', 'Qualcomm 6155 / CNS 3.0 (Tharu / Bora / T-Roc)', 'Samsung Exynos Auto V9 / MIB3'],
+    defaultBuild: 'CNS3.0-MIB3-CN-2025',
+    factoryCodes: ['Appui long MENU 5s (Mode Engineering)', 'Appui long SETUP 10s', 'OBD11 / ODIS SFD2 Unlock'],
+    usbPort: 'Port USB-C Data avant sous l’écran MIB3 / CNS 3.0',
+    criticalWarning:
+      'VIGILANCE CRITIQUE : Les VW/Audi Made in China (CNS 3.0 / MIB3 CN) ont une protection composant (Component Protection) et FEC/SWaP différente de l’Europe ! Ne JAMAIS flasher un firmware MIB3 EU directement sur une unité CNS 3.0 chinoise sans sauvegarde FEC/EEPROM.',
   },
 };
 

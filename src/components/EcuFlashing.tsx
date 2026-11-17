@@ -221,6 +221,104 @@ const ECU_BUILD_WHITELIST_BY_VEHICLE: Record<string, EcuWhitelistProfile> = {
     allowedPrefixes: ['TC1793-MED1777-', 'A282901', '282901'],
     riskNote: 'FBS4 actif sur W177 : vérifier la signature avant toute écriture.',
   },
+  vw_golf_cn: {
+    ecuFamily: 'Bosch MG1CS111 / Simos 18',
+    processorArch: 'Infineon AURIX TC275 / TC298',
+    allowedBuilds: ['TC298-MG1CS111-GOLF8CN-01', '05E906018CN-15EVO2', '05E906018CN'],
+    allowedPrefixes: ['TC298-MG1CS111-', '05E906018', 'CNS3.0-'],
+    riskNote: 'Ne jamais écrire un FRF européen sur MIB3 / CNS 3.0 FAW-VW sans adaptation Immo/SFD.',
+  },
+  vw_passat_pro_cn: {
+    ecuFamily: 'Bosch MG1CS011 / Simos 18.10',
+    processorArch: 'Infineon AURIX TC298TP (380TSI)',
+    allowedBuilds: ['TC298-MG1CS011-PASSATPRO-CN', '06L906026CN-380TSI', '06L906026CN'],
+    allowedPrefixes: ['TC298-MG1CS011-', '06L906026', 'SAIC-PASPRO'],
+    riskNote: 'Passat Pro SAIC-VW : SFD2 / protection diagnostique active sur modules IQ.Pilot.',
+  },
+  vw_bora_cn: {
+    ecuFamily: 'Bosch MED17.5.25 / MG1CS111',
+    processorArch: 'Infineon TriCore TC1782 / AURIX TC275',
+    allowedBuilds: ['TC1782-MED17525-BORACN-01', '04E906027CN-280TSI', '04E906027CN'],
+    allowedPrefixes: ['TC1782-MED17525-', '04E906027', 'TC275-BORA'],
+    riskNote: 'Bora FAW-VW MQB CN : vérifier calibration 200TSI vs 280TSI.',
+  },
+  vw_troc_cn: {
+    ecuFamily: 'Bosch MG1CS111',
+    processorArch: 'Infineon AURIX TC275 (300TSI EVO2)',
+    allowedBuilds: ['TC275-MG1CS111-TROCCN-01', '05E907309CN-TROC', '05E907309CN'],
+    allowedPrefixes: ['TC275-MG1CS111-TROC', '05E907309'],
+    riskNote: 'T-Roc Made in China : distinguer empattement long FAW-VW du T-Roc EU.',
+  },
+  vw_tharu_cn: {
+    ecuFamily: 'Bosch MG1CS111',
+    processorArch: 'Infineon AURIX TC275 / TC298',
+    allowedBuilds: ['TC275-MG1CS111-THARU-CN', '05E906018-THARUXR', '05E906018TH'],
+    allowedPrefixes: ['TC275-MG1CS111-THARU', '05E906018TH'],
+    riskNote: 'Tharu & Tharu XR SAIC-VW : vérifier 1.5T EVO2 vs 2.0T 330TSI.',
+  },
+  vw_tayron_cn: {
+    ecuFamily: 'Continental Simos 18.10 / Bosch MG1CS011',
+    processorArch: 'Infineon TriCore TC1793 / AURIX TC298',
+    allowedBuilds: ['TC298-SIMOS1810-TAYRONL-CN', '06K906071CN-TAYRON', '06K906071CN'],
+    allowedPrefixes: ['TC298-SIMOS1810-TAY', '06K906071'],
+    riskNote: 'Tayron / Tayron L / X FAW-VW : checksum DSG DQ381 couplé.',
+  },
+  vw_tavendor_cn: {
+    ecuFamily: 'Bosch MG1CS011 / Simos 18.10',
+    processorArch: 'Infineon AURIX TC298TP',
+    allowedBuilds: ['TC298-MG1CS011-TAVENDOR-01', '06N906021CN-TAV', '06N906021CN'],
+    allowedPrefixes: ['TC298-MG1CS011-TAV', '06N906021'],
+    riskNote: 'Tavendor 380TSI : respecter strictement la table de couple boîte DQ500/DQ381.',
+  },
+  vw_talagon_cn: {
+    ecuFamily: 'Bosch MG1CS008 / Simos 18',
+    processorArch: 'Infineon AURIX TC298TP (380TSI / 530 V6)',
+    allowedBuilds: ['TC298-MG1CS008-TALAGON-V6', '03H906056CN-530V6', '03H906056CN'],
+    allowedPrefixes: ['TC298-MG1CS008-TAL', '03H906056'],
+    riskNote: 'Talagon VR6 2.5T (530 V6) incompatible avec carto 2.0T 380TSI.',
+  },
+  vw_teramont_cn: {
+    ecuFamily: 'Bosch MG1CS011 / Simos 18.10',
+    processorArch: 'Infineon AURIX TC298TP / TC397',
+    allowedBuilds: ['TC298-MG1CS011-TERAMONTPRO', '06N906032CN-TERA', '06N906032CN'],
+    allowedPrefixes: ['TC298-MG1CS011-TERA', '06N906032'],
+    riskNote: 'Teramont Pro EA888 Evo5 : SFD2 requis avant flash OBD.',
+  },
+  audi_a3l_cn: {
+    ecuFamily: 'Bosch MG1CS111 / MED17.5.25',
+    processorArch: 'Infineon AURIX TC275 (FAW-Audi CN)',
+    allowedBuilds: ['TC275-MG1CS111-AUDIA3L-CN', '8Y0906018CN-35TFSI', '8Y0906018CN'],
+    allowedPrefixes: ['TC275-MG1CS111-AUDI', '8Y0906018'],
+    riskNote: 'Audi A3L empattement long Chine : vérifier codage BCM/MMI CN.',
+  },
+  cupra_tavascan_cn: {
+    ecuFamily: 'Bosch MG1CS011 / Vitesco BMS MEB',
+    processorArch: 'Infineon AURIX TC397 / TC298 (VW Anhui)',
+    allowedBuilds: ['TC397-MEB-TAVASCAN-CN01', '1E0907120CN-CUPRA', '1E0907120CN'],
+    allowedPrefixes: ['TC397-MEB-TAVASCAN', '1E0907120'],
+    riskNote: 'Véhicule électrique/hybride VW Anhui (Chine) : ne jamais flasher haute tension sans habilitation HV.',
+  },
+  mg_5_gt_cn: {
+    ecuFamily: 'Bosch ME17.8.8 / MG1US008',
+    processorArch: 'Infineon TriCore TC1728 / AURIX TC298',
+    allowedBuilds: ['TC1728-ME1788-MG5-15C4E', 'TC298-MG1US008-MGGT25', '1037569201'],
+    allowedPrefixes: ['TC1728-ME1788-MG', 'TC298-MG1US008-MG', '1037569'],
+    riskNote: 'MG5 / MG GT SAIC : bien distinguer 1.5 atmosphérique de 1.5T MegaTech.',
+  },
+  mg_zs_one_cn: {
+    ecuFamily: 'Bosch ME17.8.8 / MED17.8.10',
+    processorArch: 'Infineon TriCore TC1782 / TC1728',
+    allowedBuilds: ['TC1782-MED17810-MGONE-01', 'TC1728-ME1788-MGZS24', '1037569450'],
+    allowedPrefixes: ['TC1782-MED17810-MG', 'TC1728-ME1788-MGZS', '10375694'],
+    riskNote: 'MG ZS / MG One : iSMART DSP couplé au CAN habitacle.',
+  },
+  livan_x3_x6_cn: {
+    ecuFamily: 'Bosch ME17.8.8 / MED17.8.10',
+    processorArch: 'Infineon TriCore TC1728 / TC1782 (Geely Livan)',
+    allowedBuilds: ['TC1782-MED17810-LIVANX6-01', 'TC1728-ME1788-LIVANX3', '1037564880'],
+    allowedPrefixes: ['TC1782-MED17810-LIVAN', 'TC1728-ME1788-LIVAN', '10375648'],
+    riskNote: 'Plateforme Geely Livan (ex Maple/Lifan) : architecture proche GX3/Coolray.',
+  },
 };
 
 function getWhitelistProfileForVehicle(vehicle: Vehicle): EcuWhitelistProfile {
@@ -264,6 +362,12 @@ export const HARDWARE_WHITELIST: readonly string[] = [
   'FYT UIS7862',
   'TOPWAY TS10',
   'TOPWAY TS18',
+  'CNS 3.0',
+  'MIB3-CN',
+  'AUDI-MMI-CN',
+  'CUPRA-MEB',
+  'MG-ISMART',
+  'LIVAN-GKUI',
   // Microcontrôleurs & Builds ECU certifiés
   ...Array.from(
     new Set(
@@ -295,6 +399,12 @@ const IHU_WHITELIST_IDS = new Set([
   'FYT UIS7862',
   'TOPWAY TS10',
   'TOPWAY TS18',
+  'CNS 3.0',
+  'MIB3-CN',
+  'AUDI-MMI-CN',
+  'CUPRA-MEB',
+  'MG-ISMART',
+  'LIVAN-GKUI',
 ]);
 
 const FORBIDDEN_BUILD_SIGNATURES = ['IHU535G', 'FYT_ON_TS10', 'TS10_ON_FYT', 'UNKNOWN', 'INVALID', 'TEST_BRICK'];
