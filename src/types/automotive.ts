@@ -43,7 +43,16 @@ export interface FlashStage {
 export interface TabletApp {
   id: string;
   name: string;
-  category: 'Diagnostic' | 'Navigation' | 'Multimédia' | 'Personnalisation' | 'Utilitaire';
+  category:
+    | 'CarPlay & Google'
+    | 'TV, Coran & Radio DZ'
+    | 'Multi-Écran & HDMI'
+    | 'Réseaux Sociaux'
+    | 'Diagnostic'
+    | 'Navigation'
+    | 'Multimédia'
+    | 'Personnalisation'
+    | 'Utilitaire';
   version: string;
   sizeMb: number;
   description: string;
@@ -51,6 +60,7 @@ export interface TabletApp {
   installed: boolean;
   icon: string;
   minAndroidVersion: string;
+  badge?: string;
 }
 
 export interface TranslationItem {

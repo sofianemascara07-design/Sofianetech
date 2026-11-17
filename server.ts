@@ -670,26 +670,33 @@ Exécutez d'abord ces commandes ADB en **lecture seule** pour identifier exactem
   }
 });
 
-// API: Tablet App Sideload / Install Simulation
+// API: Tablet App Sideload / Smart Premium Bundle Install
 app.post('/api/tablet/install', (req, res) => {
-  const { appId, appName, connectionMode, targetDevice } = req.body;
+  const { appId, appName, packageName, connectionMode = 'wifi', targetDevice, bundleIds, enableMultiWindow } = req.body || {};
   const timestamp = new Date().toISOString();
-  
-  // Return simulated installation logs and status
+  const safeMode = String(connectionMode).toUpperCase();
+  const isBundle = Array.isArray(bundleIds) && bundleIds.length > 0;
+
+  const logs = [
+    `[${safeMode}] Handshake socket établi avec l'unité tablette Android`,
+    `[SÉCURITÉ ANTI-BRICK] Lecture seule sur /system, /vendor, MCU et DSP AudioFlinger vérifiée`,
+    isBundle
+      ? `[PACK SMART PREMIUM] Déploiement de ${bundleIds.length} paquets (/data/app) : Play Store, ZLink CarPlay, Drama Live, Radio DZ, Coran TV, HDMI Bridge...`
+      : `[INJECTION] pm install -r -g /data/local/tmp/${packageName || `${appName}.apk`}`,
+    ...(enableMultiWindow
+      ? ['[MULTI-ÉCRAN] settings put global force_resizable_activities 1 && enable_freeform_support 1']
+      : []),
+    `[OPTIMISATION] Animations système x0.5 & permissions vidéo/HDMI accordées sans toucher au CAN/AVM`,
+  ];
+
   return res.json({
     success: true,
     appId,
     appName,
     connectionMode,
-    targetDevice: targetDevice || 'Android Automotive 13 - HeadUnit ID 0x4A8F',
+    targetDevice: targetDevice || 'Android Automotive 13 - Smart Premium HeadUnit',
     timestamp,
-    logs: [
-      `[${connectionMode.toUpperCase()}] Handshake socket établi avec l'unité tablette`,
-      `[TRANSFERT] Envoi du paquet ${appName}.apk (Vérification signature SHA-256 : OK)`,
-      `[INSTALLATION] Commande pm install -r -g /data/local/tmp/${appName}.apk`,
-      `[PERMISSION] Attribution automatique des droits CAN-Bus et localisation`,
-      `[SUCCÈS] Application prête et épinglée sur le lanceur du tableau de bord`,
-    ],
+    logs,
   });
 });
 

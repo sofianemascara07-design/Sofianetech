@@ -332,11 +332,19 @@ adb shell settings list system > backup_ihu\\system.txt
 adb shell dumpsys audio > backup_ihu\\audio_dsp.txt
 echo Sauvegarde terminee dans le dossier backup_ihu.
 echo.
-echo [ETAPE 3/3] INJECTION APK NON DESTRUCTIVE (Aucune touche MCU / /system / AVM)
+echo [ETAPE 3/3] INJECTION APK SMART PREMIUM NON DESTRUCTIVE (Aucune touche MCU / /system / AVM)
 adb shell settings put global install_non_market_apps 1
+adb shell settings put global force_resizable_activities 1
+adb shell settings put global enable_freeform_support 1
 if exist MicroG_GmsCore.apk adb install -r MicroG_GmsCore.apk
+if exist GooglePlayStore_GMS.apk adb install -r GooglePlayStore_GMS.apk
+if exist ZLink5_CarPlay_Pro.apk adb install -r ZLink5_CarPlay_Pro.apk
 if exist GoogleMaps_Car.apk adb install -r GoogleMaps_Car.apk
 if exist YouTube_Car.apk adb install -r YouTube_Car.apk
+if exist DramaLive_BoxTV.apk adb install -r DramaLive_BoxTV.apk
+if exist RadioAlgerienne_DZ.apk adb install -r RadioAlgerienne_DZ.apk
+if exist CoranKarim_TV.apk adb install -r CoranKarim_TV.apk
+if exist WhatsApp_Car.apk adb install -r WhatsApp_Car.apk
 adb shell setprop persist.sys.locale ${localeCode}
 adb shell am broadcast -a android.intent.action.LOCALE_CHANGED
 echo.
@@ -807,10 +815,12 @@ pause
               {/* Step 3: Safe Non-Destructive Injection */}
               <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs">
                 <span className="font-bold text-emerald-300 block">
-                  ÉTAPE 3 : Injection APK Non Destructive (Sans toucher MCU / DSP / AVM)
+                  ÉTAPE 3 : Injection Smart Premium Non Destructive (Sans toucher MCU / DSP / AVM)
                 </span>
                 <div className="font-mono text-[11px] text-slate-300 bg-slate-900 p-2 rounded border border-slate-800 select-all">
-                  adb install -r MicroG_GmsCore.apk &amp;&amp; adb install -r GoogleMaps_Car.apk<br />
+                  adb shell settings put global force_resizable_activities 1<br />
+                  adb install -r GooglePlayStore_GMS.apk &amp;&amp; adb install -r ZLink5_CarPlay.apk<br />
+                  adb install -r DramaLive_BoxTV.apk &amp;&amp; adb install -r RadioDZ.apk &amp;&amp; adb install -r CoranTV.apk<br />
                   adb shell am broadcast -a android.intent.action.LOCALE_CHANGED
                 </div>
               </div>
