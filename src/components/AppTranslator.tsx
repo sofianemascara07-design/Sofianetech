@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { TranslationItem, ConnectionMode } from '../types/automotive';
 import { SAMPLE_STRINGS_TO_TRANSLATE } from '../data/mockVehicles';
-import { Languages, Sparkles, Download, CheckCircle2, Send, Tablet, RefreshCw, FileCode } from 'lucide-react';
+import { Languages, Sparkles, CheckCircle2, Send, Tablet, FileCode, AlertTriangle, Car } from 'lucide-react';
 import { apiFetch } from '../utils/apiBridge';
 
 interface AppTranslatorProps {
@@ -10,17 +10,102 @@ interface AppTranslatorProps {
   onOpenConnectModal: () => void;
 }
 
+interface HeadUnitPreset {
+  id: string;
+  label: string;
+  appName: string;
+  items: TranslationItem[];
+}
+
+const HEADUNIT_TRANSLATION_PRESETS: HeadUnitPreset[] = [
+  {
+    id: 'autopro_standard',
+    label: 'AutoPro Cockpit Standard (EN → FR/AR)',
+    appName: 'AutoPro Cockpit HD',
+    items: SAMPLE_STRINGS_TO_TRANSLATE,
+  },
+  {
+    id: 'kia_seltos_2026_cn',
+    label: 'Kia Seltos (Saltos) 2026 Version Chine (Baidu DuerOS)',
+    appName: 'Kia Connect CN / DuerOS (Seltos 2026)',
+    items: [
+      { key: 'app_title', original: '起亚智联车机系统 (Kia Connect CN 2026)', translated: 'Système Kia Connect (Seltos 2026)', context: 'En-tête principal tablette Kia CN' },
+      { key: 'menu_vehicle_ctrl', original: '车辆设置与驾驶模式 (Drive Mode & Chassis)', translated: 'Réglages Véhicule & Modes de Conduite', context: 'Menu principal véhicule' },
+      { key: 'gauge_turbo_boost', original: '涡轮增压压力 (Turbo Boost kPa/bar)', translated: 'Pression Turbo (bar)', context: 'Télémétrie moteur' },
+      { key: 'gauge_coolant_temp', original: '发动机冷却液温度 (Coolant Temp °C)', translated: 'Température Moteur (°C)', context: 'Indicateur thermique' },
+      { key: 'menu_avm_360', original: '360°全景影像与透明底盘 (AVM Surround)', translated: 'Caméra 360° & Châssis Transparent', context: 'Bouton assistance stationnement' },
+      { key: 'menu_adas_lka', original: '车道保持辅助 LKA / 主动刹车 FCA', translated: 'Maintien de Voie (LKA) & Freinage d’Urgence', context: 'Menu ADAS sécurité' },
+      { key: 'warning_battery_low', original: '蓄电池电压过低，请保持发动机启动后再升级', translated: 'Tension batterie faible ! Maintenez le moteur démarré avant mise à jour.', context: 'Alerte système' },
+      { key: 'btn_clear_dtc', original: '一键扫描并清除故障码 (DTC Reset)', translated: 'Scanner et Effacer les Défauts (DTC)', context: 'Action diagnostic' },
+    ],
+  },
+  {
+    id: 'geely_flyme_250',
+    label: 'Geely Cityray (Boyue) Flyme Auto 2.5.0 / Coolray / Starray / Okavango / Icon / Cowboy',
+    appName: 'Geely Flyme Auto 2.5.0 / GKUI OS',
+    items: [
+      { key: 'app_title', original: '银河 Flyme Auto 2.5.0 智能座舱 (Cityray/Starray)', translated: 'Cockpit Geely Flyme Auto 2.5.0', context: 'Système Meizu Flyme Auto' },
+      { key: 'menu_540_camera', original: '540°上帝之眼透明底盘视图', translated: 'Vue Caméra 540° & Châssis Transparent', context: 'Module AVM Geely' },
+      { key: 'gauge_turbo_boost', original: 'BHE15涡轮增压值 (Boost Pressure)', translated: 'Pression Turbo BHE15 (bar)', context: 'Jauge performance' },
+      { key: 'gauge_coolant_temp', original: '冷却液与变速箱油温 (Température DCT/Eau)', translated: 'Temp. Liquide & Boîte 7DCT (°C)', context: 'Jauge thermique' },
+      { key: 'menu_ambient_light', original: '72色音乐律动氛围灯与香氛系统', translated: 'Éclairage d’Ambiance 72 Couleurs & Parfum', context: 'Habitacle Full Option' },
+      { key: 'warning_battery_low', original: '系统提示：刷机或安装APK时请勿断开电源 (12.5V+)', translated: 'Alerte : Ne coupez pas le contact pendant l’installation APK (12.5V+).', context: 'Sécurité IHU' },
+      { key: 'btn_clear_dtc', original: '重置车机缓存并校准语言包 (Apply FR/AR)', translated: 'Appliquer Langue FR/AR & Calibrer', context: 'Validation ADB' },
+    ],
+  },
+  {
+    id: 'jetour_full_series',
+    label: 'Jetour X70 / X70 Plus / X70L / X90 Plus / X95 / T1 / X50 (Lion OS)',
+    appName: 'Jetour OS Suite (X70/X70L/X90/X95/T1/X50)',
+    items: [
+      { key: 'app_title', original: '捷途雄狮智云车机 (Jetour Lion OS)', translated: 'Jetour Lion OS (Français / Arabe)', context: 'Interface Jetour CN' },
+      { key: 'menu_xwd_terrain', original: 'XWD全自动智能四驱地形模式 (T1 / X90)', translated: 'Gestion 4x4 XWD & Modes Tout-Terrain', context: 'Sélecteur conduite Jetour' },
+      { key: 'gauge_turbo_boost', original: '鲲鹏动力增压压力 (Kunpeng Turbo)', translated: 'Pression Turbo Kunpeng (bar)', context: 'Compteur moteur' },
+      { key: 'gauge_coolant_temp', original: '发动机实时水温 (Engine Temp °C)', translated: 'Température Moteur (°C)', context: 'Surveillance thermique' },
+      { key: 'menu_sony_dsp', original: 'SONY高保真音效与主动降噪设置', translated: 'Réglages Audio DSP & Égaliseur Habitacle', context: 'Audio DSP' },
+      { key: 'warning_battery_low', original: '检测到系统非破坏模式：严禁刷写MCU/DSP分区', translated: 'Mode Non Destructif Actif : Écriture MCU/DSP bloquée par sécurité.', context: 'Pare-feu Anti-Brick' },
+      { key: 'btn_clear_dtc', original: '安装常用应用商店与CarPlay (Sideload APK)', translated: 'Déployer Packs Apps & CarPlay Sans Fil', context: 'Bouton installation' },
+    ],
+  },
+  {
+    id: 'changan_x5_plus_pro',
+    label: 'Changan X5 Plus / X5 Pro (Oshan InCall OS)',
+    appName: 'Changan InCall OS (X5 Plus / Pro)',
+    items: [
+      { key: 'app_title', original: '长安欧尚 OnStyle / InCall 智能车联', translated: 'Changan X5 Plus / Pro InCall OS', context: 'Interface Changan' },
+      { key: 'menu_track_mode', original: '赛道模式与声浪模拟 (Track Mode NE15T)', translated: 'Mode Piste & Télémétrie NE15T', context: 'Bouton sport' },
+      { key: 'gauge_turbo_boost', original: '蓝鲸NE1.5T增压压力 (BlueCore Boost)', translated: 'Pression Turbo BlueCore (bar)', context: 'Jauge suralimentation' },
+      { key: 'gauge_coolant_temp', original: '冷却系统温度监控 (Coolant °C)', translated: 'Température Refroidissement (°C)', context: 'Jauge moteur' },
+      { key: 'warning_battery_low', original: '警告：禁止修改 /system 或 /vendor 分区', translated: 'Attention : Ne jamais modifier /system ou /vendor (Protection 360°).', context: 'Sécurité Changan' },
+      { key: 'btn_clear_dtc', original: '应用语言翻译并开启多窗口分屏', translated: 'Appliquer Traduction & Activer Multi-Écran', context: 'Action système' },
+    ],
+  },
+];
+
 export const AppTranslator: React.FC<AppTranslatorProps> = ({
   connectionMode,
   isConnected,
   onOpenConnectModal,
 }) => {
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(HEADUNIT_TRANSLATION_PRESETS[0].id);
   const [stringsList, setStringsList] = useState<TranslationItem[]>(SAMPLE_STRINGS_TO_TRANSLATE);
-  const [targetLang, setTargetLang] = useState<string>('Arabe (العربية)');
+  const [targetLang, setTargetLang] = useState<string>('Français (France)');
   const [appName, setAppName] = useState<string>('AutoPro Cockpit HD');
   const [isTranslating, setIsTranslating] = useState(false);
   const [aiNotes, setAiNotes] = useState<string | null>(null);
   const [pushStatus, setPushStatus] = useState<string | null>(null);
+  const [pushWarning, setPushWarning] = useState<string | null>(null);
+
+  const handleSelectPreset = (presetId: string) => {
+    const preset = HEADUNIT_TRANSLATION_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    setSelectedPresetId(preset.id);
+    setAppName(preset.appName);
+    setStringsList(preset.items.map((item) => ({ ...item })));
+    setAiNotes(null);
+    setPushStatus(null);
+    setPushWarning(null);
+  };
 
   const availableLanguages = [
     { code: 'ar', label: 'Arabe (العربية)', dir: 'rtl' },
@@ -67,21 +152,22 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
 
   // Push translation directly to car headunit
   const handlePushToCarScreen = () => {
+    setPushWarning(null);
     if (!isConnected) {
-      alert('Veuillez activer la liaison avec la tablette (Câble, WiFi ou Bluetooth).');
+      setPushWarning('Veuillez activer la liaison avec la tablette (Câble USB-C, WiFi Direct ou Bluetooth) avant d’injecter le pack linguistique.');
       return;
     }
 
     setPushStatus('Injection des ressources linguistiques dans le système de bord...');
     setTimeout(() => {
-      setPushStatus(`Succès : Les fichiers linguistiques ont été injectés via ${connectionMode.toUpperCase()} dans /system/res/locale_${targetLang.slice(0, 2).toLowerCase()}.`);
+      setPushStatus(`Succès : Les fichiers linguistiques (${appName}) ont été injectés via ${connectionMode.toUpperCase()} dans /data/local/tmp/locale_${targetLang.slice(0, 2).toLowerCase()}.`);
       setTimeout(() => setPushStatus(null), 5000);
     }, 1500);
   };
 
   // Export as Android strings.xml
   const handleExportStringsXml = () => {
-    let xml = `<?xml version="1.0" encoding="utf-8"?>\n<!-- AutoPro Automotive Translation Resource -->\n<resources>\n`;
+    let xml = `<?xml version="1.0" encoding="utf-8"?>\n<!-- AutoPro Automotive Translation Resource (${appName}) -->\n<resources>\n`;
     stringsList.forEach((s) => {
       xml += `    <string name="${s.key}">${s.translated.replace(/"/g, '\\"')}</string>\n`;
     });
@@ -91,7 +177,7 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `strings_${targetLang.slice(0, 2).toLowerCase()}.xml`;
+    a.download = `strings_${selectedPresetId}_${targetLang.slice(0, 2).toLowerCase()}.xml`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -106,14 +192,14 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
         <div>
           <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
             <Languages className="w-5 h-5 text-cyan-400" />
-            <span>Traducteur IA pour Applications &amp; Écrans Automobiles</span>
+            <span>Traducteur IA pour Tablettes Chinoises &amp; Écrans Automobiles</span>
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Traduisez instantanément les textes d'interfaces, compteurs, alertes de sécurité et boutons d'applications pour tablettes de voiture en toute langue (Arabe, Français, Anglais, Espagnol, etc.).
+            Traduisez les tablettes chinoises (Kia Seltos 2026 CN, Geely Cityray Flyme Auto 2.5.0, Starray, Okavango, Icon, Cowboy, Coolray, Jetour X70/X70L/X90/X95/T1/X50, Changan X5 Plus/Pro) en Français ou Arabe RTL.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handleExportStringsXml}
             className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer border border-slate-700"
@@ -124,14 +210,29 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
 
           <button
             onClick={handlePushToCarScreen}
-            disabled={!isConnected}
-            className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+            className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
           >
             <Send className="w-4 h-4" />
             <span>Injecter dans la Tablette</span>
           </button>
         </div>
       </div>
+
+      {pushWarning && (
+        <div className="p-3 bg-amber-950/40 border border-amber-700/60 rounded-lg text-amber-200 text-xs flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{pushWarning}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenConnectModal}
+            className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded text-[11px] cursor-pointer"
+          >
+            Connecter la tablette
+          </button>
+        </div>
+      )}
 
       {pushStatus && (
         <div className="p-3 bg-emerald-950/40 border border-emerald-700/60 rounded-lg text-emerald-300 text-xs flex items-center gap-2">
@@ -140,42 +241,62 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
         </div>
       )}
 
-      {/* Target Language & App Config Strip */}
-      <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
+      {/* Vehicle Head-Unit Preset + Target Language & App Config Strip */}
+      <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-4">
         <div>
-          <label className="block text-slate-400 text-xs mb-1 font-medium">Langue Cible Souhaitée :</label>
+          <label className="block text-slate-300 text-xs mb-1.5 font-semibold flex items-center gap-1.5">
+            <Car className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Pack Interface Tablette Véhicule (Dictionnaire Constructeur CN/EN) :</span>
+          </label>
           <select
-            value={targetLang}
-            onChange={(e) => setTargetLang(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-semibold"
+            value={selectedPresetId}
+            onChange={(e) => handleSelectPreset(e.target.value)}
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-cyan-300 focus:outline-none focus:border-cyan-500 font-semibold"
           >
-            {availableLanguages.map((l) => (
-              <option key={l.code} value={l.label}>
-                {l.label}
+            {HEADUNIT_TRANSLATION_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
               </option>
             ))}
           </select>
         </div>
 
-        <div>
-          <label className="block text-slate-400 text-xs mb-1 font-medium">Nom de l'Application Embarquée :</label>
-          <input
-            type="text"
-            value={appName}
-            onChange={(e) => setAppName(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-          />
-        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
+          <div>
+            <label className="block text-slate-400 text-xs mb-1 font-medium">Langue Cible Souhaitée :</label>
+            <select
+              value={targetLang}
+              onChange={(e) => setTargetLang(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-semibold"
+            >
+              {availableLanguages.map((l) => (
+                <option key={l.code} value={l.label}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="sm:self-end">
-          <button
-            onClick={handleTranslateAll}
-            disabled={isTranslating}
-            className="w-full py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
-          >
-            <Sparkles className={`w-4 h-4 ${isTranslating ? 'animate-spin' : ''}`} />
-            <span>{isTranslating ? 'Traduction IA en cours...' : `Traduire en ${targetLang}`}</span>
-          </button>
+          <div>
+            <label className="block text-slate-400 text-xs mb-1 font-medium">Nom de l'Application / OS Embarqué :</label>
+            <input
+              type="text"
+              value={appName}
+              onChange={(e) => setAppName(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+            />
+          </div>
+
+          <div className="sm:self-end">
+            <button
+              onClick={handleTranslateAll}
+              disabled={isTranslating}
+              className="w-full py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
+            >
+              <Sparkles className={`w-4 h-4 ${isTranslating ? 'animate-spin' : ''}`} />
+              <span>{isTranslating ? 'Traduction IA en cours...' : `Traduire en ${targetLang}`}</span>
+            </button>
+          </div>
         </div>
       </div>
 

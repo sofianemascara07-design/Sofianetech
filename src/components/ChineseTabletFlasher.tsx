@@ -25,7 +25,7 @@ interface ChineseTabletFlasherProps {
   onOpenConnectModal: () => void;
 }
 
-type ChineseBrandId = 'geely' | 'jetour' | 'chery' | 'changan' | 'mg_dfsk' | 'vw_cn';
+type ChineseBrandId = 'geely' | 'jetour' | 'chery' | 'changan' | 'mg_dfsk' | 'vw_cn' | 'kia_cn';
 
 interface BrandSpec {
   id: ChineseBrandId;
@@ -43,29 +43,45 @@ interface BrandSpec {
 const BRAND_SPECS: Record<ChineseBrandId, BrandSpec> = {
   geely: {
     id: 'geely',
-    shortLabel: 'Geely & Livan (Coolray, X6...)',
-    name: 'Geely OS / GKUI / Livan (Coolray 2024-2026, Emgrand, Monjaro, Livan X3/X6 Pro)',
-    modelsDefault: 'Geely Coolray / Livan X6 Pro 2025',
-    ihuVariants: ['IHU715P (Coolray récent/restylé)', 'IHU516G', 'IHU535G', 'ECARX E01 / E02 (SD665)', 'LIVAN-GKUI (X3/X6 Pro)'],
-    socVariants: ['Qualcomm Snapdragon 665 / ECARX E01-E02', 'Qualcomm Snapdragon 6155 (sm6150)', 'Qualcomm Snapdragon 8155 (sm8150)'],
-    defaultBuild: 'GKUI-IHU715P-2025',
-    factoryCodes: ['8888', '3368', '*#*#3646633#*#*', 'Appui long Heure/Version'],
-    usbPort: 'Port USB central ou accoudoir (Port multimédia marqué USB 1)',
+    shortLabel: 'Geely (Cityray, Starray, Coolray...)',
+    name: 'Geely Flyme Auto 2.5.0 / GKUI / Livan (Cityray Boyue, Coolray Full Option, Starray, Okavango/Haoyue L, Icon, Cowboy 1.2/1.8, Emgrand, Monjaro)',
+    modelsDefault: 'Geely Cityray (Boyue) Flyme Auto 2.5.0 / Starray / Coolray Full Option / Okavango / Icon / Cowboy 2025',
+    ihuVariants: [
+      'Flyme Auto 2.5.0 (Cityray / Boyue / Starray / Cowboy)',
+      'IHU715P (Coolray Full Option / restylé)',
+      'IHU516G',
+      'IHU535G',
+      'ECARX E01 / E02 (Icon / Okavango / SD665)',
+      'LIVAN-GKUI (X3/X6 Pro)',
+    ],
+    socVariants: [
+      'SiEngine SE1000 / Dragon Eagle One (Flyme Auto 2.5.0 Cityray)',
+      'Qualcomm Snapdragon 8155 (sm8150 - Starray / Okavango / Monjaro)',
+      'Qualcomm Snapdragon 6155 (sm6150)',
+      'Qualcomm Snapdragon 665 / ECARX E01-E02',
+    ],
+    defaultBuild: 'FLYME-AUTO-2.5.0',
+    factoryCodes: ['8888', '3368', '*#*#3646633#*#*', 'Appui long Heure/Version (Flyme Auto Diag)'],
+    usbPort: 'Port USB-A / USB-C Data central sous console ou accoudoir (USB 1)',
     criticalWarning:
-      'VIGILANCE CRITIQUE : Ne JAMAIS flasher un fichier IHU535G ou IHU516G sur IHU715P ! Risque immédiat de perte totale du son radio/ampli et de blocage des caméras 540° (perte synchro MCU/LVDS).',
+      'VIGILANCE CRITIQUE : Ne JAMAIS flasher un firmware GKUI IHU535G/IHU516G sur Flyme Auto 2.5.0 (Cityray/Starray/Cowboy) ou sur IHU715P (Coolray Full Option) ! Risque de perte totale du son ampli/DSP et de blocage des caméras 540°.',
   },
   jetour: {
     id: 'jetour',
-    shortLabel: 'Jetour (Dashing, X70, T2)',
-    name: 'Jetour OS / Android Automotive (Dashing 2024-2026, X70 Plus, X90, T2)',
-    modelsDefault: 'Jetour Dashing 2025',
-    ihuVariants: ['Jetour OS Export (Global)', 'Jetour OS CN (Chine)', 'Lion OS Qualcomm Module'],
-    socVariants: ['Qualcomm Snapdragon 6155 (sm6150)', 'Qualcomm Snapdragon 8155 (sm8150)', 'Unisoc UIS7862'],
-    defaultBuild: '1.8.2.1.E (Vérifier MCU)',
+    shortLabel: 'Jetour (X70/L, X90/X95, T1/T2, X50)',
+    name: 'Jetour OS / Lion OS (X70, X70 Plus, X70L, X90 Plus, X95, T1, T2, X50, Dashing)',
+    modelsDefault: 'Jetour X70 / X70 Plus / X70L / X90 Plus / X95 / T1 / X50 2025',
+    ihuVariants: [
+      'Jetour Lion OS Export (Global — X70 / X70L / X50)',
+      'Jetour Lion OS CN (Chine — X90 Plus / X95 / T1)',
+      'Jetour OS Qualcomm 8155 (T1 / T2 / Dashing)',
+    ],
+    socVariants: ['Qualcomm Snapdragon 8155 (sm8150)', 'Qualcomm Snapdragon 6155 (sm6150)', 'Unisoc UIS7862'],
+    defaultBuild: 'JETOUR-LION-OS (Vérifier MCU)',
     factoryCodes: ['8888', '3368', '123456', '*#*#3646633#*#*', 'Tapoter 7x Version MCU'],
     usbPort: 'Port USB Data sous la console centrale',
     criticalWarning:
-      'VIGILANCE CRITIQUE : La branche 1.8.2.1.E est incompatible avec certaines révisions DSP audio 2025/2026 si le fichier MCU correspondant n’est pas appairé. Toujours lire ro.board.platform avant injection.',
+      'VIGILANCE CRITIQUE : La branche 1.8.2.1.E est incompatible avec les révisions DSP audio Jetour 2025/2026 (X70L / X90 Plus / X95 / T1 / X50) sans MCU appairé. Utiliser exclusivement le sideload APK non destructif pour traduction FR/AR & applications.',
   },
   chery: {
     id: 'chery',
@@ -82,16 +98,20 @@ const BRAND_SPECS: Record<ChineseBrandId, BrandSpec> = {
   },
   changan: {
     id: 'changan',
-    shortLabel: 'Changan (UNI-T, CS35/55)',
-    name: 'Changan InCall OS (CS35+, CS55+, UNI-T, UNI-K, Alsvin)',
-    modelsDefault: 'Changan CS55 Plus 2025',
-    ihuVariants: ['InCall OS Standard (CS35+/CS55+/Alsvin)', 'InCall UNI-Series (UNI-T / UNI-K couplé 360°)'],
-    socVariants: ['MediaTek MT8666', 'Qualcomm Snapdragon 6155 (UNI)', 'Qualcomm Snapdragon 8155 (UNI-K)'],
+    shortLabel: 'Changan (X5 Plus/Pro, UNI)',
+    name: 'Changan InCall / OnStyle OS (X5 Plus, X5 Pro, CS35+, CS55+, UNI-T, UNI-K, Alsvin)',
+    modelsDefault: 'Changan X5 Plus / X5 Pro / CS55 Plus 2025',
+    ihuVariants: [
+      'InCall OnStyle (Changan X5 Plus / X5 Pro)',
+      'InCall OS Standard (CS35+/CS55+/Alsvin)',
+      'InCall UNI-Series (UNI-T / UNI-K couplé 360°)',
+    ],
+    socVariants: ['MediaTek MT8666 / NE15T', 'Qualcomm Snapdragon 6155 (X5 Pro / UNI)', 'Qualcomm Snapdragon 8155 (UNI-K)'],
     defaultBuild: 'INCALL-MT8666-2025',
     factoryCodes: ['8888', '123456', '369875', '*#*#8888#*#*'],
     usbPort: 'Port USB de synchronisation console centrale',
     criticalWarning:
-      'VIGILANCE CRITIQUE : Sur la gamme UNI (UNI-T / UNI-K), les caméras 360° et le tableau de bord sont couplés au processeur principal. INTERDICTION absolue de modifier /system ou /vendor.',
+      'VIGILANCE CRITIQUE : Sur Changan X5 Plus / X5 Pro et la gamme UNI, les caméras 360°/540° et le tableau de bord sont couplés au processeur principal. INTERDICTION absolue de modifier /system ou /vendor.',
   },
   mg_dfsk: {
     id: 'mg_dfsk',
@@ -118,6 +138,19 @@ const BRAND_SPECS: Record<ChineseBrandId, BrandSpec> = {
     usbPort: 'Port USB-C Data avant sous l’écran MIB3 / CNS 3.0',
     criticalWarning:
       'VIGILANCE CRITIQUE : Les VW/Audi Made in China (CNS 3.0 / MIB3 CN) ont une protection composant (Component Protection) et FEC/SWaP différente de l’Europe ! Ne JAMAIS flasher un firmware MIB3 EU directement sur une unité CNS 3.0 chinoise sans sauvegarde FEC/EEPROM.',
+  },
+  kia_cn: {
+    id: 'kia_cn',
+    shortLabel: 'Kia Seltos 2026 (Chine)',
+    name: 'Kia (Yueda Kia Chine) — Seltos / Saltos 2026 Version Chine (Baidu DuerOS / Kia Connect CN)',
+    modelsDefault: 'Kia Seltos (Saltos) 2026 Version Chine',
+    ihuVariants: ['KIA-DUEROS-CN (Baidu DuerOS Android CN)', 'BAIDU-CARLIFE-CN (Kia Connect Chine 2026)'],
+    socVariants: ['Qualcomm / MediaTek Kia Connect CN (Baidu DuerOS Android)', 'NVIDIA / Telechips Kia CN DuerOS'],
+    defaultBuild: 'KIA-DUEROS-CN-2026',
+    factoryCodes: ['2400', '1111', '0000', 'Tapoter 5x Version Logicielle / Kernel'],
+    usbPort: 'Port USB-A / USB-C multimédia avant sous la console climatisation',
+    criticalWarning:
+      'VIGILANCE CRITIQUE : La tablette Kia Seltos 2026 Version Chine tourne sous Baidu DuerOS / Kia Connect CN. Ne JAMAIS flasher une mise à jour Kia Europe (Gen5W / ccNC EU) sous peine de bloquer le bootloader et la radio. Utiliser uniquement le pack de traduction FR/AR & sideload APK non destructif.',
   },
 };
 
@@ -254,8 +287,20 @@ export const ChineseTabletFlasher: React.FC<ChineseTabletFlasherProps> = ({
       return {
         blocked: true,
         severity: 'critical' as const,
-        title: 'ALERTE ROUGE : PARTITION /system OU /vendor INTERDITE SUR CHANGAN UNI',
-        reason: 'Sur Changan UNI-T / UNI-K, les caméras 360° et le compteur sont couplés au processeur principal. Toute écriture /system ou /vendor est bloquée.',
+        title: 'ALERTE ROUGE : PARTITION /system OU /vendor INTERDITE SUR CHANGAN UNI / X5',
+        reason: 'Sur Changan X5 Plus/Pro et UNI-T/UNI-K, les caméras 360° et le compteur sont couplés au processeur principal. Toute écriture /system ou /vendor est bloquée.',
+      };
+    }
+
+    if (
+      targetBrand === 'kia_cn' &&
+      (fileUpper.includes('GEN5W_EU') || fileUpper.includes('CCNC_EU') || fileUpper.includes('HARMAN_EU'))
+    ) {
+      return {
+        blocked: true,
+        severity: 'critical' as const,
+        title: 'ALERTE ROUGE : FIRMWARE KIA EUROPE INTERDIT SUR KIA SELTOS CHINE (DUEROS)',
+        reason: 'Le Kia Seltos 2026 Version Chine utilise Baidu DuerOS / Kia Connect CN. L’injection d’un firmware Kia Europe (Gen5W/ccNC) bloque définitivement le bootloader.',
       };
     }
 
@@ -447,7 +492,7 @@ pause
         <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
           1. Base de Compatibilité Matérielle (2023–2026) :
         </label>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
           {(Object.values(BRAND_SPECS) as BrandSpec[]).map((b) => (
             <button
               key={b.id}

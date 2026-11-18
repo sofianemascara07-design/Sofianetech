@@ -17,9 +17,11 @@ import {
   Unlock,
   XCircle,
   FileCheck2,
+  Flame,
 } from 'lucide-react';
 import { apiFetch } from '../utils/apiBridge';
 import { obdHardwareBridge } from '../utils/obdHardwareBridge';
+import { LambdaDtcOffModule } from './LambdaDtcOffModule';
 
 interface EcuFlashingProps {
   selectedVehicle: Vehicle;
@@ -319,6 +321,83 @@ const ECU_BUILD_WHITELIST_BY_VEHICLE: Record<string, EcuWhitelistProfile> = {
     allowedPrefixes: ['TC1782-MED17810-LIVAN', 'TC1728-ME1788-LIVAN', '10375648'],
     riskNote: 'Plateforme Geely Livan (ex Maple/Lifan) : architecture proche GX3/Coolray.',
   },
+  geely_cityray_flyme: {
+    ecuFamily: 'Bosch MED17.8.10 / UAES',
+    processorArch: 'Infineon TriCore TC1782 / SiEngine SE1000 (Flyme Auto 2.5.0)',
+    allowedBuilds: ['TC1782-UAES-CITYRAY-01', 'FLYME-AUTO-2.5.0', '1037582110'],
+    allowedPrefixes: ['TC1782-UAES-CITY', 'FLYME-AUTO-', '1037582'],
+    riskNote: 'Cityray Boyue Flyme Auto 2.5.0 : ne jamais croiser avec firmware GKUI IHU535G.',
+  },
+  geely_coolray_full: {
+    ecuFamily: 'Bosch MED17.8.10 / UAES',
+    processorArch: 'Infineon TriCore TC1782 / TC1793 (BHE15 Full Option)',
+    allowedBuilds: ['TC1782-UAES-COOLRAY-FULL', 'IHU715P', '1037582400'],
+    allowedPrefixes: ['TC1782-UAES-COOL', '10375824'],
+    riskNote: 'Coolray Full Option 540° : protéger impérativement la calibration caméra LVDS et le DSP audio.',
+  },
+  geely_starray_15t_20t: {
+    ecuFamily: 'Bosch MED17.8.10 / MG1CS080',
+    processorArch: 'Infineon TriCore TC1793 / AURIX TC298 (Boyue L / Starray)',
+    allowedBuilds: ['TC298-MG1CS080-STARRAY-01', 'TC1793-MED17810-STARRAY', '10SW091240'],
+    allowedPrefixes: ['TC298-MG1CS080-STAR', 'TC1793-MED17810-STAR', '10SW091'],
+    riskNote: 'Distinguer impérativement Starray 1.5TD (MED17.8.10) vs 2.0TD (MG1CS080).',
+  },
+  geely_okavango_haoyue_l: {
+    ecuFamily: 'Bosch MG1CS080 / MED17.8.10',
+    processorArch: 'Infineon AURIX TC298 (Haoyue L 7 Places)',
+    allowedBuilds: ['TC298-MG1CS080-OKAVANGO-01', '10SW092180-HAOYUEL', '10SW092180'],
+    allowedPrefixes: ['TC298-MG1CS080-OKA', '10SW092'],
+    riskNote: 'Okavango Haoyue L 2.0TD : checksum boîte 7DCT couplé au calculateur moteur.',
+  },
+  geely_icon_15t: {
+    ecuFamily: 'Bosch MED17.8.10 / UAES',
+    processorArch: 'Infineon TriCore TC1782 (BHE15-EFZ)',
+    allowedBuilds: ['TC1782-UAES-ICON-01', '1037567890-ICON', '1037567890'],
+    allowedPrefixes: ['TC1782-UAES-ICON', '10375678'],
+    riskNote: 'Geely Icon : architecture cockpit double écran liée au bus CAN passerelle.',
+  },
+  geely_cowboy_12_18: {
+    ecuFamily: 'Bosch MED17.8.10 / UAES',
+    processorArch: 'Infineon TriCore TC1782 / Flyme Auto',
+    allowedBuilds: ['TC1782-UAES-COWBOY-1218', 'FLYME-AUTO-2.5.0', '1037583900'],
+    allowedPrefixes: ['TC1782-UAES-COWBOY', '10375839'],
+    riskNote: 'Geely Cowboy (1.2 / 1.8 / 1.5TD) : vérifier la variante exacte Flyme Auto avant sideload.',
+  },
+  changan_x5_plus_pro: {
+    ecuFamily: 'Bosch MED17.8.10 / MG1US008',
+    processorArch: 'Infineon TriCore TC1782 / AURIX TC298 (NE15T)',
+    allowedBuilds: ['TC1782-MED17810-X5PLUS-01', 'TC298-MG1US008-X5PRO', '1037576500'],
+    allowedPrefixes: ['TC1782-MED17810-X5', 'TC298-MG1US008-X5', '10375765'],
+    riskNote: 'Changan X5 Plus / Pro : interdiction stricte de modifier /system ou /vendor sur InCall OS.',
+  },
+  jetour_x70_x70l: {
+    ecuFamily: 'Bosch MED17.8.10 / UAES',
+    processorArch: 'Infineon TriCore TC1782 / TC1793',
+    allowedBuilds: ['TC1793-UAES-X70L-01', 'TC1782-MED17810-X70', '1037570880'],
+    allowedPrefixes: ['TC1793-UAES-X70', 'TC1782-MED17810-X70', '10375708'],
+    riskNote: 'Jetour X70 / X70L : vérifier DSP audio 2025/2026 avant toute mise à jour tablette.',
+  },
+  jetour_x90_plus_x95: {
+    ecuFamily: 'Bosch MED17.8.10 / MG1US008',
+    processorArch: 'Infineon TriCore TC1793 / AURIX TC298',
+    allowedBuilds: ['TC298-MG1US008-X95-01', 'TC1793-UAES-X90P', '10SW095620'],
+    allowedPrefixes: ['TC298-MG1US008-X9', 'TC1793-UAES-X90', '10SW0956'],
+    riskNote: 'Jetour X90 Plus / X95 : bien distinguer moteur 1.6 TGDI de 2.0 TGDI.',
+  },
+  jetour_t1_x50: {
+    ecuFamily: 'Bosch MED17.8.10 / MG1US008',
+    processorArch: 'Infineon TriCore TC1782 / AURIX TC298',
+    allowedBuilds: ['TC298-MG1US008-T1XWD-01', 'TC1782-MED17810-X50', '10SW096110'],
+    allowedPrefixes: ['TC298-MG1US008-T1', 'TC1782-MED17810-X50', '10SW0961'],
+    riskNote: 'Jetour T1 / X50 : gestion XWD couplée au calculateur MG1US008.',
+  },
+  kia_seltos_2026_cn: {
+    ecuFamily: 'Bosch ME17.9.21 / Kefico CPEGD2.20',
+    processorArch: 'Infineon TriCore TC1724 / TC1782 (Yueda Kia CN)',
+    allowedBuilds: ['TC1724-ME17921-SELTOSCN26', 'KIA-DUEROS-CN', '1037589100'],
+    allowedPrefixes: ['TC1724-ME17921-SELTOS', 'KIA-DUEROS-', '10375891'],
+    riskNote: 'Kia Seltos 2026 Version Chine : tablette Baidu DuerOS incompatible avec firmwares Kia EU Gen5W.',
+  },
 };
 
 function getWhitelistProfileForVehicle(vehicle: Vehicle): EcuWhitelistProfile {
@@ -368,6 +447,12 @@ export const HARDWARE_WHITELIST: readonly string[] = [
   'CUPRA-MEB',
   'MG-ISMART',
   'LIVAN-GKUI',
+  'FLYME-AUTO-2.5.0',
+  'SIENGINE-SE1000',
+  'ECARX-FLYME',
+  'KIA-DUEROS-CN',
+  'BAIDU-CARLIFE-CN',
+  'JETOUR-LION-OS',
   // Microcontrôleurs & Builds ECU certifiés
   ...Array.from(
     new Set(
@@ -405,6 +490,12 @@ const IHU_WHITELIST_IDS = new Set([
   'CUPRA-MEB',
   'MG-ISMART',
   'LIVAN-GKUI',
+  'FLYME-AUTO-2.5.0',
+  'SIENGINE-SE1000',
+  'ECARX-FLYME',
+  'KIA-DUEROS-CN',
+  'BAIDU-CARLIFE-CN',
+  'JETOUR-LION-OS',
 ]);
 
 const FORBIDDEN_BUILD_SIGNATURES = ['IHU535G', 'FYT_ON_TS10', 'TS10_ON_FYT', 'UNKNOWN', 'INVALID', 'TEST_BRICK'];
@@ -546,6 +637,7 @@ export const EcuFlashing: React.FC<EcuFlashingProps> = ({
   connectionMode,
   onOpenConnectModal,
 }) => {
+  const [flashMode, setFlashMode] = useState<'reprog' | 'lambda_dtc'>('reprog');
   const [selectedStage, setSelectedStage] = useState<FlashStage>(FLASH_STAGES[0]);
   const [isFlashing, setIsFlashing] = useState(false);
   const [flashProgress, setFlashProgress] = useState(0);
@@ -879,6 +971,38 @@ Taille: 2048 KB (Flash Micro)`;
 
   return (
     <div className="space-y-6">
+      {/* Sub-mode switcher: Reprog Stage 1/2 vs Lambda Off / Cat Off / DTC Table (.bin) */}
+      <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl bg-slate-900/80 border border-slate-800 w-fit">
+        <button
+          type="button"
+          onClick={() => setFlashMode('reprog')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 cursor-pointer transition-all ${
+            flashMode === 'reprog'
+              ? 'bg-amber-500 text-slate-950 shadow-sm'
+              : 'text-slate-300 hover:text-white hover:bg-slate-800'
+          }`}
+        >
+          <Zap className="w-4 h-4" />
+          <span>Reprogrammation Stage 1 / 2 &amp; Cartographie</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setFlashMode('lambda_dtc')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 cursor-pointer transition-all ${
+            flashMode === 'lambda_dtc'
+              ? 'bg-rose-500 text-white shadow-sm'
+              : 'text-slate-300 hover:text-white hover:bg-slate-800'
+          }`}
+        >
+          <Flame className="w-4 h-4" />
+          <span>Lambda Off / Cat Off / Table DTC (.bin)</span>
+        </button>
+      </div>
+
+      {flashMode === 'lambda_dtc' ? (
+        <LambdaDtcOffModule />
+      ) : (
+        <>
       {/* Title & ECU Info Banner */}
       <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
@@ -1463,6 +1587,8 @@ Taille: 2048 KB (Flash Micro)`;
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 };

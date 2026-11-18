@@ -571,10 +571,27 @@ app.post('/api/chinese-tablet/ai-guard', async (req, res) => {
         alertTitle = 'ALERTE ROUGE : INCOMPATIBILITÉ PLATEFORME LIVAN (GKUI)';
         riskDetail =
           'Les modèles Livan (X3 Pro / X6 Pro / RL7) utilisent une branche GKUI / Jinlv dédiée. Un firmware IHU535G ou Jetour bloque le module CAN et les caméras AVM.';
+      } else if (
+        brandLower.includes('kia') &&
+        (fileUpper.includes('GEN5W_EU') || fileUpper.includes('CCNC_EU') || fileUpper.includes('HARMAN_EU'))
+      ) {
+        blocked = true;
+        alertTitle = 'ALERTE ROUGE : FIRMWARE KIA EUROPE INTERDIT SUR KIA SELTOS 2026 CHINE (DUEROS)';
+        riskDetail =
+          'Le Kia Seltos (Saltos) 2026 Version Chine fonctionne sous Baidu DuerOS / Kia Connect CN. L’injection d’un firmware Kia Europe (Gen5W/ccNC) briquera l’unité principale.';
+      } else if (
+        brandLower.includes('geely') &&
+        (ihuUpper.includes('FLYME') || combinedTarget.includes('CITYRAY') || combinedTarget.includes('STARRAY') || combinedTarget.includes('COWBOY')) &&
+        (fileUpper.includes('IHU535G') || fileUpper.includes('IHU516G'))
+      ) {
+        blocked = true;
+        alertTitle = 'ALERTE ROUGE : FIRMWARE GKUI IHU535G/516G INTERDIT SUR FLYME AUTO 2.5.0';
+        riskDetail =
+          'Les modèles Geely Cityray (Boyue), Starray, Okavango, Icon et Cowboy sous Flyme Auto 2.5.0 (SE1000/SD8155) ne doivent jamais recevoir un firmware GKUI IHU535G/516G.';
       }
     }
 
-    const systemContext = `Tu es le moteur d'intelligence artificielle embarqué de "AutoPro Flash & Diagnostic Hub", expert en ingénierie automobile, systèmes d'infodivertissement Android (IHU / Head Units) et protocoles CAN/MCU pour véhicules chinois récents et versions européennes Made in China (2023-2026 : Geely Coolray/Emgrand/Monjaro/GX3 Pro, Livan X3 Pro/X6 Pro/RL7, Jetour Dashing/X70 Plus/X90/T2, Chery Tiggo/Arrizo, Changan UNI-T/UNI-K/CS35+/CS55+/Alsvin, MG5/MG GT/MG ZS/MG One/DFSK, VW Chine SAIC/FAW Golf/Passat Pro/Bora/T-Roc/Tharu/Tayron/Tavendor/Talagon/Teramont, Audi A3L CN, Cupra Anhui).
+    const systemContext = `Tu es le moteur d'intelligence artificielle embarqué de "AutoPro Flash & Diagnostic Hub", expert en ingénierie automobile, systèmes d'infodivertissement Android (IHU / Head Units) et protocoles CAN/MCU pour véhicules chinois récents et versions chinoises (2023-2026 : Geely Cityray Boyue Flyme Auto 2.5.0, Coolray Full Option, Starray, Okavango/Haoyue L, Icon, Cowboy 1.2/1.8, Emgrand, Monjaro, Livan X3/X6 Pro, Jetour X70, X70 Plus, X70L, X90 Plus, X95, T1, T2, X50, Dashing, Chery Tiggo/Arrizo, Changan X5 Plus/X5 Pro/UNI-T/UNI-K/CS35+/CS55+/Alsvin, MG5/MG GT/MG ZS/MG One/DFSK, Kia Seltos/Saltos 2026 Version Chine Baidu DuerOS, VW Chine SAIC/FAW Golf/Passat Pro/Bora/T-Roc/Tharu/Tayron/Tavendor/Talagon/Teramont, Audi A3L CN, Cupra Anhui).
 
 RÈGLES OBLIGATOIRES :
 1. Empêcher tout briquage, perte de son (DSP/Ampli), plantage radio ou blocage caméras 360°/540° (AVM).
