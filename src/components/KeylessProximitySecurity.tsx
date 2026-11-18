@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { AiVerificationBadge, AiVerificationInfo } from './AiVerificationBadge';
 import {
   Key,
   Smartphone,
@@ -123,6 +124,7 @@ export const KeylessProximitySecurity: React.FC<KeylessProximitySecurityProps> =
     supportedTools: string[];
     procedure: string;
     timestamp: string;
+    aiVerification?: AiVerificationInfo | null;
   } | null>(null);
   const [copiedImmo, setCopiedImmo] = useState(false);
 
@@ -373,6 +375,7 @@ au véhicule, ni à distance, ni via l'application mobile.
           supportedTools: data.supportedTools || [],
           procedure: data.procedure,
           timestamp: data.timestamp || new Date().toLocaleTimeString('fr-FR'),
+          aiVerification: data.aiVerification || null,
         });
       }
     } catch {
@@ -1042,6 +1045,7 @@ au véhicule, ni à distance, ni via l'application mobile.
             <pre className="whitespace-pre-wrap text-xs text-slate-200 font-sans leading-relaxed bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
               {immoResult.procedure}
             </pre>
+            <AiVerificationBadge verification={immoResult.aiVerification} />
           </div>
         )}
       </div>

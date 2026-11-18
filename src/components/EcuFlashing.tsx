@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Vehicle, FlashStage } from '../types/automotive';
 import { FLASH_STAGES, VEHICLE_PRESETS } from '../data/mockVehicles';
+import { AiVerificationBadge, AiVerificationInfo } from './AiVerificationBadge';
 import {
   Zap,
   ShieldCheck,
@@ -667,6 +668,7 @@ export const EcuFlashing: React.FC<EcuFlashingProps> = ({
   // AI recommendations
   const [aiLoading, setAiLoading] = useState(false);
   const [aiAdvice, setAiAdvice] = useState<string | null>(null);
+  const [aiVerification, setAiVerification] = useState<AiVerificationInfo | null>(null);
 
   // Reset critical verification whenever target vehicle/ECU changes
   useEffect(() => {
@@ -962,8 +964,10 @@ Taille: 2048 KB (Flash Micro)`;
       });
       const data = await res.json();
       setAiAdvice(data.recommendation || 'Conseils indisponibles.');
+      setAiVerification(data.aiVerification || null);
     } catch {
       setAiAdvice('Erreur lors du calcul de la recommandation par l\'IA.');
+      setAiVerification(null);
     } finally {
       setAiLoading(false);
     }
@@ -1232,6 +1236,7 @@ Taille: 2048 KB (Flash Micro)`;
         {aiAdvice ? (
           <div className="p-4 bg-slate-950 rounded-lg border border-amber-800/40 text-xs text-slate-300 whitespace-pre-line leading-relaxed font-sans">
             {aiAdvice}
+            <AiVerificationBadge verification={aiVerification} />
           </div>
         ) : (
           <p className="text-xs text-slate-400 leading-relaxed">

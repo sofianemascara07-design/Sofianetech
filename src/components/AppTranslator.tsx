@@ -3,6 +3,7 @@ import { TranslationItem, ConnectionMode } from '../types/automotive';
 import { SAMPLE_STRINGS_TO_TRANSLATE } from '../data/mockVehicles';
 import { Languages, Sparkles, CheckCircle2, Send, Tablet, FileCode, AlertTriangle, Car } from 'lucide-react';
 import { apiFetch } from '../utils/apiBridge';
+import { AiVerificationBadge, AiVerificationInfo } from './AiVerificationBadge';
 
 interface AppTranslatorProps {
   connectionMode: ConnectionMode;
@@ -93,6 +94,7 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
   const [appName, setAppName] = useState<string>('AutoPro Cockpit HD');
   const [isTranslating, setIsTranslating] = useState(false);
   const [aiNotes, setAiNotes] = useState<string | null>(null);
+  const [aiVerification, setAiVerification] = useState<AiVerificationInfo | null>(null);
   const [pushStatus, setPushStatus] = useState<string | null>(null);
   const [pushWarning, setPushWarning] = useState<string | null>(null);
 
@@ -143,8 +145,10 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
         );
       }
       setAiNotes(data.notes || `Traduction complétée pour ${targetLang}`);
+      setAiVerification(data.aiVerification || null);
     } catch {
       setAiNotes('Erreur de connexion au service de traduction IA.');
+      setAiVerification(null);
     } finally {
       setIsTranslating(false);
     }
@@ -301,12 +305,15 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
       </div>
 
       {aiNotes && (
-        <div className="p-3 bg-cyan-950/30 border border-cyan-800/40 rounded-lg text-xs text-cyan-200 flex items-start gap-2">
-          <Sparkles className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
-          <div>
-            <span className="font-semibold block text-cyan-300">Note de l'Expert Localisation IA :</span>
-            {aiNotes}
+        <div className="p-3 bg-cyan-950/30 border border-cyan-800/40 rounded-lg text-xs text-cyan-200 space-y-2">
+          <div className="flex items-start gap-2">
+            <Sparkles className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold block text-cyan-300">Note de l'Expert Localisation IA :</span>
+              {aiNotes}
+            </div>
           </div>
+          <AiVerificationBadge verification={aiVerification} />
         </div>
       )}
 

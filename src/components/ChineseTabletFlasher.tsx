@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { ConnectionMode } from '../types/automotive';
+import { AiVerificationBadge, AiVerificationInfo } from './AiVerificationBadge';
 import {
   Download,
   CheckCircle2,
@@ -182,6 +183,7 @@ export const ChineseTabletFlasher: React.FC<ChineseTabletFlasherProps> = ({
   const [recoverySymptom, setRecoverySymptom] = useState<'no_sound' | 'cameras_frozen' | 'black_screen' | 'touch_inverted'>('no_sound');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiReport, setAiReport] = useState<string | null>(null);
+  const [aiVerification, setAiVerification] = useState<AiVerificationInfo | null>(null);
 
   const handleSelectBrand = (brandId: ChineseBrandId) => {
     const spec = BRAND_SPECS[brandId];
@@ -339,8 +341,10 @@ export const ChineseTabletFlasher: React.FC<ChineseTabletFlasherProps> = ({
       });
       const data = await res.json();
       setAiReport(data.analysis || data.riskDetail || 'Analyse indisponible.');
+      setAiVerification(data.aiVerification || null);
     } catch {
       setAiReport('Erreur de communication avec le moteur IA Anti-Brick.');
+      setAiVerification(null);
     } finally {
       setAiLoading(false);
     }
@@ -748,6 +752,7 @@ adb reboot recovery
           {aiReport && (
             <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/40 text-xs text-slate-200 whitespace-pre-line leading-relaxed">
               {aiReport}
+              <AiVerificationBadge verification={aiVerification} />
             </div>
           )}
         </div>
@@ -882,6 +887,7 @@ adb reboot recovery
             {aiReport && (
               <div className="p-4 rounded-xl bg-slate-950 border border-cyan-700/50 text-xs text-slate-200 whitespace-pre-line leading-relaxed">
                 {aiReport}
+                <AiVerificationBadge verification={aiVerification} />
               </div>
             )}
           </div>

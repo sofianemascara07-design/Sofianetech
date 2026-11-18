@@ -3,6 +3,7 @@ import { Vehicle, DtcCode } from '../types/automotive';
 import { VEHICLE_PRESETS, INITIAL_DTC_CODES } from '../data/mockVehicles';
 import { AlertCircle, CheckCircle2, RotateCcw, Wrench, Sparkles, Activity, Cpu, Database, History, Bluetooth, Cable, Play, AlertTriangle } from 'lucide-react';
 import { apiFetch } from '../utils/apiBridge';
+import { AiVerificationBadge, AiVerificationInfo } from './AiVerificationBadge';
 import { obdHardwareBridge, ObdHardwareStatus } from '../utils/obdHardwareBridge';
 
 interface DiagnosticScannerProps {
@@ -48,6 +49,7 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
   // AI Mechanic state
   const [aiLoading, setAiLoading] = useState(false);
   const [aiReport, setAiReport] = useState<string | null>(null);
+  const [aiVerification, setAiVerification] = useState<AiVerificationInfo | null>(null);
 
   // Market Category Filter for Algeria
   const [selectedCategory, setSelectedCategory] = useState<string>('Tous');
@@ -232,8 +234,10 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
 
       const data = await res.json();
       setAiReport(data.analysis || 'Analyse indisponible.');
+      setAiVerification(data.aiVerification || null);
     } catch {
       setAiReport('Erreur de communication avec le serveur IA.');
+      setAiVerification(null);
     } finally {
       setAiLoading(false);
     }
@@ -660,6 +664,7 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
             {aiReport ? (
               <div className="p-4 bg-slate-950 rounded-lg border border-cyan-800/40 text-xs text-slate-300 whitespace-pre-line leading-relaxed font-sans">
                 {aiReport}
+                <AiVerificationBadge verification={aiVerification} />
               </div>
             ) : (
               <p className="text-xs text-slate-400 leading-relaxed">
