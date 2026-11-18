@@ -148,7 +148,7 @@ const globalApiLimiter = createRateLimiter({
 });
 
 app.use('/api', (req, res, next) => {
-  if (req.path === '/health' || req.path === '/license/check-session') return next();
+  if (req.path === '/health' || req.path === '/license/check-session' || req.path === '/remote/ping') return next();
   return globalApiLimiter(req, res, next);
 });
 
@@ -160,15 +160,21 @@ app.use(
 
 app.use(express.json({ limit: '2mb' }));
 
-// Health check for Render & Firebase Hosting bridge verification
+// Health check & low-overhead RTT ping for remote clients
 app.get('/api/health', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   return res.json({
     status: 'ok',
     service: 'AutoPro Diagnostic & Flash Backend DZ',
-    version: '3.1.0-prod-hardened',
-    features: ['admin-whitelist', 'limited-demo', 'cameras', 'atelier-mode', 'pdf-reports', 'client-activity', 'backup', 'hmac-security', 'rate-limit', 'ihu-antibrick'],
+    version: '3.2.0-remote-stable',
+    features: ['admin-whitelist', 'limited-demo', 'cameras', 'atelier-mode', 'pdf-reports', 'client-activity', 'backup', 'hmac-security', 'rate-limit', 'ihu-antibrick', 'remote-keepalive'],
     timestamp: new Date().toISOString(),
   });
+});
+
+app.get('/api/remote/ping', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({ ok: true, serverTimeMs: Date.now() });
 });
 
 // Initialize Google GenAI
@@ -1370,7 +1376,17 @@ app.post('/api/license/verify', (req, res) => {
 
 // API: Real-time Session Heartbeat & Kill-Switch (kicks out blocked clients or expired demos)
 app.post('/api/license/check-session', (req, res) => {
-  const { key, hwid, isAdmin, activatedAt, adminPasscode } = req.body || {};
+  const {
+    key,
+    hwid,
+    isAdmin,
+    activatedAt,
+    adminPasscode,
+    latencyMs,
+    stabilityScore,
+    connectionMode,
+    wakeLockActive,
+  } = req.body || {};
   if (isAdmin && !saasDatabase.verifyAdminPasscode(adminPasscode || key || '')) {
     return res.status(403).json({
       valid: false,
@@ -1378,7 +1394,16 @@ app.post('/api/license/check-session', (req, res) => {
       reason: 'Session Administrateur expirée ou non authentifiée.',
     });
   }
-  const result = saasDatabase.checkSessionHeartbeat({ key, hwid, isAdmin, activatedAt });
+  const result = saasDatabase.checkSessionHeartbeat({
+    key,
+    hwid,
+    isAdmin,
+    activatedAt,
+    latencyMs,
+    stabilityScore,
+    connectionMode,
+    wakeLockActive,
+  });
   if (!result.valid) {
     return res.status(403).json({
       valid: false,
@@ -1651,10 +1676,22 @@ app.get('/api/clients/activity', (req, res) => {
   }
 });
 
-// POST /api/clients/activity - Log client module usage event
+// POST /api/clients/activity - Log client module usage event + remote stability metrics
 app.post('/api/clients/activity', (req, res) => {
   try {
-    const { clientName, hwid, actionType, actionDetails, vehicleName, locationCity, durationMinutes } = req.body;
+    const {
+      clientName,
+      hwid,
+      actionType,
+      actionDetails,
+      vehicleName,
+      locationCity,
+      durationMinutes,
+      latencyMs,
+      stabilityScore,
+      reconnectCount,
+      wakeLockActive,
+    } = req.body;
     const record = saasDatabase.logActivity({
       clientName: clientName || 'Atelier Client AutoPro DZ',
       hwid: hwid || 'HWID-TABLETTE',
@@ -1663,6 +1700,10 @@ app.post('/api/clients/activity', (req, res) => {
       vehicleName,
       locationCity: locationCity || 'Algérie',
       durationMinutes,
+      latencyMs: typeof latencyMs === 'number' ? latencyMs : undefined,
+      stabilityScore: typeof stabilityScore === 'number' ? stabilityScore : undefined,
+      reconnectCount: typeof reconnectCount === 'number' ? reconnectCount : undefined,
+      wakeLockActive: typeof wakeLockActive === 'boolean' ? wakeLockActive : undefined,
     });
     return res.status(201).json({ success: true, activity: record });
   } catch (err: any) {
@@ -1771,6 +1812,10 @@ async function startServer() {
   const server = app.listen(port, '0.0.0.0', () => {
     console.log(`AutoPro Diagnostic & Flash Hub running on http://0.0.0.0:${port}`);
   });
+
+  // Prevent reverse-proxy 502 HTTP keep-alive races for remote clients
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
 
   const shutdown = () => {
     server.close(() => {

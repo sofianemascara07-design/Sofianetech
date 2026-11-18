@@ -121,6 +121,10 @@ export interface SubscriberRecord {
   createdAt: string;
   lastUsedAt?: string | null;
   notes?: string;
+  lastLatencyMs?: number | null;
+  lastStabilityScore?: number | null;
+  lastConnectionMode?: string | null;
+  wakeLockActive?: boolean;
 }
 
 export interface SecuritySettings {
@@ -255,6 +259,10 @@ export interface ClientActivityRecord {
   locationCity?: string;
   ipAddress?: string;
   durationMinutes?: number;
+  latencyMs?: number;
+  stabilityScore?: number;
+  reconnectCount?: number;
+  wakeLockActive?: boolean;
 }
 
 export interface VehicleCameraSystem {

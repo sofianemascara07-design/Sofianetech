@@ -10,7 +10,12 @@
     "maxDemoMinutes": null,
     "demoExpiresAt": null,
     "createdAt": "2026-11-10T08:00:00Z",
-    "notes": "Abonné officiel Master DZ (Illimité)"
+    "notes": "Abonné officiel Master DZ (Illimité)",
+    "lastUsedAt": "2026-11-18T15:29:42.543Z",
+    "lastLatencyMs": 42,
+    "lastStabilityScore": 98,
+    "lastConnectionMode": "bluetooth",
+    "wakeLockActive": true
   },
   {
     "id": "SUB-DZ-002",

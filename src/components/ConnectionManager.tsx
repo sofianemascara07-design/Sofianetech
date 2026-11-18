@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { ConnectionMode } from '../types/automotive';
-import { Cable, Wifi, Bluetooth, CheckCircle2, AlertTriangle, RefreshCw, Cpu, Activity, ShieldCheck, Smartphone, Tablet, Car, Key, Radio, Sparkles, Play, Send } from 'lucide-react';
+import { Cable, Wifi, Bluetooth, CheckCircle2, AlertTriangle, RefreshCw, Cpu, Activity, ShieldCheck, Smartphone, Tablet, Car, Key, Radio, Sparkles, Play, Send, Globe, MonitorCheck, Download, Copy, Check } from 'lucide-react';
 import { obdHardwareBridge, ObdHardwareStatus } from '../utils/obdHardwareBridge';
+import {
+  remoteStabilityManager,
+  RemoteStabilitySnapshot,
+  downloadWindowsRemoteStabilizerBat,
+} from '../utils/remoteStability';
 
 interface ConnectionManagerProps {
   connectionMode: ConnectionMode;
@@ -29,9 +34,19 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [packetCount, setPacketCount] = useState(0);
   const [pingMs, setPingMs] = useState(0);
+  const [remoteSnap, setRemoteSnap] = useState<RemoteStabilitySnapshot>(() => remoteStabilityManager.getSnapshot());
+  const [probingRemote, setProbingRemote] = useState(false);
+  const [remoteFeedback, setRemoteFeedback] = useState<string | null>(null);
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+  const [remoteTabletIp, setRemoteTabletIp] = useState<string>('192.168.1.50');
 
   useEffect(() => {
-    return obdHardwareBridge.subscribe(setHwStatus);
+    const unsubHw = obdHardwareBridge.subscribe(setHwStatus);
+    const unsubRemote = remoteStabilityManager.subscribe(setRemoteSnap);
+    return () => {
+      unsubHw();
+      unsubRemote();
+    };
   }, []);
 
   const isRealHw = hwStatus.connected && (hwStatus.transport === 'ble' || hwStatus.transport === 'serial');
@@ -472,6 +487,246 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <span className="text-slate-500">Hors ligne</span>
               )}
             </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Stabilité Clients & Travail à Distance (4G / Keep-Alive / WakeLock / USB-ADB) */}
+      <div className="p-6 rounded-2xl bg-gradient-to-br from-emerald-950/35 via-slate-900 to-cyan-950/25 border border-emerald-500/40 space-y-5 shadow-xl">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5">
+                <Globe className="w-3 h-3 text-emerald-400" />
+                <span>Stabilité Travail à Distance</span>
+              </span>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold border ${
+                  remoteSnap.status === 'optimal'
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                    : remoteSnap.status === 'degraded'
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                    : 'bg-rose-500/15 text-rose-300 border-rose-500/40'
+                }`}
+              >
+                {remoteSnap.status === 'optimal'
+                  ? 'CONNEXION STABLE'
+                  : remoteSnap.status === 'degraded'
+                  ? 'RÉSEAU INSTABLE / LATENCE'
+                  : remoteSnap.status === 'reconnecting'
+                  ? 'RECONNEXION AUTO...'
+                  : 'HORS LIGNE'}
+              </span>
+            </div>
+            <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+              <MonitorCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+              <span>Bouclier Anti-Coupure Clients &amp; Assistance à Distance (USB / BLE / Cloud)</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Évite la mise en veille des tablettes, maintient le serveur Cloud réveillé sans coupure 502 et rétablit automatiquement la liaison Bluetooth / ADB lors du travail à distance inter-wilayas.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={probingRemote}
+              onClick={async () => {
+                setProbingRemote(true);
+                const rtt = await remoteStabilityManager.probeBackendLatency();
+                setRemoteFeedback(
+                  rtt !== null
+                    ? `Ping serveur confirmé : ${rtt} ms (liaison prête pour intervention à distance).`
+                    : 'Serveur en cours de réveil ou réseau client faible — nouvelle tentative automatique active.'
+                );
+                setProbingRemote(false);
+              }}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-bold border border-cyan-500/40 flex items-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${probingRemote ? 'animate-spin' : ''}`} />
+              <span>Tester Stabilité Ping</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const file = downloadWindowsRemoteStabilizerBat();
+                setRemoteFeedback(`Script téléchargé : ${file} — Lancez-le sur le PC du client pour bloquer la mise en veille USB et stabiliser ADB/VCI.`);
+              }}
+              className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Stabilisateur PC Client (.bat)</span>
+            </button>
+          </div>
+        </div>
+
+        {remoteFeedback && (
+          <div className="p-3 rounded-xl bg-cyan-950/50 border border-cyan-500/40 text-xs text-cyan-200 flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" />
+            <span>{remoteFeedback}</span>
+          </div>
+        )}
+
+        {/* 4 Live Stability KPIs */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
+            <span className="text-[10px] uppercase font-bold text-slate-400 block">Score Stabilité Client</span>
+            <span
+              className={`text-xl font-extrabold font-mono tabular-nums ${
+                remoteSnap.stabilityScore >= 85
+                  ? 'text-emerald-400'
+                  : remoteSnap.stabilityScore >= 60
+                  ? 'text-amber-400'
+                  : 'text-rose-400'
+              }`}
+            >
+              {remoteSnap.stabilityScore}%
+            </span>
+            <span className="text-[10px] text-slate-500 block mt-0.5">
+              Paquets OK : {remoteSnap.packetSuccessRate}%
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
+            <span className="text-[10px] uppercase font-bold text-slate-400 block">Latence Cloud (RTT)</span>
+            <span className="text-xl font-extrabold font-mono text-cyan-400 tabular-nums">
+              {remoteSnap.latencyMs !== null ? `${remoteSnap.latencyMs} ms` : '— ms'}
+            </span>
+            <span className="text-[10px] text-slate-500 block mt-0.5">
+              Moyenne : {remoteSnap.avgLatencyMs !== null ? `${remoteSnap.avgLatencyMs} ms` : 'Mesure...'}
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
+            <span className="text-[10px] uppercase font-bold text-slate-400 block">Keep-Alive Render</span>
+            <span className="text-xl font-extrabold font-mono text-emerald-400 tabular-nums">
+              {remoteSnap.keepAliveActive ? 'ACTIF' : 'VEILLE'}
+            </span>
+            <span className="text-[10px] text-slate-500 block mt-0.5">
+              {remoteSnap.lastKeepAliveAt ? `Dernier ping : ${remoteSnap.lastKeepAliveAt}` : 'Auto toutes les 3 min'}
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
+            <span className="text-[10px] uppercase font-bold text-slate-400 block">Reprises &amp; Micro-coupures</span>
+            <span className="text-xl font-extrabold font-mono text-amber-400 tabular-nums">
+              {remoteSnap.reconnectCount + hwStatus.reconnectCount}
+            </span>
+            <span className="text-[10px] text-slate-500 block mt-0.5">
+              Retry auto 3x + BLE Auto-Recovery
+            </span>
+          </div>
+        </div>
+
+        {/* Interactive Protection Toggles + ADB Remote Bridge */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+          <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+            <h3 className="font-bold text-white flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span>Protections Actives sur Poste Client</span>
+            </h3>
+
+            <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-slate-900 border border-slate-800">
+              <div>
+                <span className="font-semibold text-white block">Anti-Veille Écran (WakeLock API)</span>
+                <span className="text-[11px] text-slate-400">
+                  Empêche l'écran téléphone/tablette de s'éteindre et couper l'USB/BLE pendant le travail à distance.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (remoteSnap.wakeLockActive) {
+                    await remoteStabilityManager.releaseWakeLock();
+                    setRemoteFeedback('Anti-veille écran désactivé.');
+                  } else {
+                    const ok = await remoteStabilityManager.acquireWakeLock();
+                    setRemoteFeedback(
+                      ok
+                        ? 'Anti-veille écran ACTIVÉ : la session restera éveillée tant que l’onglet est ouvert.'
+                        : 'WakeLock non supporté sur ce navigateur (laissez l’écran allumé manuellement dans Paramètres Android).'
+                    );
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg font-bold shrink-0 cursor-pointer transition-colors ${
+                  remoteSnap.wakeLockActive
+                    ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
+                    : 'bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700'
+                }`}
+              >
+                {remoteSnap.wakeLockActive ? 'ON (Éveillé)' : 'Activer'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-slate-900 border border-slate-800">
+              <div>
+                <span className="font-semibold text-white block">Reconnexion Auto Boîtier BLE + Keep-Alive OBD</span>
+                <span className="text-[11px] text-slate-400">
+                  Ping ATRV toutes les 25s (empêche la mise en veille ELM327) + 3 tentatives auto en cas de coupure Bluetooth.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => obdHardwareBridge.setAutoReconnect(!hwStatus.autoReconnectEnabled)}
+                className={`px-3 py-1.5 rounded-lg font-bold shrink-0 cursor-pointer transition-colors ${
+                  hwStatus.autoReconnectEnabled
+                    ? 'bg-cyan-500 text-slate-950 hover:bg-cyan-400'
+                    : 'bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700'
+                }`}
+              >
+                {hwStatus.autoReconnectEnabled ? 'ACTIF' : 'DÉSACTIVÉ'}
+              </button>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="font-bold text-white flex items-center gap-2">
+                <Tablet className="w-4 h-4 text-cyan-400" />
+                <span>Passerelle ADB TCP/IP :5555 (Flash Tablette à Distance)</span>
+              </h3>
+              <input
+                type="text"
+                value={remoteTabletIp}
+                onChange={(e) => setRemoteTabletIp(e.target.value)}
+                placeholder="IP Tablette / ZeroTier"
+                className="w-36 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Chez le client : branchez une fois la tablette Android au PC (ou via USB-IP / ZeroTier / RustDesk), ouvrez le port TCP 5555 puis connectez-vous à distance sans perte de liaison :
+            </p>
+            <div className="space-y-1.5 font-mono text-[11px]">
+              {[
+                { id: 'tcpip', cmd: 'adb tcpip 5555' },
+                { id: 'connect', cmd: `adb connect ${remoteTabletIp.trim() || '192.168.1.50'}:5555` },
+                { id: 'stayon', cmd: 'adb shell settings put global stay_on_while_plugged_in 3' },
+              ].map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                >
+                  <code className="text-emerald-300 truncate">{item.cmd}</code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(item.cmd);
+                      setCopiedCmd(item.id);
+                      setTimeout(() => setCopiedCmd(null), 1800);
+                    }}
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    {copiedCmd === item.id ? (
+                      <Check className="w-3 h-3 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3 h-3" />
+                    )}
+                    <span>{copiedCmd === item.id ? 'Copié' : 'Copier'}</span>
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>

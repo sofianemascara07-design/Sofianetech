@@ -92,13 +92,73 @@ export function apiUrl(path: string): string {
   return path;
 }
 
-export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+export interface ApiFetchOptions extends RequestInit {
+  retries?: number;
+  timeoutMs?: number;
+}
+
+const RETRYABLE_STATUSES = new Set([408, 429, 502, 503, 504]);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<Response> {
   const target = apiUrl(input);
   const isCrossOrigin = target.startsWith('http://') || target.startsWith('https://');
-  return globalThis.fetch(target, {
-    credentials: isCrossOrigin ? 'omit' : 'include',
-    ...init,
-  });
+  const method = (init?.method || 'GET').toUpperCase();
+  const defaultRetries = method === 'GET' || input.includes('/check-session') || input.includes('/activity') || input.includes('/health') ? 2 : 1;
+  const maxRetries = typeof init?.retries === 'number' ? init.retries : defaultRetries;
+  const timeoutMs = typeof init?.timeoutMs === 'number' ? init.timeoutMs : 22000;
+
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (init?.signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    const onCallerAbort = () => controller.abort();
+    init?.signal?.addEventListener('abort', onCallerAbort, { once: true });
+
+    try {
+      const response = await globalThis.fetch(target, {
+        credentials: isCrossOrigin ? 'omit' : 'include',
+        ...init,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      init?.signal?.removeEventListener('abort', onCallerAbort);
+
+      if (RETRYABLE_STATUSES.has(response.status) && attempt < maxRetries) {
+        const retryAfterSec = parseInt(response.headers.get('Retry-After') || '0', 10);
+        const waitMs = retryAfterSec > 0 ? Math.min(retryAfterSec * 1000, 5000) : 700 * (attempt + 1);
+        await sleep(waitMs);
+        continue;
+      }
+
+      return response;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      init?.signal?.removeEventListener('abort', onCallerAbort);
+      lastError = timedOut ? new Error(`Délai dépassé (${Math.round(timeoutMs / 1000)}s) vers le serveur distant`) : err;
+
+      if (init?.signal?.aborted || attempt >= maxRetries) {
+        throw lastError;
+      }
+
+      await sleep(750 * (attempt + 1));
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Échec de connexion réseau.');
 }
 
 export function installApiBridge(): void {

@@ -12,6 +12,8 @@ export interface ObdHardwareStatus {
   vin: string | null;
   batteryVoltage: number | null;
   lastError: string | null;
+  autoReconnectEnabled: boolean;
+  reconnectCount: number;
   logs: string[];
 }
 
@@ -193,6 +195,8 @@ class ObdHardwareBridge {
     vin: null,
     batteryVoltage: null,
     lastError: null,
+    autoReconnectEnabled: true,
+    reconnectCount: 0,
     logs: [
       'Pont matériel ELM327 prêt.',
       'Choisissez Bluetooth BLE (Android/PC), Câble USB WebSerial (PC) ou Mode Démo Atelier.',
@@ -211,6 +215,9 @@ class ObdHardwareBridge {
   private bleDevice: BluetoothDeviceLike | null = null;
   private bleWriteChar: BluetoothCharacteristicLike | null = null;
   private bleNotifyChar: BluetoothCharacteristicLike | null = null;
+  private bleDisconnectingManually = false;
+  private bleReconnecting = false;
+  private hwKeepAliveInterval: ReturnType<typeof setInterval> | null = null;
 
   // Incoming chunk buffer for ELM327 '>' prompt
   private rxBuffer = '';
@@ -240,6 +247,41 @@ class ObdHardwareBridge {
 
   public isWebSerialSupported(): boolean {
     return typeof navigator !== 'undefined' && Boolean((navigator as unknown as { serial?: unknown }).serial);
+  }
+
+  public setAutoReconnect(enabled: boolean) {
+    this.status.autoReconnectEnabled = enabled;
+    this.pushLog(
+      enabled
+        ? 'STABILITÉ : Reconnexion automatique BLE/ELM327 activée.'
+        : 'STABILITÉ : Reconnexion automatique BLE désactivée.'
+    );
+  }
+
+  private startHwKeepAlive() {
+    this.stopHwKeepAlive();
+    this.hwKeepAliveInterval = setInterval(() => {
+      if (this.isRealHardwareConnected() && !this.pendingResolve) {
+        void this.sendCommand('ATRV', 2000, false)
+          .then((rv) => {
+            const match = rv.match(/(\d+(?:[.,]\d+)?)/);
+            if (match) {
+              this.status.batteryVoltage = parseFloat(match[1].replace(',', '.'));
+              this.emit();
+            }
+          })
+          .catch(() => {
+            // Silent idle keep-alive
+          });
+      }
+    }, 25_000);
+  }
+
+  private stopHwKeepAlive() {
+    if (this.hwKeepAliveInterval) {
+      clearInterval(this.hwKeepAliveInterval);
+      this.hwKeepAliveInterval = null;
+    }
   }
 
   private emit() {
@@ -326,6 +368,7 @@ class ObdHardwareBridge {
   public activateDemoMode() {
     void this.disconnect(true);
     this.status = {
+      ...this.status,
       transport: 'demo',
       connected: true,
       ecuResponding: true,
@@ -344,6 +387,8 @@ class ObdHardwareBridge {
   }
 
   public async disconnect(silent = false) {
+    this.bleDisconnectingManually = true;
+    this.stopHwKeepAlive();
     if (this.pendingTimer) {
       clearTimeout(this.pendingTimer);
       this.pendingTimer = null;
@@ -384,6 +429,7 @@ class ObdHardwareBridge {
     this.bleDevice = null;
     this.bleWriteChar = null;
     this.bleNotifyChar = null;
+    this.bleDisconnectingManually = false;
 
     this.status = {
       ...this.status,
@@ -436,79 +482,29 @@ class ObdHardwareBridge {
       this.pushLog(`Périphérique sélectionné : ${devName}. Connexion GATT...`);
 
       device.addEventListener('gattserverdisconnected', () => {
+        if (this.bleDisconnectingManually) return;
         if (this.status.transport === 'ble' && this.status.connected) {
-          this.pushLog('ALERTE : Périphérique Bluetooth BLE déconnecté.');
+          this.stopHwKeepAlive();
           this.status.connected = false;
           this.status.ecuResponding = false;
-          this.status.transport = 'none';
-          this.emit();
+          this.pushLog('ALERTE : Périphérique Bluetooth BLE déconnecté.');
+          if (this.status.autoReconnectEnabled && !this.bleReconnecting) {
+            void this.attemptBleAutoReconnect(device);
+          } else {
+            this.status.transport = 'none';
+            this.emit();
+          }
         }
       });
 
-      const server = await device.gatt?.connect();
-      if (!server) {
-        throw new Error('Serveur GATT introuvable sur ce boîtier Bluetooth.');
-      }
-
-      let foundWrite: BluetoothCharacteristicLike | null = null;
-      let foundNotify: BluetoothCharacteristicLike | null = null;
-
-      // Try known OBD2 BLE service UUIDs first, then fall back to scanning all primary services
-      const servicesToScan: BluetoothServiceLike[] = [];
-      try {
-        const allServices = await server.getPrimaryServices();
-        servicesToScan.push(...allServices);
-      } catch {
-        for (const uuid of KNOWN_BLE_OBD_SERVICES) {
-          try {
-            const svc = await server.getPrimaryService(uuid);
-            servicesToScan.push(svc);
-          } catch {
-            // Service not present on this dongle
-          }
-        }
-      }
-
-      for (const service of servicesToScan) {
-        try {
-          const chars = await service.getCharacteristics();
-          for (const ch of chars) {
-            if (!foundNotify && (ch.properties.notify || ch.properties.indicate)) {
-              foundNotify = ch;
-            }
-            if (!foundWrite && (ch.properties.writeWithoutResponse || ch.properties.write)) {
-              foundWrite = ch;
-            }
-          }
-          if (foundWrite && foundNotify) break;
-        } catch {
-          // Ignore protected/standard GAP/GATT services
-        }
-      }
-
-      if (!foundWrite || !foundNotify) {
-        throw new Error(
-          `Service série BLE OBD2 introuvable sur "${devName}". Vérifiez qu’il s’agit bien d’un ELM327 BLE 4.0/5.0 (ex: Vgate iCar Pro BLE, vLinker) et non d’un ancien ELM327 Bluetooth 2.0 SPP classique.`
-        );
-      }
-
-      this.bleWriteChar = foundWrite;
-      this.bleNotifyChar = foundNotify;
-
-      await foundNotify.startNotifications();
-      foundNotify.addEventListener('characteristicvaluechanged', (ev: Event) => {
-        const target = ev.target as unknown as { value?: DataView };
-        if (target?.value) {
-          const chunk = new TextDecoder().decode(target.value);
-          this.handleIncomingText(chunk);
-        }
-      });
+      await this.setupBleGattCharacteristics(device);
 
       this.status.transport = 'ble';
       this.status.connected = true;
       this.status.deviceName = devName;
 
       await this.initializeElm327Sequence();
+      this.startHwKeepAlive();
       return this.getStatus();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erreur connexion Bluetooth BLE.';
@@ -516,6 +512,99 @@ class ObdHardwareBridge {
       this.status.lastError = msg;
       this.pushLog(`ÉCHEC BLE : ${msg}`);
       throw new Error(msg);
+    }
+  }
+
+  private async setupBleGattCharacteristics(device: BluetoothDeviceLike): Promise<void> {
+    const devName = device.name || 'Adaptateur OBD2 BLE';
+    const server = await device.gatt?.connect();
+    if (!server) {
+      throw new Error('Serveur GATT introuvable sur ce boîtier Bluetooth.');
+    }
+
+    let foundWrite: BluetoothCharacteristicLike | null = null;
+    let foundNotify: BluetoothCharacteristicLike | null = null;
+
+    const servicesToScan: BluetoothServiceLike[] = [];
+    try {
+      const allServices = await server.getPrimaryServices();
+      servicesToScan.push(...allServices);
+    } catch {
+      for (const uuid of KNOWN_BLE_OBD_SERVICES) {
+        try {
+          const svc = await server.getPrimaryService(uuid);
+          servicesToScan.push(svc);
+        } catch {
+          // Service not present on this dongle
+        }
+      }
+    }
+
+    for (const service of servicesToScan) {
+      try {
+        const chars = await service.getCharacteristics();
+        for (const ch of chars) {
+          if (!foundNotify && (ch.properties.notify || ch.properties.indicate)) {
+            foundNotify = ch;
+          }
+          if (!foundWrite && (ch.properties.writeWithoutResponse || ch.properties.write)) {
+            foundWrite = ch;
+          }
+        }
+        if (foundWrite && foundNotify) break;
+      } catch {
+        // Ignore protected/standard GAP/GATT services
+      }
+    }
+
+    if (!foundWrite || !foundNotify) {
+      throw new Error(
+        `Service série BLE OBD2 introuvable sur "${devName}". Vérifiez qu’il s’agit bien d’un ELM327 BLE 4.0/5.0 (ex: Vgate iCar Pro BLE, vLinker) et non d’un ancien ELM327 Bluetooth 2.0 SPP classique.`
+      );
+    }
+
+    this.bleWriteChar = foundWrite;
+    this.bleNotifyChar = foundNotify;
+
+    await foundNotify.startNotifications();
+    foundNotify.addEventListener('characteristicvaluechanged', (ev: Event) => {
+      const target = ev.target as unknown as { value?: DataView };
+      if (target?.value) {
+        const chunk = new TextDecoder().decode(target.value);
+        this.handleIncomingText(chunk);
+      }
+    });
+  }
+
+  private async attemptBleAutoReconnect(device: BluetoothDeviceLike) {
+    this.bleReconnecting = true;
+    const maxAttempts = 3;
+    try {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (this.bleDisconnectingManually || this.bleDevice !== device) return;
+        this.pushLog(`[STABILITÉ] Tentative de reconnexion auto BLE ${attempt}/${maxAttempts}...`);
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+        if (this.bleDisconnectingManually || this.bleDevice !== device) return;
+        try {
+          await this.setupBleGattCharacteristics(device);
+          this.status.transport = 'ble';
+          this.status.connected = true;
+          this.status.reconnectCount += 1;
+          this.status.lastError = null;
+          await this.sendCommand('ATE0', 2500, false);
+          this.status.ecuResponding = true;
+          this.startHwKeepAlive();
+          this.pushLog(`SUCCÈS : Liaison BLE rétablie automatiquement (${this.status.deviceName}).`);
+          return;
+        } catch {
+          // Retry next attempt
+        }
+      }
+      this.status.transport = 'none';
+      this.status.lastError = 'Reconnexion auto BLE impossible après 3 tentatives.';
+      this.pushLog('ÉCHEC : Reconnexion auto BLE impossible après 3 tentatives.');
+    } finally {
+      this.bleReconnecting = false;
     }
   }
 
@@ -556,6 +645,7 @@ class ObdHardwareBridge {
       void this.readSerialLoop();
 
       await this.initializeElm327Sequence();
+      this.startHwKeepAlive();
       return this.getStatus();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erreur port série USB.';

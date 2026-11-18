@@ -794,6 +794,22 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
                           Dernière connexion : {new Date(sub.lastUsedAt).toLocaleString('fr-FR')}
                         </span>
                       )}
+                      {typeof sub.lastStabilityScore === 'number' && (
+                        <span
+                          className={`px-2 py-0.5 rounded font-mono font-bold border ${
+                            sub.lastStabilityScore >= 85
+                              ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/50'
+                              : sub.lastStabilityScore >= 60
+                              ? 'bg-amber-950/60 text-amber-300 border-amber-700/50'
+                              : 'bg-rose-950/60 text-rose-300 border-rose-700/50'
+                          }`}
+                        >
+                          Stabilité {sub.lastStabilityScore}%
+                          {typeof sub.lastLatencyMs === 'number' ? ` · ${sub.lastLatencyMs}ms` : ''}
+                          {sub.lastConnectionMode ? ` · ${sub.lastConnectionMode.toUpperCase()}` : ''}
+                          {sub.wakeLockActive ? ' · Éveillé' : ''}
+                        </span>
+                      )}
                     </div>
 
                     {sub.notes && (

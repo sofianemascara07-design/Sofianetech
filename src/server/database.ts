@@ -696,7 +696,16 @@ export class AutoProDatabase {
     };
   }
 
-  public checkSessionHeartbeat(params: { key: string; hwid?: string; isAdmin?: boolean; activatedAt?: string }): {
+  public checkSessionHeartbeat(params: {
+    key: string;
+    hwid?: string;
+    isAdmin?: boolean;
+    activatedAt?: string;
+    latencyMs?: number;
+    stabilityScore?: number;
+    connectionMode?: string;
+    wakeLockActive?: boolean;
+  }): {
     valid: boolean;
     reason?: string;
     demoExpiresAt?: string | null;
@@ -708,7 +717,8 @@ export class AutoProDatabase {
     if (!cleanKey || this.securitySettings.blockedDemoKeys.includes(cleanKey)) {
       return { valid: false, reason: 'Lien / clé de démonstration désactivé par l\'administrateur.' };
     }
-    const sub = this.subscribers.find(s => s.licenseKey.toUpperCase() === cleanKey);
+    const subIdx = this.subscribers.findIndex(s => s.licenseKey.toUpperCase() === cleanKey);
+    const sub = subIdx !== -1 ? this.subscribers[subIdx] : undefined;
     if (!sub) {
       return { valid: false, reason: 'Abonnement introuvable ou supprimé par l\'administrateur.' };
     }
@@ -730,9 +740,30 @@ export class AutoProDatabase {
       if (sub.demoExpiresAt && Date.now() > new Date(sub.demoExpiresAt).getTime()) {
         return { valid: false, reason: 'Durée de la démonstration gratuite expirée.' };
       }
-      return { valid: true, demoExpiresAt: sub.demoExpiresAt };
     }
-    return { valid: true };
+
+    // Update live remote client stability telemetry on subscriber record (throttled disk write)
+    const nowIso = new Date().toISOString();
+    const prevUsedMs = sub.lastUsedAt ? new Date(sub.lastUsedAt).getTime() : 0;
+    sub.lastUsedAt = nowIso;
+    if (typeof params.latencyMs === 'number' && Number.isFinite(params.latencyMs)) {
+      sub.lastLatencyMs = Math.round(params.latencyMs);
+    }
+    if (typeof params.stabilityScore === 'number' && Number.isFinite(params.stabilityScore)) {
+      sub.lastStabilityScore = Math.max(0, Math.min(100, Math.round(params.stabilityScore)));
+    }
+    if (typeof params.connectionMode === 'string' && params.connectionMode.trim()) {
+      sub.lastConnectionMode = params.connectionMode.trim();
+    }
+    if (typeof params.wakeLockActive === 'boolean') {
+      sub.wakeLockActive = params.wakeLockActive;
+    }
+    this.subscribers[subIdx] = sub;
+    if (Date.now() - prevUsedMs > 120_000) {
+      this.saveSubscribersToFile();
+    }
+
+    return sub.tier === 'demo' ? { valid: true, demoExpiresAt: sub.demoExpiresAt } : { valid: true };
   }
 
   public logActivity(record: Omit<ClientActivityRecord, 'id' | 'timestamp'> & { id?: string; timestamp?: string }): ClientActivityRecord {

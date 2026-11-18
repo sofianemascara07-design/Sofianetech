@@ -23,6 +23,7 @@ import { INITIAL_DTC_CODES } from './data/mockVehicles';
 import { ShieldCheck, Cpu } from 'lucide-react';
 import { apiFetch } from './utils/apiBridge';
 import { obdHardwareBridge, ObdHardwareStatus } from './utils/obdHardwareBridge';
+import { remoteStabilityManager } from './utils/remoteStability';
 
 const REVOKED_LEGACY_DEMO_KEYS = new Set([
   'AP-DZ26-MST-9882-7EAB-5A63',
@@ -120,11 +121,18 @@ export default function App() {
     }
   }, [licenseSession, activeTab]);
 
-  // Real-time Kill-Switch polling (checks suspended/revoked clients & expired demos every 15s)
+  // Remote backend keep-alive (prevents Render hibernation mid-session) & 15s Kill-Switch heartbeat
   useEffect(() => {
-    if (!licenseSession?.isValid) return;
+    if (!licenseSession?.isValid) {
+      remoteStabilityManager.stopKeepAlive();
+      return;
+    }
+
+    remoteStabilityManager.startKeepAlive(180_000);
 
     const verifySession = async () => {
+      const startMs = performance.now();
+      const snap = remoteStabilityManager.getSnapshot();
       try {
         const res = await apiFetch('/api/license/check-session', {
           method: 'POST',
@@ -135,8 +143,14 @@ export default function App() {
             isAdmin: Boolean(licenseSession.isAdmin),
             activatedAt: licenseSession.activatedAt,
             adminPasscode: sessionStorage.getItem('autopro_admin_passcode') || '',
+            latencyMs: snap.latencyMs ?? undefined,
+            stabilityScore: snap.stabilityScore,
+            connectionMode,
+            wakeLockActive: snap.wakeLockActive,
           }),
         });
+        const elapsed = Math.round(performance.now() - startMs);
+        remoteStabilityManager.recordRequestOutcome(res.ok || res.status === 403, elapsed);
         const raw = await res.text();
         if (raw.trim().startsWith('<')) return;
         const data = JSON.parse(raw);
@@ -144,14 +158,18 @@ export default function App() {
           lockSession(data?.reason || 'Votre accès a été désactivé par l\'administrateur.');
         }
       } catch {
-        // Ignore transient network hiccups during polling
+        // Record blip without kicking out active session on transient 4G drop
+        remoteStabilityManager.recordRequestOutcome(false);
       }
     };
 
     verifySession();
     const timer = setInterval(verifySession, 15000);
-    return () => clearInterval(timer);
-  }, [licenseSession, lockSession]);
+    return () => {
+      clearInterval(timer);
+      remoteStabilityManager.stopKeepAlive();
+    };
+  }, [licenseSession, lockSession, connectionMode]);
 
   // Limited Demo Pass live countdown + automatic lock at 00:00
   useEffect(() => {
@@ -178,9 +196,10 @@ export default function App() {
     return () => clearInterval(interval);
   }, [licenseSession, lockSession]);
 
-  // Log client activity heartbeat
+  // Log client activity heartbeat with stability metrics
   useEffect(() => {
     if (licenseSession?.isValid) {
+      const snap = remoteStabilityManager.getSnapshot();
       apiFetch('/api/clients/activity', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -191,6 +210,10 @@ export default function App() {
           actionDetails: `Ouverture session AutoPro (${licenseSession.tierLabel}) — Liaison ${connectionMode.toUpperCase()}`,
           vehicleName: `${selectedVehicle.brand} ${selectedVehicle.model}`,
           locationCity: 'Algérie (Tablette Atelier)',
+          latencyMs: snap.latencyMs ?? undefined,
+          stabilityScore: snap.stabilityScore,
+          reconnectCount: snap.reconnectCount,
+          wakeLockActive: snap.wakeLockActive,
         }),
       }).catch(() => {
         // Silent telemetry ignore
