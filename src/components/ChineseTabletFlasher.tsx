@@ -129,29 +129,29 @@ const BRAND_SPECS: Record<ChineseBrandId, BrandSpec> = {
   },
   vw_cn: {
     id: 'vw_cn',
-    shortLabel: 'VW / Audi / Cupra (Chine)',
-    name: 'VW CN (Golf, Passat Pro, Bora, T-Roc, Tharu, Tayron, Tavendor, Talagon, Teramont), Audi A3L & Cupra CN',
-    modelsDefault: 'VW Passat Pro / Tharu XR / Tayron L (CN) 2025',
-    ihuVariants: ['VW CNS 3.0 (MQB Chine)', 'MIB3-CN (Qualcomm 8155 / Samsung Exynos)', 'AUDI-MMI-CN (A3L)', 'CUPRA-MEB (Tavascan Anhui)'],
-    socVariants: ['Qualcomm Snapdragon 8155 (sm8150 - Passat Pro / Teramont Pro)', 'Qualcomm 6155 / CNS 3.0 (Tharu / Bora / T-Roc)', 'Samsung Exynos Auto V9 / MIB3'],
-    defaultBuild: 'CNS3.0-MIB3-CN-2025',
+    shortLabel: 'VW Golf 8 (2026) / Audi A3 / Cupra (Chine)',
+    name: 'VW CN (Golf 8 / 8.5 2026, Passat Pro, Bora, T-Roc, Tharu, Tayron, Talagon, Teramont), Audi A3 / A3L CN & Cupra CN',
+    modelsDefault: 'VW Golf 8 / 8.5 Chinoise 2026 & Audi A3 / A3L Chine',
+    ihuVariants: ['VW CNS 3.0 (Golf 8 / MQB Chine 2025-2026)', 'MIB3-CN (Qualcomm SA8155P / Samsung Exynos)', 'AUDI-MMI-CN (A3 / A3L Chine)', 'CUPRA-MEB (Tavascan Anhui)'],
+    socVariants: ['Qualcomm Snapdragon 8155 / SA8155P (Golf 8 2026 / Passat Pro)', 'Qualcomm 6155 / CNS 3.0 (Golf 8 Pro / Tharu / Bora)', 'Samsung Exynos Auto V9 / MIB3'],
+    defaultBuild: 'CNS3.0-MIB3-CN-2026',
     factoryCodes: ['Appui long MENU 5s (Mode Engineering)', 'Appui long SETUP 10s', 'OBD11 / ODIS SFD2 Unlock'],
-    usbPort: 'Port USB-C Data avant sous l’écran MIB3 / CNS 3.0',
+    usbPort: 'Port USB-C Data avant sous l’écran MIB3 / CNS 3.0 (activer USB Debugging / Engineering)',
     criticalWarning:
-      'VIGILANCE CRITIQUE : Les VW/Audi Made in China (CNS 3.0 / MIB3 CN) ont une protection composant (Component Protection) et FEC/SWaP différente de l’Europe ! Ne JAMAIS flasher un firmware MIB3 EU directement sur une unité CNS 3.0 chinoise sans sauvegarde FEC/EEPROM.',
+      'VIGILANCE CRITIQUE : Les Golf 8 Chinoise 2026 et Audi A3 / A3L CN (CNS 3.0 / MIB3-CN) ont une Protection Composant (CP) et SFD2 différentes de l’Europe ! Ne JAMAIS flasher un firmware MIB3 Europe (MIB3_EU / MHI3_EU / FRF EU) directement : utiliser uniquement le sideload APK / traduction ADB non destructive ou une adaptation FEC/EEPROM préalable.',
   },
   kia_cn: {
     id: 'kia_cn',
-    shortLabel: 'Kia Seltos 2026 (Chine)',
-    name: 'Kia (Yueda Kia Chine) — Seltos / Saltos 2026 Version Chine (Baidu DuerOS / Kia Connect CN)',
-    modelsDefault: 'Kia Seltos (Saltos) 2026 Version Chine',
-    ihuVariants: ['KIA-DUEROS-CN (Baidu DuerOS Android CN)', 'BAIDU-CARLIFE-CN (Kia Connect Chine 2026)'],
-    socVariants: ['Qualcomm / MediaTek Kia Connect CN (Baidu DuerOS Android)', 'NVIDIA / Telechips Kia CN DuerOS'],
+    shortLabel: 'Kia Sportage & Seltos 2026 (Chine)',
+    name: 'Kia Chine (Yueda Kia) — Sportage (KX5 / NQ5) & Seltos (Saltos) 2026 (Baidu DuerOS / Kia Connect CN)',
+    modelsDefault: 'Kia Sportage (KX5 / NQ5) & Seltos 2026 Version Chine',
+    ihuVariants: ['KIA-DUEROS-CN (Sportage / Seltos Baidu DuerOS Android CN)', 'BAIDU-CARLIFE-CN (Kia Connect Chine 2025-2026)'],
+    socVariants: ['Qualcomm / MediaTek Kia Connect CN (Baidu DuerOS Android)', 'NVIDIA / Telechips Kia CN DuerOS (Sportage KX5/NQ5)'],
     defaultBuild: 'KIA-DUEROS-CN-2026',
     factoryCodes: ['2400', '1111', '0000', 'Tapoter 5x Version Logicielle / Kernel'],
     usbPort: 'Port USB-A / USB-C multimédia avant sous la console climatisation',
     criticalWarning:
-      'VIGILANCE CRITIQUE : La tablette Kia Seltos 2026 Version Chine tourne sous Baidu DuerOS / Kia Connect CN. Ne JAMAIS flasher une mise à jour Kia Europe (Gen5W / ccNC EU) sous peine de bloquer le bootloader et la radio. Utiliser uniquement le pack de traduction FR/AR & sideload APK non destructif.',
+      'VIGILANCE CRITIQUE : Les tablettes Kia Sportage Chine et Seltos 2026 Version Chine tournent sous Baidu DuerOS / Kia Connect CN. Ne JAMAIS flasher une mise à jour Kia Europe (Gen5W_EU / ccNC_EU) ni un MCU FYT/Topway sous peine de bloquer le bootloader et les caméras 360°. Utiliser uniquement le pack de traduction FR/AR & sideload APK non destructif.',
   },
 };
 
@@ -301,8 +301,20 @@ export const ChineseTabletFlasher: React.FC<ChineseTabletFlasherProps> = ({
       return {
         blocked: true,
         severity: 'critical' as const,
-        title: 'ALERTE ROUGE : FIRMWARE KIA EUROPE INTERDIT SUR KIA SELTOS CHINE (DUEROS)',
-        reason: 'Le Kia Seltos 2026 Version Chine utilise Baidu DuerOS / Kia Connect CN. L’injection d’un firmware Kia Europe (Gen5W/ccNC) bloque définitivement le bootloader.',
+        title: 'ALERTE ROUGE : FIRMWARE KIA EUROPE INTERDIT SUR KIA SPORTAGE / SELTOS CHINE',
+        reason: 'Les Kia Sportage & Seltos 2026 Version Chine utilisent Baidu DuerOS / Kia Connect CN. L’injection d’un firmware Kia Europe (Gen5W/ccNC) bloque définitivement le bootloader.',
+      };
+    }
+
+    if (
+      targetBrand === 'vw_cn' &&
+      (fileUpper.includes('MIB3_EU') || fileUpper.includes('MHI3_EU') || fileUpper.includes('MOI3_EU') || fileUpper.includes('FRF_EU'))
+    ) {
+      return {
+        blocked: true,
+        severity: 'critical' as const,
+        title: 'ALERTE ROUGE : FIRMWARE MIB3 EUROPE INTERDIT SUR VW GOLF 8 / AUDI A3 CHINE',
+        reason: 'Les unités CNS 3.0 / MIB3-CN / AUDI-MMI-CN disposent d’une protection FEC/SFD2 différente de l’Europe. Toute écriture de firmware Europe direct risque de bloquer le son, CarPlay ou la Protection Composant.',
       };
     }
 

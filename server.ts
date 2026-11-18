@@ -627,9 +627,17 @@ app.post('/api/chinese-tablet/ai-guard', async (req, res) => {
         (fileUpper.includes('GEN5W_EU') || fileUpper.includes('CCNC_EU') || fileUpper.includes('HARMAN_EU'))
       ) {
         blocked = true;
-        alertTitle = 'ALERTE ROUGE : FIRMWARE KIA EUROPE INTERDIT SUR KIA SELTOS 2026 CHINE (DUEROS)';
+        alertTitle = 'ALERTE ROUGE : FIRMWARE KIA EUROPE INTERDIT SUR KIA SPORTAGE / SELTOS CHINE';
         riskDetail =
-          'Le Kia Seltos (Saltos) 2026 Version Chine fonctionne sous Baidu DuerOS / Kia Connect CN. L’injection d’un firmware Kia Europe (Gen5W/ccNC) briquera l’unité principale.';
+          'Les Kia Sportage (KX5/NQ5) & Seltos 2026 Version Chine fonctionnent sous Baidu DuerOS / Kia Connect CN. L’injection d’un firmware Kia Europe (Gen5W/ccNC) briquera l’unité principale.';
+      } else if (
+        (brandLower.includes('vw') || brandLower.includes('volkswagen') || brandLower.includes('audi') || combinedTarget.includes('GOLF') || combinedTarget.includes('A3')) &&
+        (fileUpper.includes('MIB3_EU') || fileUpper.includes('MHI3_EU') || fileUpper.includes('MOI3_EU') || fileUpper.includes('FRF_EU'))
+      ) {
+        blocked = true;
+        alertTitle = 'ALERTE ROUGE : FIRMWARE MIB3 EUROPE INTERDIT SUR VW GOLF 8 / AUDI A3 CHINE';
+        riskDetail =
+          'Les unités CNS 3.0 / MIB3-CN / AUDI-MMI-CN (Golf 8 2026, Audi A3L) ont une Protection Composant (CP) et SFD2 spécifiques à la Chine. Toute écriture de firmware Europe direct est bloquée.';
       } else if (
         brandLower.includes('geely') &&
         (ihuUpper.includes('FLYME') || combinedTarget.includes('CITYRAY') || combinedTarget.includes('STARRAY') || combinedTarget.includes('COWBOY')) &&
@@ -642,7 +650,7 @@ app.post('/api/chinese-tablet/ai-guard', async (req, res) => {
       }
     }
 
-    const systemContext = `Tu es le moteur d'intelligence artificielle embarqué de "AutoPro Flash & Diagnostic Hub", expert en ingénierie automobile, systèmes d'infodivertissement Android (IHU / Head Units) et protocoles CAN/MCU pour véhicules chinois récents et versions chinoises (2023-2026 : Geely Cityray Boyue Flyme Auto 2.5.0, Coolray Full Option, Starray, Okavango/Haoyue L, Icon, Cowboy 1.2/1.8, Emgrand, Monjaro, Livan X3/X6 Pro, Jetour X70, X70 Plus, X70L, X90 Plus, X95, T1, T2, X50, Dashing, Chery Tiggo/Arrizo, Changan X5 Plus/X5 Pro/UNI-T/UNI-K/CS35+/CS55+/Alsvin, MG5/MG GT/MG ZS/MG One/DFSK, Kia Seltos/Saltos 2026 Version Chine Baidu DuerOS, VW Chine SAIC/FAW Golf/Passat Pro/Bora/T-Roc/Tharu/Tayron/Tavendor/Talagon/Teramont, Audi A3L CN, Cupra Anhui).
+    const systemContext = `Tu es le moteur d'intelligence artificielle embarqué de "AutoPro Flash & Diagnostic Hub", expert en ingénierie automobile, systèmes d'infodivertissement Android (IHU / Head Units) et protocoles CAN/MCU pour véhicules chinois récents et versions chinoises (2023-2026 : Geely Cityray Boyue Flyme Auto 2.5.0, Coolray Full Option, Starray, Okavango/Haoyue L, Icon, Cowboy 1.2/1.8, Emgrand, Monjaro, Livan X3/X6 Pro, Jetour X70, X70 Plus, X70L, X90 Plus, X95, T1, T2, X50, Dashing, Chery Tiggo/Arrizo, Changan X5 Plus/X5 Pro/UNI-T/UNI-K/CS35+/CS55+/Alsvin, MG5/MG GT/MG ZS/MG One/DFSK, Kia Sportage KX5/NQ5 & Seltos/Saltos 2026 Version Chine Baidu DuerOS, VW Chine SAIC/FAW Golf 8 2026/Passat Pro/Bora/T-Roc/Tharu/Tayron/Tavendor/Talagon/Teramont, Audi A3/A3L CN, Cupra Anhui).
 
 RÈGLES OBLIGATOIRES :
 1. Empêcher tout briquage, perte de son (DSP/Ampli), plantage radio ou blocage caméras 360°/540° (AVM).

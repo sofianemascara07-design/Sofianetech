@@ -22,6 +22,7 @@ export const VERIFIED_FACTORY_CODES = new Set([
   '5678',
   '126',
   '1234',
+  '2400',
   '884926', // Code PIN secours AutoPro DZ explicitement configuré dans le module Keyless
 ]);
 

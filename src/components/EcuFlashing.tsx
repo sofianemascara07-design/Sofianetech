@@ -225,11 +225,11 @@ const ECU_BUILD_WHITELIST_BY_VEHICLE: Record<string, EcuWhitelistProfile> = {
     riskNote: 'FBS4 actif sur W177 : vérifier la signature avant toute écriture.',
   },
   vw_golf_cn: {
-    ecuFamily: 'Bosch MG1CS111 / Simos 18',
-    processorArch: 'Infineon AURIX TC275 / TC298',
-    allowedBuilds: ['TC298-MG1CS111-GOLF8CN-01', '05E906018CN-15EVO2', '05E906018CN'],
+    ecuFamily: 'Bosch MG1CS111 / Simos 18 (SFD2)',
+    processorArch: 'Infineon AURIX TC275 / TC298 (FAW-VW 2025-2026)',
+    allowedBuilds: ['TC298-MG1CS111-GOLF8CN-01', '05E906018CN-15EVO2', '05E906018CN', 'CNS3.0-MIB3-CN-2026'],
     allowedPrefixes: ['TC298-MG1CS111-', '05E906018', 'CNS3.0-'],
-    riskNote: 'Ne jamais écrire un FRF européen sur MIB3 / CNS 3.0 FAW-VW sans adaptation Immo/SFD.',
+    riskNote: 'Golf 8 / 8.5 Chine 2026 (CNS 3.0 / MIB3-CN) : protection SFD2 active. Ne jamais écrire un FRF européen sans adaptation Immo/FEC.',
   },
   vw_passat_pro_cn: {
     ecuFamily: 'Bosch MG1CS011 / Simos 18.10',
@@ -288,11 +288,11 @@ const ECU_BUILD_WHITELIST_BY_VEHICLE: Record<string, EcuWhitelistProfile> = {
     riskNote: 'Teramont Pro EA888 Evo5 : SFD2 requis avant flash OBD.',
   },
   audi_a3l_cn: {
-    ecuFamily: 'Bosch MG1CS111 / MED17.5.25',
-    processorArch: 'Infineon AURIX TC275 (FAW-Audi CN)',
-    allowedBuilds: ['TC275-MG1CS111-AUDIA3L-CN', '8Y0906018CN-35TFSI', '8Y0906018CN'],
+    ecuFamily: 'Bosch MG1CS111 / MED17.5.25 (SFD2)',
+    processorArch: 'Infineon AURIX TC275 / TC298 (FAW-Audi CN 2025-2026)',
+    allowedBuilds: ['TC275-MG1CS111-AUDIA3L-CN', '8Y0906018CN-35TFSI', '8Y0906018CN', 'AUDI-MMI-CN'],
     allowedPrefixes: ['TC275-MG1CS111-AUDI', '8Y0906018'],
-    riskNote: 'Audi A3L empattement long Chine : vérifier codage BCM/MMI CN.',
+    riskNote: 'Audi A3 / A3L Chine 2026 : vérifier SFD2, protection composant et codage BCM/MMI CN avant toute écriture.',
   },
   cupra_tavascan_cn: {
     ecuFamily: 'Bosch MG1CS011 / Vitesco BMS MEB',
@@ -398,6 +398,13 @@ const ECU_BUILD_WHITELIST_BY_VEHICLE: Record<string, EcuWhitelistProfile> = {
     allowedBuilds: ['TC1724-ME17921-SELTOSCN26', 'KIA-DUEROS-CN', '1037589100'],
     allowedPrefixes: ['TC1724-ME17921-SELTOS', 'KIA-DUEROS-', '10375891'],
     riskNote: 'Kia Seltos 2026 Version Chine : tablette Baidu DuerOS incompatible avec firmwares Kia EU Gen5W.',
+  },
+  kia_sportage_cn: {
+    ecuFamily: 'Bosch MED17.9.21 / Kefico CPEGD3.20',
+    processorArch: 'Infineon TriCore TC1782 / AURIX TC275 (Yueda Kia CN KX5/NQ5)',
+    allowedBuilds: ['TC1782-CPEGD320-SPORTAGECN', 'KIA-DUEROS-CN', '1037589250'],
+    allowedPrefixes: ['TC1782-CPEGD320-SPORT', 'KIA-DUEROS-', '10375892'],
+    riskNote: 'Kia Sportage (KX5 / NQ5) Version Chine : tablette Baidu DuerOS / Kia Connect CN incompatible avec firmwares Kia EU Gen5W/ccNC.',
   },
 };
 

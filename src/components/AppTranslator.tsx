@@ -27,10 +27,10 @@ const HEADUNIT_TRANSLATION_PRESETS: HeadUnitPreset[] = [
   },
   {
     id: 'kia_seltos_2026_cn',
-    label: 'Kia Seltos (Saltos) 2026 Version Chine (Baidu DuerOS)',
-    appName: 'Kia Connect CN / DuerOS (Seltos 2026)',
+    label: 'Kia Sportage (KX5 / NQ5) & Seltos 2026 Version Chine (Baidu DuerOS)',
+    appName: 'Kia Connect CN / DuerOS (Sportage & Seltos)',
     items: [
-      { key: 'app_title', original: '起亚智联车机系统 (Kia Connect CN 2026)', translated: 'Système Kia Connect (Seltos 2026)', context: 'En-tête principal tablette Kia CN' },
+      { key: 'app_title', original: '起亚智联车机系统 (Kia Connect CN Sportage / Seltos)', translated: 'Système Kia Connect (Sportage / Seltos CN)', context: 'En-tête principal tablette Kia CN' },
       { key: 'menu_vehicle_ctrl', original: '车辆设置与驾驶模式 (Drive Mode & Chassis)', translated: 'Réglages Véhicule & Modes de Conduite', context: 'Menu principal véhicule' },
       { key: 'gauge_turbo_boost', original: '涡轮增压压力 (Turbo Boost kPa/bar)', translated: 'Pression Turbo (bar)', context: 'Télémétrie moteur' },
       { key: 'gauge_coolant_temp', original: '发动机冷却液温度 (Coolant Temp °C)', translated: 'Température Moteur (°C)', context: 'Indicateur thermique' },
@@ -38,6 +38,19 @@ const HEADUNIT_TRANSLATION_PRESETS: HeadUnitPreset[] = [
       { key: 'menu_adas_lka', original: '车道保持辅助 LKA / 主动刹车 FCA', translated: 'Maintien de Voie (LKA) & Freinage d’Urgence', context: 'Menu ADAS sécurité' },
       { key: 'warning_battery_low', original: '蓄电池电压过低，请保持发动机启动后再升级', translated: 'Tension batterie faible ! Maintenez le moteur démarré avant mise à jour.', context: 'Alerte système' },
       { key: 'btn_clear_dtc', original: '一键扫描并清除故障码 (DTC Reset)', translated: 'Scanner et Effacer les Défauts (DTC)', context: 'Action diagnostic' },
+    ],
+  },
+  {
+    id: 'vw_golf8_audi_a3_cn',
+    label: 'VW Golf 8 / 8.5 (2026) & Audi A3 / A3L Chine (CNS 3.0 / MIB3-CN)',
+    appName: 'VW CNS 3.0 / Audi MMI CN (Golf 8 2026 & A3L)',
+    items: [
+      { key: 'app_title', original: '一汽-大众 CNS 3.0 / 奥迪 MMI 智慧车联 (Golf 8 / A3 CN)', translated: 'Cockpit VW CNS 3.0 / Audi MMI CN', context: 'En-tête principal MIB3 Chine' },
+      { key: 'menu_vehicle_ctrl', original: '驾驶模式选择与底盘设定 (DCC / SFD2 Protected)', translated: 'Profils de Conduite & Châssis (SFD2)', context: 'Menu véhicule VAG CN' },
+      { key: 'menu_carplay_baidu', original: '无线 CarPlay / CarLife+ 手机互联映射', translated: 'CarPlay Sans Fil & Liaison Smartphone', context: 'Connectivité MIB3-CN' },
+      { key: 'menu_park_360', original: '360°全景泊车辅助与雷达显示 (PLA / OPS)', translated: 'Aide au Stationnement 360° & Radars OPS', context: 'Caméra et capteurs VAG' },
+      { key: 'warning_battery_low', original: '警告：严禁直刷欧版 MIB3 固件，仅限非破坏性语言包', translated: 'Attention : Ne jamais flasher firmware MIB3 EU — Pack langue non destructif uniquement.', context: 'Sécurité FEC/CP' },
+      { key: 'btn_clear_dtc', original: '应用法语/阿拉伯语翻译并保留原厂组件保护', translated: 'Appliquer Langue FR/AR (Composant Protégé)', context: 'Validation ADB/Moshi' },
     ],
   },
   {
@@ -199,7 +212,7 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
             <span>Traducteur IA pour Tablettes Chinoises &amp; Écrans Automobiles</span>
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Traduisez les tablettes chinoises (Kia Seltos 2026 CN, Geely Cityray Flyme Auto 2.5.0, Starray, Okavango, Icon, Cowboy, Coolray, Jetour X70/X70L/X90/X95/T1/X50, Changan X5 Plus/Pro) en Français ou Arabe RTL.
+            Traduisez les tablettes chinoises (VW Golf 8 2026 CN, Audi A3/A3L CN, Kia Sportage &amp; Seltos 2026 CN, Geely Cityray Flyme Auto 2.5.0, Starray, Okavango, Icon, Cowboy, Coolray, Jetour, Changan) en Français ou Arabe RTL.
           </p>
         </div>
 
