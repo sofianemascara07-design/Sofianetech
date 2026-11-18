@@ -44,8 +44,9 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [demoLinksEnabled, setDemoLinksEnabled] = useState<boolean>(false);
   const [defaultDemoMinutes, setDefaultDemoMinutes] = useState<number>(10);
+  const [serverStatus, setServerStatus] = useState<'waking' | 'online' | 'offline'>('waking');
 
-  // Auto-detect or generate persistent machine HWID
+  // Auto-detect or generate persistent machine HWID + wake up Render backend if hibernating
   useEffect(() => {
     let savedHwid = localStorage.getItem('autopro_machine_hwid');
     if (!savedHwid) {
@@ -56,24 +57,37 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
     }
     setHwid(savedHwid);
 
-    apiFetch('/api/license/status')
-      .then(async res => {
+    let cancelled = false;
+    const checkStatus = async (attempt = 1) => {
+      try {
+        const res = await apiFetch('/api/license/status');
         const text = await res.text();
-        if (text.trim().startsWith('<')) return null;
-        return JSON.parse(text);
-      })
-      .then(data => {
-        if (!data) return;
+        if (text.trim().startsWith('<')) throw new Error('HTML response');
+        const data = JSON.parse(text);
+        if (cancelled) return;
+        setServerStatus('online');
         if (typeof data?.demoLinksEnabled === 'boolean') {
           setDemoLinksEnabled(data.demoLinksEnabled);
         }
         if (typeof data?.defaultDemoMinutes === 'number') {
           setDefaultDemoMinutes(data.defaultDemoMinutes);
         }
-      })
-      .catch(() => {
-        setDemoLinksEnabled(false);
-      });
+      } catch {
+        if (cancelled) return;
+        if (attempt < 3) {
+          setServerStatus('waking');
+          setTimeout(() => void checkStatus(attempt + 1), 3500);
+        } else {
+          setServerStatus('offline');
+          setDemoLinksEnabled(false);
+        }
+      }
+    };
+
+    void checkStatus();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleCopyHwid = () => {
@@ -230,8 +244,20 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
                 : 'Démonstrations publiques verrouillées · Clé Abonné requise'}
             </span>
           </div>
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800 shrink-0">
-            VIP Lock
+          <span
+            className={`text-[10px] font-mono px-2 py-0.5 rounded border shrink-0 ${
+              serverStatus === 'online'
+                ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/60'
+                : serverStatus === 'waking'
+                ? 'bg-amber-950/70 text-amber-300 border-amber-700/60'
+                : 'bg-rose-950/70 text-rose-300 border-rose-700/60'
+            }`}
+          >
+            {serverStatus === 'online'
+              ? 'Serveur En Ligne'
+              : serverStatus === 'waking'
+              ? 'Réveil Serveur...'
+              : 'Hors Ligne'}
           </span>
         </div>
 

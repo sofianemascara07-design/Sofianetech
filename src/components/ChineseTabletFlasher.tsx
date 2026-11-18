@@ -656,6 +656,95 @@ pause
             </div>
           </div>
 
+          {/* === RECUPERATION FIRMWARE ERRONE & REMPLACEMENT COMPATIBLE === */}
+          <div className="p-4 sm:p-5 rounded-xl bg-slate-950/90 border border-cyan-500/40 space-y-4 text-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-cyan-300">
+                  Remplacement d&apos;un Firmware Erroné par un Firmware Compatible (Récupération Propre)
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Oui, une tablette avec un mauvais firmware est récupérable dans 90% des cas si le Bootloader ou le port USB OTG/EDL répond encore. Ne formatez JAMAIS tout le stockage sans sauvegarde MCU / NVRAM / Calibration !
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const recoveryBat = `@echo off
+title AutoPro - Recuperation Tablette & Rollback ADB (${currentSystem.shortLabel})
+color 0E
+echo ========================================================================
+echo   AUTOPRO RECOVERY - NETTOYAGE & PREPARATION FIRMWARE COMPATIBLE
+echo   Plateforme : ${currentSystem.name}
+echo   IHU / SoC  : ${ihuRef} / ${socChip}
+echo ========================================================================
+echo.
+echo [1/4] Verification connexion ADB / Bootloader...
+adb devices
+echo.
+echo [2/4] Identification EXACTE de la carte mere AVANT tout flash :
+adb shell getprop ro.board.platform
+adb shell getprop ro.product.board
+adb shell getprop ro.build.display.id
+adb shell getprop ro.fyt.platform 2>nul
+echo.
+echo [3/4] Sauvegarde partitions critiques (si root/adb actif)...
+if not exist backup_recovery mkdir backup_recovery
+adb shell dumpsys audio > backup_recovery\\audio_dsp.txt
+adb shell settings list system > backup_recovery\\system_settings.txt
+adb shell settings list global > backup_recovery\\global_settings.txt
+echo.
+echo [4/4] Nettoyage cache / packages errones ou passage Recovery :
+echo Si la tablette boot encore, tapez Ctrl+C sinon appuyez sur une touche pour reboot recovery :
+pause
+adb reboot recovery
+`;
+                  const blob = new Blob([recoveryBat], { type: 'application/x-bat;charset=utf-8' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `AutoPro_Recovery_IHU_${targetBrand.toUpperCase()}.bat`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-3.5 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Script Récupération ADB (.bat)</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5">
+                <span className="font-bold text-emerald-300 block">Cas A : L&apos;écran démarre (Bug / Mauvais thème / Son coupé)</span>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  1. Lisez d&apos;abord <code className="text-cyan-300">ro.board.platform</code> et la référence exacte sur l&apos;étiquette de la carte mère.<br />
+                  2. Formatez une clé USB en <strong>FAT32</strong> (16/32 Go max).<br />
+                  3. Copiez uniquement le firmware exact (ex: <code className="text-amber-300">6315_1.zip</code> + <code className="text-amber-300">lsec6315update</code> pour FYT, ou package officiel IHU exact) sur USB puis branchez sur <strong>{currentSystem.usbPort}</strong> et rebootez (ou bouton RST).
+                </p>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5">
+                <span className="font-bold text-amber-300 block">Cas B : Bootloop / Bloqué sur Logo</span>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  1. Maintenez <strong>Power + Reset (RST)</strong> ou branchez un clavier USB (Ctrl+Alt+PrtScr ou touche Home) pour forcer le <strong>Recovery Android</strong>.<br />
+                  2. Faites <strong>Wipe Data / Factory Reset</strong> (supprime uniquement les données et applis erronées sans effacer le bootloader).<br />
+                  3. Appliquez ensuite l&apos;image officielle compatible via USB (ou <code className="text-cyan-300">adb sideload update.zip</code>).
+                </p>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-900 border border-rose-800/50 space-y-1.5">
+                <span className="font-bold text-rose-300 block">Cas C : Écran Noir Total (Hard Brick)</span>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Démontage carte mère + câble USB-A vers USB-A sur PC :<br />
+                  • <strong>Qualcomm (6155/8155)</strong> : Test Point vers mode <strong>EDL 9008</strong> + QFIL (Firehose exact).<br />
+                  • <strong>Unisoc (UIS7862/8581)</strong> : <strong>ResearchDownload</strong> (.pac compatible).<br />
+                  • <strong>MediaTek (MT8666)</strong> : <strong>SP Flash Tool</strong> en mode <em>Download Only</em> (<strong>JAMAIS</strong> <em>Format All + Download</em> pour ne pas perdre NVRAM/IMEI/Caméras).
+                </p>
+              </div>
+            </div>
+          </div>
+
           {aiReport && (
             <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/40 text-xs text-slate-200 whitespace-pre-line leading-relaxed">
               {aiReport}

@@ -40,7 +40,12 @@ export function getBackendBaseUrl(): string {
 
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved && saved.trim()) {
+    if (
+      saved &&
+      saved.trim() &&
+      !saved.includes('autopro-dz-backend.onrender.com') &&
+      !saved.includes('votre-backend')
+    ) {
       return saved.trim().replace(/\/+$/, '');
     }
   } catch {
@@ -62,6 +67,14 @@ export function setBackendBaseUrl(url: string): string {
     // Ignore storage errors
   }
   return clean;
+}
+
+export function resetBackendBaseUrl(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
 }
 
 export function isStaticFirebaseWithoutBackend(): boolean {
