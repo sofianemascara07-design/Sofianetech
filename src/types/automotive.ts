@@ -327,3 +327,36 @@ export interface SdrProspect {
   lastContactAt: string;
   createdAt: string;
 }
+
+export type QuickScanEcuId = 'gateway' | 'engine' | 'abs' | 'airbag';
+
+export type QuickScanEcuStatus = 'pending' | 'scanning' | 'ok' | 'faults' | 'no_response';
+
+export interface QuickScanEcuResult {
+  ecuId: QuickScanEcuId;
+  name: string;
+  shortName: string;
+  canAddress: string;
+  rxAddress: string;
+  protocol: string;
+  status: QuickScanEcuStatus;
+  dtcs: DtcCode[];
+  latencyMs: number;
+  rawInfo?: string;
+}
+
+export interface QuickScanReport {
+  id: string;
+  vehicleId: string;
+  vehicleName: string;
+  vin: string | null;
+  transport: string;
+  batteryVoltage: number;
+  scannedAt: string;
+  durationMs: number;
+  healthScore: number;
+  totalDtcs: number;
+  ecus: QuickScanEcuResult[];
+  summaryText?: string;
+}
+

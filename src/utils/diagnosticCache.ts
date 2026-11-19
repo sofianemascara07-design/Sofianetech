@@ -3,6 +3,7 @@ import {
   DatabaseStats,
   DiagnosticScanSession,
   DtcCode,
+  QuickScanReport,
   SdrProspect,
   Vehicle,
 } from '../types/automotive';
@@ -30,6 +31,7 @@ export interface ScannerCacheSnapshot {
   telemetry: ScannerTelemetrySnapshot;
   aiReport: string | null;
   aiVerification: AiVerificationInfo | null;
+  quickScanReport?: QuickScanReport | null;
   updatedAt: string;
 }
 

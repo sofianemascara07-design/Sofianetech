@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Vehicle, DtcCode, DiagnosticScanSession } from '../types/automotive';
+import { Vehicle, DtcCode, DiagnosticScanSession, QuickScanReport } from '../types/automotive';
 import { VEHICLE_PRESETS, INITIAL_DTC_CODES } from '../data/mockVehicles';
 import { AlertCircle, CheckCircle2, RotateCcw, Wrench, Sparkles, Activity, Cpu, Database, History, Bluetooth, Cable, Play, AlertTriangle, HardDrive, WifiOff, Trash2 } from 'lucide-react';
 import { apiFetch } from '../utils/apiBridge';
 import { AiVerificationBadge, AiVerificationInfo } from './AiVerificationBadge';
 import { obdHardwareBridge, ObdHardwareStatus } from '../utils/obdHardwareBridge';
+import { AutoQuickScanPanel } from './AutoQuickScanPanel';
 import {
   clearScannerCache,
   formatCacheTimestampFr,
@@ -63,6 +64,7 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
   const [cachedAt, setCachedAt] = useState<string | null>(null);
   const [cachedVehicleLabel, setCachedVehicleLabel] = useState<string | null>(null);
   const [isOfflineAiCache, setIsOfflineAiCache] = useState(false);
+  const [quickScanReport, setQuickScanReport] = useState<QuickScanReport | null>(null);
 
   // Market Category Filter for Algeria
   const [selectedCategory, setSelectedCategory] = useState<string>('Tous');
@@ -100,12 +102,16 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
           setAiReport(cached.aiReport);
           setAiVerification(cached.aiVerification || null);
         }
+        if (cached.quickScanReport) {
+          setQuickScanReport(cached.quickScanReport);
+        }
         setIsViewingCache(true);
         setCachedAt(cached.updatedAt);
         setCachedVehicleLabel(cached.vehicleLabel);
       } else {
         setDtcList([]);
         setSelectedDtc(null);
+        setQuickScanReport(null);
         setLiveRpm(0);
         setLiveBoost(0);
         setLiveCoolant(0);
@@ -125,7 +131,8 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
     nextDtcs: DtcCode[],
     nextSelected: DtcCode | null,
     nextAiReport?: string | null,
-    nextAiVerif?: AiVerificationInfo | null
+    nextAiVerif?: AiVerificationInfo | null,
+    nextQuickScan?: QuickScanReport | null
   ) => {
     const saved = saveScannerCache({
       vehicleId: selectedVehicle.id,
@@ -143,9 +150,24 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
       },
       aiReport: nextAiReport !== undefined ? nextAiReport : aiReport,
       aiVerification: nextAiVerif !== undefined ? nextAiVerif : aiVerification,
+      quickScanReport: nextQuickScan !== undefined ? nextQuickScan : quickScanReport,
     });
     setCachedAt(saved.updatedAt);
     setCachedVehicleLabel(saved.vehicleLabel);
+  };
+
+  const handleQuickScanComplete = (report: QuickScanReport, mergedDtcs: DtcCode[]) => {
+    setQuickScanReport(report);
+    setHasScannedOnce(true);
+    setIsViewingCache(false);
+    setDtcList(mergedDtcs);
+    const prioritized =
+      mergedDtcs.find((d) => d.severity === 'critical') ||
+      mergedDtcs.find((d) => d.severity === 'high') ||
+      mergedDtcs[0] ||
+      null;
+    setSelectedDtc(prioritized);
+    persistCurrentDiagnosticToCache(mergedDtcs, prioritized, undefined, undefined, report);
   };
 
   // Live telemetry polling: REAL OBD-II PIDs when hardware is connected, simulated ONLY in Demo mode
@@ -581,6 +603,7 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
               if (!hwStatus.connected) {
                 setDtcList([]);
                 setSelectedDtc(null);
+                setQuickScanReport(null);
                 setAiReport(null);
                 setAiVerification(null);
                 setLiveRpm(0);
@@ -604,6 +627,21 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
           <span className="leading-relaxed">{scanError}</span>
         </div>
       )}
+
+      {/* Module Scan Rapide Automatique (Gateway, Moteur, ABS, Airbag) */}
+      <AutoQuickScanPanel
+        selectedVehicle={selectedVehicle}
+        hwStatus={hwStatus}
+        batteryVoltage={batteryVoltage}
+        cachedQuickScan={quickScanReport}
+        onQuickScanComplete={handleQuickScanComplete}
+        onSelectDtc={(dtc) => {
+          setSelectedDtc(dtc);
+          if (!dtcList.some((existing) => existing.code === dtc.code)) {
+            setDtcList((prev) => [dtc, ...prev]);
+          }
+        }}
+      />
 
       {/* Control Banner: Scan & Clear */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl bg-slate-900/40 border border-slate-800">

@@ -1,4 +1,4 @@
-import { DtcCode } from '../types/automotive';
+import { DtcCode, QuickScanEcuId, QuickScanEcuResult } from '../types/automotive';
 
 export type HardwareTransportType = 'none' | 'ble' | 'serial' | 'demo';
 
@@ -112,9 +112,19 @@ const COMMON_DTC_FR: Record<string, { system: string; desc: string; severity: Dt
   P0606: { system: 'Calculateur ECM', desc: 'Processeur calculateur moteur — défaut interne', severity: 'critical' },
   P2002: { system: 'FAP / DPF Diesel', desc: 'Filtre à particules (FAP) — efficacité inférieure au seuil / colmatage', severity: 'high' },
   P2279: { system: 'Admission Air', desc: 'Fuite détectée dans le circuit d’admission d’air après débitmètre', severity: 'high' },
-  U0100: { system: 'Bus CAN / Réseau', desc: 'Perte de communication avec le calculateur moteur (ECM/PCM)', severity: 'critical' },
-  U0121: { system: 'Bus CAN / Réseau', desc: 'Perte de communication avec le calculateur ABS/ESP', severity: 'high' },
-  U0140: { system: 'Bus CAN / Réseau', desc: 'Perte de communication avec le boîtier habitacle (BCM/BSI)', severity: 'medium' },
+  U0100: { system: 'Bus CAN / Gateway', desc: 'Perte de communication avec le calculateur moteur (ECM/PCM)', severity: 'critical' },
+  U0121: { system: 'Bus CAN / Gateway', desc: 'Perte de communication avec le calculateur ABS/ESP', severity: 'high' },
+  U0140: { system: 'Bus CAN / Gateway', desc: 'Perte de communication avec le boîtier habitacle (BCM/BSI)', severity: 'medium' },
+  U0151: { system: 'Bus CAN / Gateway', desc: 'Perte de communication avec le calculateur Airbag (SRS)', severity: 'high' },
+  U0155: { system: 'Bus CAN / Gateway', desc: 'Perte de communication avec le combiné d’instruments (IPC)', severity: 'medium' },
+  U0415: { system: 'Bus CAN / ABS', desc: 'Données reçues invalides depuis le module de freinage ABS', severity: 'high' },
+  C0035: { system: 'Freinage ABS / ESP', desc: 'Capteur vitesse de roue avant gauche — circuit / cible magnétique', severity: 'high' },
+  C0040: { system: 'Freinage ABS / ESP', desc: 'Capteur vitesse de roue avant droite — signal incohérent', severity: 'high' },
+  C0051: { system: 'Freinage ABS / ESP', desc: 'Capteur d’angle de braquage (SAS) — calibration requise', severity: 'medium' },
+  C1201: { system: 'Freinage ABS / ESP', desc: 'Dysfonctionnement système de contrôle moteur signalé à l’ABS/VSC', severity: 'medium' },
+  B0001: { system: 'Airbag / SRS', desc: 'Déclencheur airbag conducteur (étage 1) — résistance hors tolérance / contacteur tournant', severity: 'critical' },
+  B0020: { system: 'Airbag / SRS', desc: 'Airbag latéral gauche — défaut circuit / connecteur sous siège', severity: 'high' },
+  B1000: { system: 'Airbag / SRS', desc: 'Calculateur Airbag ECU — défaut interne / alimentation', severity: 'critical' },
 };
 
 function describeDtcFrench(code: string): { system: string; desc: string; severity: DtcCode['severity'] } {
@@ -948,6 +958,161 @@ class ObdHardwareBridge {
     const upper = raw.toUpperCase();
     const ok = upper.includes('44') || !upper.includes('ERROR');
     return { success: ok, rawResponse: raw };
+  }
+
+  /**
+   * Scan Rapide Automatique : interroge systématiquement Gateway, Moteur, ABS et Airbag
+   * en commutant les en-têtes CAN ELM327 (ATSH) puis restaure l'adresse fonctionnelle 7DF.
+   */
+  public async quickScanAllEcus(
+    onProgress?: (partial: QuickScanEcuResult) => void
+  ): Promise<QuickScanEcuResult[]> {
+    if (!this.isRealHardwareConnected()) {
+      throw new Error('Aucun adaptateur réel connecté.');
+    }
+
+    const targets: Array<{
+      ecuId: QuickScanEcuId;
+      name: string;
+      shortName: string;
+      canAddress: string;
+      rxAddress: string;
+      txHeader: string;
+      altHeaders?: string[];
+      useObdModes: boolean;
+    }> = [
+      {
+        ecuId: 'gateway',
+        name: 'Passerelle Réseau (Gateway / BSI)',
+        shortName: 'Gateway / BSI',
+        canAddress: '0x716',
+        rxAddress: '0x71E',
+        txHeader: '716',
+        altHeaders: ['765'],
+        useObdModes: false,
+      },
+      {
+        ecuId: 'engine',
+        name: 'Calculateur Moteur (ECM / PCM)',
+        shortName: 'Moteur (ECM)',
+        canAddress: '0x7E0',
+        rxAddress: '0x7E8',
+        txHeader: '7E0',
+        useObdModes: true,
+      },
+      {
+        ecuId: 'abs',
+        name: 'Système de Freinage (ABS / ESP)',
+        shortName: 'ABS / ESP',
+        canAddress: '0x760',
+        rxAddress: '0x768',
+        txHeader: '760',
+        altHeaders: ['7E2'],
+        useObdModes: false,
+      },
+      {
+        ecuId: 'airbag',
+        name: 'Sécurité Passive (Airbag / SRS)',
+        shortName: 'Airbag / SRS',
+        canAddress: '0x715',
+        rxAddress: '0x71D',
+        txHeader: '715',
+        altHeaders: ['772'],
+        useObdModes: false,
+      },
+    ];
+
+    const results: QuickScanEcuResult[] = [];
+
+    try {
+      for (const target of targets) {
+        const startedAt = performance.now();
+        onProgress?.({
+          ecuId: target.ecuId,
+          name: target.name,
+          shortName: target.shortName,
+          canAddress: target.canAddress,
+          rxAddress: target.rxAddress,
+          protocol: this.status.protocolName || 'ISO 15765-4 CAN',
+          status: 'scanning',
+          dtcs: [],
+          latencyMs: 0,
+        });
+
+        const foundMap = new Map<string, DtcCode>();
+        let responded = false;
+        let rawNote = '';
+
+        const headersToTry = [target.txHeader, ...(target.altHeaders || [])];
+        for (const hdr of headersToTry) {
+          try {
+            await this.sendCommand(`ATSH ${hdr}`, 1500, false);
+            if (target.useObdModes) {
+              const obdRes = await this.readDtcCodes();
+              if (obdRes.ecuResponded) responded = true;
+              for (const d of obdRes.dtcs) {
+                foundMap.set(d.code, d);
+              }
+            }
+
+            // Interrogation UDS 19 02 09 (ReadDTCInformation - reportDTCByStatusMask)
+            const udsRaw = await this.sendCommand('190209', 3000, true);
+            const upperUds = udsRaw.toUpperCase();
+            if (upperUds.includes('59 02') || upperUds.includes('5902')) {
+              responded = true;
+              const bytes = extractHexBytesAfterHeader(udsRaw, '59');
+              // Format UDS 59 02 <statusAvailabilityMask> [DTC_H DTC_M DTC_L Status]...
+              for (let i = 3; i + 3 < bytes.length; i += 4) {
+                const code = decodeDtcBytes(bytes[i], bytes[i + 1]);
+                if (code && !foundMap.has(code)) {
+                  const info = describeDtcFrench(code);
+                  const statusByte = bytes[i + 3];
+                  foundMap.set(code, {
+                    code,
+                    system: target.shortName,
+                    descriptionFr: info.desc,
+                    severity: info.severity,
+                    status: (statusByte & 0x08) !== 0 ? 'Actif' : 'Fugitif',
+                  });
+                }
+              }
+              break;
+            } else if (upperUds.includes('7F 19') || upperUds.includes('7F19')) {
+              responded = true;
+              rawNote = 'Calculateur en ligne (session étendue requise)';
+              break;
+            }
+          } catch {
+            // Try fallback header or mark no_response
+          }
+        }
+
+        const dtcs = Array.from(foundMap.values());
+        const ecuRes: QuickScanEcuResult = {
+          ecuId: target.ecuId,
+          name: target.name,
+          shortName: target.shortName,
+          canAddress: target.canAddress,
+          rxAddress: target.rxAddress,
+          protocol: this.status.protocolName || 'ISO 15765-4 CAN',
+          status: !responded ? 'no_response' : dtcs.length > 0 ? 'faults' : 'ok',
+          dtcs,
+          latencyMs: Math.max(15, Math.round(performance.now() - startedAt)),
+          rawInfo: rawNote || (!responded ? 'NO DATA sur cette passerelle' : undefined),
+        };
+        results.push(ecuRes);
+        onProgress?.(ecuRes);
+      }
+    } finally {
+      // Restaurer obligatoirement l'en-tête OBD-II fonctionnel 7DF pour le flux Live Telemetry
+      try {
+        await this.sendCommand('ATSH 7DF', 1500, false);
+      } catch {
+        // Ignore cleanup failure
+      }
+    }
+
+    return results;
   }
 }
 

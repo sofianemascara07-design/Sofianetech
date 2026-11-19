@@ -366,6 +366,56 @@ N'invente aucun code DTC inexistant, aucun code PIN et aucune URL externe.`;
   }
 });
 
+// API: Quick Scan Visual Synthesis (Gateway, Moteur, ABS, Airbag)
+app.post('/api/diagnose/quick-scan-summary', async (req, res) => {
+  try {
+    const { vehicleName = 'Véhicule', batteryVoltage = 12.6, ecuResults = [] } = req.body || {};
+    const ecus: Array<{
+      ecuId: string;
+      shortName: string;
+      status: string;
+      dtcs?: Array<{ code: string; descriptionFr: string; severity: string }>;
+    }> = Array.isArray(ecuResults) ? ecuResults : [];
+
+    const allDtcs = ecus.flatMap((e) => (Array.isArray(e.dtcs) ? e.dtcs : []));
+    const dtcStrings = allDtcs.map((d) => `${d.code} (${d.descriptionFr})`);
+
+    const criticalCount = allDtcs.filter((d) => d.severity === 'critical').length;
+    const highCount = allDtcs.filter((d) => d.severity === 'high').length;
+    const faultEcus = ecus.filter((e) => (e.dtcs || []).length > 0).map((e) => e.shortName);
+    const okEcus = ecus.filter((e) => e.status === 'ok').map((e) => e.shortName);
+
+    let summaryText = '';
+    if (allDtcs.length === 0) {
+      summaryText = `Scan Rapide Automatique terminé sur ${vehicleName} (${Number(batteryVoltage).toFixed(1)}V) : tous les calculateurs répondants (${okEcus.join(', ') || 'Gateway, Moteur, ABS, Airbag'}) affichent 0 code défaut actif.`;
+    } else {
+      const priority =
+        criticalCount > 0
+          ? `PRIORITÉ CRITIQUE (${criticalCount} défaut(s) critique(s))`
+          : highCount > 0
+          ? `PRIORITÉ ÉLEVÉE (${highCount} défaut(s) majeur(s))`
+          : 'SURVEILLANCE MODÉRÉE';
+      summaryText = `${priority} sur ${vehicleName} : ${allDtcs.length} code(s) relevé(s) sur [${faultEcus.join(', ')}]. Contrôlez d’abord la tension batterie (${Number(batteryVoltage).toFixed(1)}V) puis traitez en priorité : ${dtcStrings.slice(0, 3).join(' · ')}.`;
+    }
+
+    const checked = verifyDiagnosticAiOutput(summaryText, dtcStrings, 'offline-verified-rules');
+    return res.json({
+      success: true,
+      summaryText: checked.sanitizedText,
+      totalDtcs: allDtcs.length,
+      criticalCount,
+      highCount,
+      aiVerification: checked.aiVerification,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/diagnose/quick-scan-summary:', error);
+    return res.status(500).json({
+      success: false,
+      summaryText: 'Synthèse locale prête.',
+    });
+  }
+});
+
 // API: AI App & Automotive UI Translator (with 1:1 key & placeholder integrity verification)
 app.post('/api/translate/ai', async (req, res) => {
   try {
