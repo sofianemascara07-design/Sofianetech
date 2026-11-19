@@ -285,7 +285,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <span className="w-2 h-2 rounded-full bg-rose-500" />
-              <span>Flash Écran Chinois</span>
+              <span>Flash Cockpit &amp; Écrans CN</span>
             </button>
           )}
 

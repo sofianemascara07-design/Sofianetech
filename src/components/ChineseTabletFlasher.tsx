@@ -17,12 +17,15 @@ import {
   RotateCcw,
   Lock,
   Cpu,
+  Gauge,
 } from 'lucide-react';
 import { apiFetch } from '../utils/apiBridge';
+import { ChineseCockpitFlasher } from './ChineseCockpitFlasher';
 
 interface ChineseTabletFlasherProps {
   connectionMode: ConnectionMode;
   isConnected: boolean;
+  batteryVoltage?: number;
   onOpenConnectModal: () => void;
 }
 
@@ -156,7 +159,10 @@ const BRAND_SPECS: Record<ChineseBrandId, BrandSpec> = {
 };
 
 export const ChineseTabletFlasher: React.FC<ChineseTabletFlasherProps> = ({
+  connectionMode,
   isConnected,
+  batteryVoltage = 13.5,
+  onOpenConnectModal,
 }) => {
   const [targetBrand, setTargetBrand] = useState<ChineseBrandId>('geely');
   const currentSystem = BRAND_SPECS[targetBrand];
@@ -179,7 +185,7 @@ export const ChineseTabletFlasher: React.FC<ChineseTabletFlasherProps> = ({
   const [isCompleted, setIsCompleted] = useState(false);
 
   // AI Guard & Post-Flash Recovery states
-  const [activeSubMode, setActiveSubMode] = useState<'safe_flash' | 'recovery'>('safe_flash');
+  const [activeSubMode, setActiveSubMode] = useState<'cockpit' | 'safe_flash' | 'recovery'>('cockpit');
   const [recoverySymptom, setRecoverySymptom] = useState<'no_sound' | 'cameras_frozen' | 'black_screen' | 'touch_inverted'>('no_sound');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiReport, setAiReport] = useState<string | null>(null);
@@ -479,6 +485,18 @@ pause
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
+            onClick={() => setActiveSubMode('cockpit')}
+            className={`px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+              activeSubMode === 'cockpit'
+                ? 'bg-emerald-500 text-slate-950 shadow-md'
+                : 'bg-emerald-950/50 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/50'
+            }`}
+          >
+            <Gauge className="w-3.5 h-3.5" />
+            <span>Flash Cockpit Coolray / CN</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveSubMode('safe_flash')}
             className={`px-3.5 py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
               activeSubMode === 'safe_flash'
@@ -486,7 +504,7 @@ pause
                 : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
             }`}
           >
-            Protocole Sécurisé 3 Étapes
+            Protocole Tablette IHU (3 Étapes)
           </button>
           <button
             type="button"
@@ -503,6 +521,15 @@ pause
         </div>
       </div>
 
+      {activeSubMode === 'cockpit' ? (
+        <ChineseCockpitFlasher
+          connectionMode={connectionMode}
+          isConnected={isConnected}
+          batteryVoltage={batteryVoltage}
+          onOpenConnectModal={onOpenConnectModal}
+        />
+      ) : (
+        <>
       {/* Brand Selector */}
       <div>
         <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
@@ -1092,6 +1119,8 @@ adb reboot recovery
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

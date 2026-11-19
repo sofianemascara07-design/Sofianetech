@@ -350,3 +350,56 @@ export function verifyTranslationOutput(
     },
   };
 }
+
+/**
+ * Vérifie les procédures IA de flash Cockpit / Combiné Numérique chinois (Geely Coolray, Starray, Jetour, Chery, Changan, MG).
+ * Bloque strictement toute modification kilométrique (odomètre), écriture EEPROM non sauvegardée ou lien/firmware inventé.
+ */
+export function verifyCockpitAiOutput(
+  rawText: string,
+  context: { brandId: string; modelVariant: string; clusterArch: string; intendedOperation?: string },
+  provider: AiVerificationReport['provider']
+): { sanitizedText: string; aiVerification: AiVerificationReport } {
+  const blocked: string[] = [];
+  const guardrailsApplied = [
+    'Interdiction stricte de toute modification kilométrique / odomètre EEPROM',
+    'Pare-feu anti-croisement architecture IPC / LVDS / IHU (Coolray IHU715P vs IHU535G / Flyme Auto)',
+    'Blocage commandes destructives (fastboot erase, dd, remount /system) & firmwares inventés',
+  ];
+
+  let text = sanitizeExternalUrls(rawText, blocked);
+  text = sanitizeDestructiveCommands(text, blocked);
+
+  const intendedUpper = (context.intendedOperation || '').toUpperCase();
+  text = text.replace(FIRMWARE_ARCHIVE_REGEX, (archiveName) => {
+    if (intendedUpper && intendedUpper.includes(archiveName.toUpperCase())) {
+      return archiveName;
+    }
+    blocked.push(`Fichier firmware cockpit non vérifié bloqué (${archiveName})`);
+    return `[FIRMWARE COCKPIT NON CERTIFIÉ : ${archiveName}]`;
+  });
+
+  // Garde-fou éthique et anti-fraude : bloquer toute instruction de correction/recul kilométrique
+  const odometerTamperRegex = /\b(?:modifier|baisser|reculer|changer|correction|reset)\s+(?:le\s+|du\s+)?(?:kilom[eé]trage|odom[eè]tre|compteur\s+km|mileage)\b/gi;
+  if (odometerTamperRegex.test(text)) {
+    odometerTamperRegex.lastIndex = 0;
+    blocked.push('Instruction illégale/risquée de modification kilométrique (odomètre) bloquée');
+    text = text.replace(
+      odometerTamperRegex,
+      '[OPÉRATION BLOQUÉE — Aucune modification de kilométrage/odomètre autorisée]'
+    );
+  }
+
+  return {
+    sanitizedText: text,
+    aiVerification: {
+      verified: blocked.length === 0,
+      provider,
+      guardrailsApplied,
+      blockedHallucinations: blocked,
+      confidenceLevel: blocked.length === 0 ? 'STRICT_VERIFIED' : 'WARNING_FILTERED',
+      checkedAt: new Date().toISOString(),
+    },
+  };
+}
+

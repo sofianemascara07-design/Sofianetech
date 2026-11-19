@@ -383,6 +383,7 @@ export default function App() {
           <ChineseTabletFlasher
             connectionMode={connectionMode}
             isConnected={isConnected}
+            batteryVoltage={batteryVoltage}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
           />
         )}

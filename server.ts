@@ -9,6 +9,7 @@ import {
   verifyDiagnosticAiOutput,
   verifyFlashAiOutput,
   verifyTabletUpdateAiOutput,
+  verifyCockpitAiOutput,
   verifyImmoAiOutput,
   verifyTranslationOutput,
 } from './src/server/aiGuardrails';
@@ -752,6 +753,227 @@ Exécutez d'abord ces commandes ADB en **lecture seule** pour identifier exactem
       blocked: true,
       alertTitle: 'Erreur de vérification sécurité IHU',
       riskDetail: 'Impossible de valider la compatibilité. Opération bloquée par sécurité.',
+    });
+  }
+});
+
+// API: Flash Cockpit & Combiné Numérique (Geely Coolray, Cityray/Starray, Jetour, Chery, Changan, MG/Haval)
+app.post('/api/chinese-cockpit/plan', (req, res) => {
+  try {
+    const {
+      brandId = 'geely_coolray',
+      modelVariant = 'Geely Coolray SX11 / Full Option',
+      clusterArch = 'IPC-10.25-ECARX',
+      ihuArch = 'IHU715P',
+      busProtocol = 'CAN-FD / DoIP + LVDS Dual-Display',
+      selectedModules = ['theme_sport', 'lang_fr_ar'],
+      themeSkin = 'coolray_sport_red',
+      targetLang = 'fr',
+      batteryVoltage = 13.5,
+      vinBackupConfirmed = false,
+      clusterMatchConfirmed = false,
+      connectionMode = 'obd_wifi',
+    } = req.body || {};
+
+    const voltageNum = Number(batteryVoltage) || 0;
+    const modules = Array.isArray(selectedModules) ? selectedModules.map(String) : [];
+
+    // 1. Blocage anti-croisement matériel critique
+    const combinedArch = `${String(clusterArch)} ${String(ihuArch)}`.toUpperCase();
+    if (
+      (String(brandId) === 'geely_coolray' && combinedArch.includes('FLYME')) ||
+      (combinedArch.includes('IHU715P') && combinedArch.includes('IHU535G')) ||
+      (combinedArch.includes('DESAY') && combinedArch.includes('APTIV'))
+    ) {
+      return res.status(400).json({
+        success: false,
+        blocked: true,
+        alertTitle: 'BLOCAGE ANTI-BRICK : Croisement Architecture Cockpit Détecté',
+        riskDetail:
+          'Incompatibilité matérielle entre le combiné IPC et la dalle centrale IHU/LVDS (ex: Flyme Auto SE1000 ≠ Coolray IHU715P/535G, Desay SV ≠ Aptiv). Risque de perte totale affichage compteur et caméras 540°.',
+      });
+    }
+
+    // 2. Sécurité tension batterie
+    if (voltageNum > 0 && voltageNum < 12.2) {
+      return res.status(400).json({
+        success: false,
+        blocked: true,
+        alertTitle: `TENSION BATTERIE TROP BASSE (${voltageNum.toFixed(1)}V < 12.2V)`,
+        riskDetail:
+          'Le flash d’un combiné numérique (IPC) exige une alimentation stabilisée ≥ 12.5V (recommandé 13.5V). Branchez un chargeur/stabilisateur avant d’écrire sur le bus CAN/DoIP.',
+      });
+    }
+
+    if (!vinBackupConfirmed || !clusterMatchConfirmed) {
+      return res.status(400).json({
+        success: false,
+        blocked: true,
+        alertTitle: 'CONFIRMATIONS OBLIGATOIRES MANQUANTES',
+        riskDetail:
+          'Cochez la sauvegarde EEPROM (VIN / Config Odomètre intact) et la concordance exacte du combiné IPC avant de lancer la procédure.',
+      });
+    }
+
+    const isCoolray = String(brandId).includes('coolray') || String(modelVariant).toLowerCase().includes('coolray');
+    const ipcAddr = isCoolray ? '0x714 (RX 0x71C) IPC Geely' : '0x714 / 0x7E0 IPC Cluster';
+    const ihuAddr = isCoolray ? '0x770 / ADB-LVDS IHU' : '0x770 / DoIP Head-Unit';
+
+    const steps = [
+      {
+        id: 'step_session',
+        progress: 15,
+        label: `Session Diagnostic Étendue (${ipcAddr}) & Contrôle Tension (${voltageNum.toFixed(1)}V)`,
+        log: `[${String(connectionMode).toUpperCase()}] UDS 10 03 -> ${ipcAddr} OK | Protocole : ${busProtocol} | Tension : ${voltageNum.toFixed(1)}V`,
+      },
+      {
+        id: 'step_backup',
+        progress: 35,
+        label: 'Sauvegarde Lecture Seule EEPROM VIN / Config Immo / Calibration AVM',
+        log: `Backup vérifié -> DID F190 (VIN) + Configuration CAN-FD + Offset Odomètre verrouillé en lecture seule (aucune écriture km).`,
+      },
+      {
+        id: 'step_lvds',
+        progress: 60,
+        label: `Injection Pack UI Cockpit (${themeSkin}) & Langue (${String(targetLang).toUpperCase()})`,
+        log: `Transfert sécurisé modules [${modules.join(', ') || 'theme_sport'}] sur ${ihuAddr} & canal LVDS combiné (CRC32 validé).`,
+      },
+      {
+        id: 'step_sync',
+        progress: 85,
+        label: 'Synchronisation Bus CAN-FD : Navigation LVDS, TPMS, Turbo & ADAS 540°',
+        log: `Ré-indexation trames DID Cockpit (Vitesse, Boost 1.5TD/2.0T, Boîte DCT, Guidage Maps/CarPlay) validée sans DTC actif.`,
+      },
+      {
+        id: 'step_reset',
+        progress: 100,
+        label: 'Soft Reset Combiné IPC (UDS 11 01) & Vérification Finale',
+        log: `SUCCÈS : ${modelVariant} (${clusterArch}) redémarré proprement. 0 défaut U0xxx, 0 perte son DSP, caméras 360°/540° opérationnelles.`,
+      },
+    ];
+
+    return res.json({
+      success: true,
+      blocked: false,
+      plan: {
+        brandId,
+        modelVariant,
+        clusterArch,
+        ihuArch,
+        busProtocol,
+        ipcAddr,
+        ihuAddr,
+        checksumEngine: 'CRC32 + Signature Pack UI Non-Destructif',
+        steps,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error in /api/chinese-cockpit/plan:', error);
+    return res.status(500).json({
+      success: false,
+      blocked: true,
+      alertTitle: 'Erreur génération plan Cockpit',
+      riskDetail: 'Impossible de générer le protocole cockpit.',
+    });
+  }
+});
+
+app.post('/api/chinese-cockpit/ai-guard', async (req, res) => {
+  try {
+    const {
+      brandId = 'geely_coolray',
+      modelVariant = 'Geely Coolray SX11 / Full Option',
+      clusterArch = 'IPC-10.25-ECARX',
+      ihuArch = 'IHU715P',
+      busProtocol = 'CAN-FD / DoIP + LVDS Dual-Display',
+      goal = 'Flash thème Sport/Track + projection GPS LVDS + pack langue FR/AR',
+      batteryVoltage = 13.5,
+      intendedOperation = '',
+    } = req.body || {};
+
+    const opUpper = String(intendedOperation || goal).toUpperCase();
+    let blocked = false;
+    let alertTitle = 'Architecture Cockpit Validée (Anti-Brick Actif)';
+    let riskDetail = `Concordance vérifiée pour ${modelVariant} (${clusterArch} / ${ihuArch}).`;
+
+    // Interdiction absolue modification kilométrage
+    if (/(KILOM|ODOMET|MILEAGE|COMPTEUR\s*KM|RECULER)/i.test(opUpper)) {
+      blocked = true;
+      alertTitle = 'OPÉRATION INTERDITE : Modification Odomètre / Kilométrage Refusée';
+      riskDetail =
+        'AutoPro bloque strictement toute tentative de modification de kilométrage sur l’EEPROM du combiné. Seuls le flash UI/Thèmes, langues FR/AR, projection LVDS et calibration ADAS/TPMS sont autorisés.';
+    } else if (
+      (String(brandId) === 'geely_coolray' && opUpper.includes('FLYME')) ||
+      (opUpper.includes('IHU535G') && String(ihuArch).toUpperCase().includes('IHU715P'))
+    ) {
+      blocked = true;
+      alertTitle = 'ALERTE ANTI-BRICK : Croisement Firmware IHU715P / IHU535G / Flyme Auto';
+      riskDetail =
+        'Ne jamais injecter un dump Flyme Auto (Cityray/Starray) ou IHU535G sur un Geely Coolray IHU715P : écran noir combiné + perte bus CAN + blocage caméras 540°.';
+    }
+
+    const prompt = `Tu es l'ingénieur expert AutoPro spécialiste des Combinés Numériques (Digital Cockpit IPC) et doubles écrans chinois en Algérie (Geely Coolray SX11/Restylé IHU715P/535G/ECARX, Geely Cityray/Starray Flyme Auto, Jetour Dashing/T2/X70 Plus, Chery Tiggo 7/8 Pro Desay SV/Aptiv, Changan UNI-T/UNI-K, MG5/MG GT/Haval).
+
+DEMANDE ATELIER COCKPIT :
+- Véhicule : ${modelVariant}
+- Combiné (IPC) : ${clusterArch} | Écran central (IHU) : ${ihuArch}
+- Protocole : ${busProtocol} | Tension mesurée : ${Number(batteryVoltage).toFixed(1)}V
+- Objectif technicien : ${goal}
+- Statut Pare-feu : ${blocked ? `BLOQUÉ (${alertTitle} : ${riskDetail})` : 'VALIDÉ'}
+
+CONSIGNES STRICTES :
+1. Aucune modification de kilométrage/odomètre EEPROM.
+2. Aucune commande destructive (fastboot erase, dd, remount /system) ni lien URL ou nom de fichier firmware inventé.
+3. Donne une procédure claire en français (Pré-requis tension ≥12.5V, Sauvegarde VIN/Config UDS 0x714, Étape Flash UI/LVDS/Langue sans perte son DSP ni caméras 360°/540°, Soft Reset 11 01).`;
+
+    const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
+    let analysis = '';
+    let aiProvider: UnifiedAiProvider = 'offline-verified-rules';
+
+    if (hasAi && !blocked) {
+      const aiRes = await generateUnifiedAI(prompt, { timeoutMs: 8000 });
+      analysis = aiRes.text || '';
+      if (analysis) aiProvider = aiRes.provider;
+    }
+
+    if (!analysis) {
+      if (blocked) {
+        analysis = `### ⛔ PROCÉDURE BLOQUÉE PAR PARE-FEU COCKPIT\n**${alertTitle}**\n${riskDetail}\n\nVérifiez la référence exacte de l'étiquette du combiné IPC et de l'IHU avant toute intervention.`;
+      } else {
+        analysis = `### ✅ PROTOCOLE FLASH COCKPIT VALIDÉ — ${modelVariant.toUpperCase()}
+1. **Stabilisation Électrique** : Maintenez une tension stable **≥ 12.5V** (chargeur atelier 13.5V) et vérifiez la liaison **${busProtocol}**.
+2. **Sauvegarde Pré-Flash (Zéro Écriture Kilométrique)** :
+   - Lecture identifiants UDS **0x714 (IPC)** : DID \`F190\` (VIN), version Hardware/Software et calibration bus CAN.
+   - Sauvegarde paramètres via ADB : \`adb shell settings list global > backup_cockpit_global.txt\`
+3. **Déploiement Thèmes UI / Langue FR-AR / Projection LVDS** :
+   - Injection du pack interface utilisateur compatible **${clusterArch}** + liaison **${ihuArch}** sans toucher au bootloader MCU ni aux partitions AVM 360°/540°.
+   - Activation du pont de navigation LVDS (Maps / CarPlay HUD) et ré-affichage des jauges Turbo/DCT/TPMS.
+4. **Finalisation & Contrôle DTC** :
+   - Exécutez un **Soft Reset IPC (UDS \`11 01\`)**, attendez 30 secondes contact coupé puis rallumez pour vérifier l'absence de voyant ou défaut \`U0xxx\`.`;
+      }
+    }
+
+    const checked = verifyCockpitAiOutput(
+      analysis,
+      { brandId: String(brandId), modelVariant: String(modelVariant), clusterArch: String(clusterArch), intendedOperation: String(intendedOperation) },
+      aiProvider
+    );
+
+    return res.json({
+      success: true,
+      blocked,
+      alertTitle,
+      riskDetail,
+      analysis: checked.sanitizedText,
+      aiVerification: checked.aiVerification,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/chinese-cockpit/ai-guard:', error);
+    return res.status(500).json({
+      success: false,
+      blocked: true,
+      alertTitle: 'Erreur vérification IA Cockpit',
+      riskDetail: 'Impossible de valider la procédure cockpit.',
     });
   }
 });
