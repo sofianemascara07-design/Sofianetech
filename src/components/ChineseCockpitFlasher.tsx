@@ -64,12 +64,17 @@ const COCKPIT_PLATFORMS: Record<CockpitPlatformId, CockpitPlatformSpec> = {
       'IPC-12.3-DUAL-CURVED (Coolray Neo / S)',
       'IPC-7.0-STD-LCD (Coolray Standard)',
     ],
-    ihuVariants: ['IHU715P (Coolray Full Option)', 'IHU535G (GKUI Gen 2)', 'ECARX E02 (SD665)'],
+    ihuVariants: [
+      'IHU624G (Coolray 2020–2026)',
+      'IHU715P (Coolray Full Option)',
+      'IHU535G (GKUI Gen 2)',
+      'ECARX E02 (SD665)',
+    ],
     busProtocol: 'CAN-FD / DoIP + Lien Vidéo LVDS Dual-Display',
     ipcAddress: '0x714 (RX 0x71C) IPC Geely · 0x770 IHU',
     lvdsNote: 'Câble HSD/LVDS blindé entre IHU et combiné pour projection Maps/CarPlay sur compteur.',
     criticalWarning:
-      'Ne JAMAIS injecter un firmware Flyme Auto (Cityray/Starray) sur Coolray IHU715P, ni croiser IHU535G et IHU715P. Conserver strictement le backup EEPROM VIN/Odomètre d’origine.',
+      'HARD_STOP : Ne JAMAIS croiser IHU 624G, IHU715P, IHU535G ou Flyme Auto (Cityray/Starray) ! Leurs pilotes d’affichage, de radio et de caméra 360°/540° ne sont pas interchangeables. Conserver le backup EEPROM VIN/Odomètre d’origine.',
     themes: [
       { id: 'coolray_sport_red', label: 'Sport R-Track Rouge (Boost 1.5TD)', accent: 'rose' },
       { id: 'coolray_dynamic_cyan', label: 'Dynamic Cyber Cyan (LVDS Maps)', accent: 'cyan' },
@@ -305,19 +310,24 @@ export const ChineseCockpitFlasher: React.FC<ChineseCockpitFlasherProps> = ({
           'AutoPro verrouille strictement toute écriture sur la zone kilométrique EEPROM. Seuls le flash UI Cockpit, thèmes, projection LVDS, langues et calibration TPMS/ADAS sont autorisés.',
       };
     }
+    const normOp = op.replace(/\s+/g, '');
     if (selectedPlatformId === 'geely_coolray' && op.includes('FLYME')) {
       return {
         blocked: true,
-        title: 'BLOCAGE ANTI-BRICK : Flyme Auto incompatible sur Geely Coolray SX11',
+        title: 'HARD_STOP : Flyme Auto incompatible sur Geely Coolray (624G / 715P / 535G)',
         reason:
-          'Le Coolray SX11/Restylé utilise ECARX / IHU715P / IHU535G, pas SiEngine SE1000 Flyme Auto. Croiser ces plateformes provoque un écran noir sur le combiné.',
+          'Le Coolray (2020–2026) utilise IHU 624G / IHU715P / IHU535G / ECARX, pas Flyme Auto. Leurs pilotes d’affichage, de radio et de caméra ne sont pas interchangeables.',
       };
     }
-    if (op.includes('IHU715P') && op.includes('IHU535G')) {
+    const geelyMatches = ['IHU624G', 'IHU715P', 'IHU535G', 'IHU516G'].filter(
+      (tag) => normOp.includes(tag) || normOp.includes(tag.replace('IHU', ''))
+    );
+    if (geelyMatches.length >= 2) {
       return {
         blocked: true,
-        title: 'BLOCAGE ANTI-BRICK : Croisement IHU715P / IHU535G détecté',
-        reason: 'Ces deux révisions Geely Coolray n’utilisent pas le même mapping LVDS ni le même ampli.',
+        title: `HARD_STOP : Croisement interdit (${geelyMatches.join(' ↔ ')})`,
+        reason:
+          'Les firmwares IHU 624G, IHU535G, IHU715P et Flyme Auto ne sont PAS interchangeables (pilotes d’affichage LVDS, radio FM et caméras 360°/540° incompatibles).',
       };
     }
     if (op.includes('DESAY') && op.includes('APTIV')) {
@@ -1026,7 +1036,7 @@ pause
             <ul className="space-y-1.5 text-slate-300 text-[11px] leading-relaxed">
               <li>• <strong>Aucune écriture kilométrique</strong> : le compteur d’odomètre et le VIN (DID F190) restent 100% d’origine.</li>
               <li>• <strong>Préservation Son DSP &amp; Caméras 540°</strong> : aucun écrasement des tables CAN Box ou drivers Sony/Pioneer.</li>
-              <li>• <strong>Pare-feu Croisement</strong> : blocage automatique Coolray IHU715P vs IHU535G vs Flyme Auto SE1000.</li>
+              <li>• <strong>Pare-feu HARD_STOP Croisement</strong> : blocage automatique Coolray IHU 624G vs IHU715P vs IHU535G vs Flyme Auto.</li>
               <li>• <strong>Rollback immédiat</strong> : sauvegarde systématique des paramètres LVDS/UI dans <code className="text-cyan-300">backup_cockpit/</code>.</li>
             </ul>
           </div>

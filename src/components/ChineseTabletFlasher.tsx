@@ -52,6 +52,7 @@ const BRAND_SPECS: Record<ChineseBrandId, BrandSpec> = {
     modelsDefault: 'Geely Cityray (Boyue) Flyme Auto 2.5.0 / Starray / Coolray Full Option / Okavango / Icon / Cowboy 2025',
     ihuVariants: [
       'Flyme Auto 2.5.0 (Cityray / Boyue / Starray / Cowboy)',
+      'IHU624G (Coolray 2020–2026)',
       'IHU715P (Coolray Full Option / restylé)',
       'IHU516G',
       'IHU535G',
@@ -68,7 +69,7 @@ const BRAND_SPECS: Record<ChineseBrandId, BrandSpec> = {
     factoryCodes: ['8888', '3368', '*#*#3646633#*#*', 'Appui long Heure/Version (Flyme Auto Diag)'],
     usbPort: 'Port USB-A / USB-C Data central sous console ou accoudoir (USB 1)',
     criticalWarning:
-      'VIGILANCE CRITIQUE : Ne JAMAIS flasher un firmware GKUI IHU535G/IHU516G sur Flyme Auto 2.5.0 (Cityray/Starray/Cowboy) ou sur IHU715P (Coolray Full Option) ! Risque de perte totale du son ampli/DSP et de blocage des caméras 540°.',
+      'HARD_STOP CRITIQUE : Ne JAMAIS croiser IHU 624G, IHU715P, IHU535G, IHU516G ou Flyme Auto 2.5.0 ! Leurs pilotes d’affichage, de radio et de caméra 360°/540° ne sont pas interchangeables.',
   },
   jetour: {
     id: 'jetour',
@@ -224,17 +225,21 @@ export const ChineseTabletFlasher: React.FC<ChineseTabletFlasherProps> = ({
     const ihuUpper = ihuRef.toUpperCase();
     const fileUpper = intendedFile.toUpperCase();
     const combined = `${modelYear} ${ihuRef} ${socChip} ${mcuBuild}`.toUpperCase();
+    const ihuNorm = ihuUpper.replace(/\s+/g, '');
+    const fileNorm = fileUpper.replace(/\s+/g, '');
 
     if (
-      (ihuUpper.includes('IHU715P') && (fileUpper.includes('535') || fileUpper.includes('516'))) ||
-      (ihuUpper.includes('IHU535G') && (fileUpper.includes('715') || fileUpper.includes('516'))) ||
-      (ihuUpper.includes('IHU516G') && (fileUpper.includes('715') || fileUpper.includes('535')))
+      (ihuNorm.includes('624G') && (fileNorm.includes('535') || fileNorm.includes('715') || fileNorm.includes('516') || fileNorm.includes('FLYME'))) ||
+      (ihuNorm.includes('IHU715P') && (fileNorm.includes('535') || fileNorm.includes('516') || fileNorm.includes('624') || fileNorm.includes('FLYME'))) ||
+      (ihuNorm.includes('IHU535G') && (fileNorm.includes('715') || fileNorm.includes('516') || fileNorm.includes('624') || fileNorm.includes('FLYME'))) ||
+      (ihuNorm.includes('IHU516G') && (fileNorm.includes('715') || fileNorm.includes('535') || fileNorm.includes('624') || fileNorm.includes('FLYME'))) ||
+      (ihuNorm.includes('FLYME') && (fileNorm.includes('624G') || fileNorm.includes('535') || fileNorm.includes('715') || fileNorm.includes('516')))
     ) {
       return {
         blocked: true,
         severity: 'critical' as const,
-        title: 'ALERTE ROUGE : INCOMPATIBILITÉ GEELY IHU DÉTECTÉE',
-        reason: `Croisement interdit entre "${ihuRef}" et le fichier "${intendedFile}". Risque immédiat de perte de son radio/DSP et blocage des caméras 540° (perte synchro MCU/LVDS).`,
+        title: 'HARD_STOP : INCOMPATIBILITÉ GEELY IHU DÉTECTÉE',
+        reason: `Croisement interdit entre "${ihuRef}" et "${intendedFile}". Les pilotes d’affichage, de radio et de caméra entre IHU 624G, IHU535G, IHU715P et Flyme Auto ne sont pas interchangeables.`,
       };
     }
 

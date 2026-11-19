@@ -332,9 +332,9 @@ const ECU_BUILD_WHITELIST_BY_VEHICLE: Record<string, EcuWhitelistProfile> = {
   geely_coolray_full: {
     ecuFamily: 'Bosch MED17.8.10 / UAES',
     processorArch: 'Infineon TriCore TC1782 / TC1793 (BHE15 Full Option)',
-    allowedBuilds: ['TC1782-UAES-COOLRAY-FULL', 'IHU715P', '1037582400'],
+    allowedBuilds: ['TC1782-UAES-COOLRAY-FULL', 'IHU715P', 'IHU624G', 'IHU 624G', '1037582400'],
     allowedPrefixes: ['TC1782-UAES-COOL', '10375824'],
-    riskNote: 'Coolray Full Option 540° : protéger impérativement la calibration caméra LVDS et le DSP audio.',
+    riskNote: 'Coolray (2020–2026) IHU624G / IHU715P : HARD_STOP contre tout croisement avec IHU535G ou Flyme Auto (pilotes affichage/radio/caméra non interchangeables).',
   },
   geely_starray_15t_20t: {
     ecuFamily: 'Bosch MED17.8.10 / MG1CS080',
@@ -427,6 +427,9 @@ function getWhitelistProfileForVehicle(vehicle: Vehicle): EcuWhitelistProfile {
  */
 export const HARDWARE_WHITELIST: readonly string[] = [
   // Tablettes / Head Units Chinois & Processeurs Infodivertissement autorisés
+  'IHU624G',
+  'IHU 624G',
+  'GKUI-IHU624G',
   'IHU715P',
   'GKUI-IHU715P',
   'IHU516G',
@@ -470,6 +473,9 @@ export const HARDWARE_WHITELIST: readonly string[] = [
 ];
 
 const IHU_WHITELIST_IDS = new Set([
+  'IHU624G',
+  'IHU 624G',
+  'GKUI-IHU624G',
   'IHU715P',
   'GKUI-IHU715P',
   'IHU516G',

@@ -363,7 +363,7 @@ export function verifyCockpitAiOutput(
   const blocked: string[] = [];
   const guardrailsApplied = [
     'Interdiction stricte de toute modification kilométrique / odomètre EEPROM',
-    'Pare-feu anti-croisement architecture IPC / LVDS / IHU (Coolray IHU715P vs IHU535G / Flyme Auto)',
+    'Pare-feu HARD_STOP anti-croisement IPC / LVDS / IHU (Coolray IHU624G vs IHU715P vs IHU535G vs Flyme Auto)',
     'Blocage commandes destructives (fastboot erase, dd, remount /system) & firmwares inventés',
   ];
 

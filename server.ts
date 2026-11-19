@@ -562,14 +562,21 @@ app.post('/api/chinese-tablet/ai-guard', async (req, res) => {
         riskDetail =
           'Vous devez renseigner impérativement : (1) Marque/Modèle/Année, (2) Référence IHU/Carte mère, (3) Puce SoC et (4) Version MCU/Build actuelle avant toute génération de script ou flash.';
       } else if (
-        (ihuUpper.includes('IHU715P') && (fileUpper.includes('535') || fileUpper.includes('516'))) ||
-        (ihuUpper.includes('IHU535G') && (fileUpper.includes('715') || fileUpper.includes('516'))) ||
-        (ihuUpper.includes('IHU516G') && (fileUpper.includes('715') || fileUpper.includes('535')))
+        (() => {
+          const iNorm = ihuUpper.replace(/\s+/g, '');
+          const fNorm = fileUpper.replace(/\s+/g, '');
+          return (
+            (iNorm.includes('624G') && (fNorm.includes('535') || fNorm.includes('715') || fNorm.includes('516') || fNorm.includes('FLYME'))) ||
+            (iNorm.includes('IHU715P') && (fNorm.includes('535') || fNorm.includes('516') || fNorm.includes('624') || fNorm.includes('FLYME'))) ||
+            (iNorm.includes('IHU535G') && (fNorm.includes('715') || fNorm.includes('516') || fNorm.includes('624') || fNorm.includes('FLYME'))) ||
+            (iNorm.includes('IHU516G') && (fNorm.includes('715') || fNorm.includes('535') || fNorm.includes('624') || fNorm.includes('FLYME')))
+          );
+        })()
       ) {
         blocked = true;
-        alertTitle = 'ALERTE ROUGE : INCOMPATIBILITÉ MATÉRIELLE GEELY IHU DÉTECTÉE';
+        alertTitle = 'HARD_STOP : INCOMPATIBILITÉ MATÉRIELLE GEELY IHU DÉTECTÉE';
         riskDetail =
-          `Croisement interdit entre ${ihuRef} et le fichier "${intendedFile}". Risque immédiat de perte totale du son radio/ampli et de blocage des caméras 540° (perte de synchronisation MCU/LVDS).`;
+          `Croisement interdit entre ${ihuRef} et le fichier "${intendedFile}". Les pilotes d’affichage, de radio et de caméra entre IHU 624G, IHU535G, IHU715P et Flyme Auto ne sont pas interchangeables.`;
       } else if (fileUpper.includes('1.8.2.1.E') && !brandLower.includes('jetour')) {
         blocked = true;
         alertTitle = 'ALERTE ROUGE : FIRMWARE JETOUR SUR UNE AUTRE MARQUE';
@@ -642,12 +649,12 @@ app.post('/api/chinese-tablet/ai-guard', async (req, res) => {
       } else if (
         brandLower.includes('geely') &&
         (ihuUpper.includes('FLYME') || combinedTarget.includes('CITYRAY') || combinedTarget.includes('STARRAY') || combinedTarget.includes('COWBOY')) &&
-        (fileUpper.includes('IHU535G') || fileUpper.includes('IHU516G'))
+        (fileUpper.includes('IHU535G') || fileUpper.includes('IHU516G') || fileUpper.replace(/\s+/g, '').includes('624G') || fileUpper.includes('IHU715P'))
       ) {
         blocked = true;
-        alertTitle = 'ALERTE ROUGE : FIRMWARE GKUI IHU535G/516G INTERDIT SUR FLYME AUTO 2.5.0';
+        alertTitle = 'HARD_STOP : FIRMWARE GKUI (624G / 535G / 715P / 516G) INTERDIT SUR FLYME AUTO 2.5.0';
         riskDetail =
-          'Les modèles Geely Cityray (Boyue), Starray, Okavango, Icon et Cowboy sous Flyme Auto 2.5.0 (SE1000/SD8155) ne doivent jamais recevoir un firmware GKUI IHU535G/516G.';
+          'Les modèles Geely Cityray (Boyue), Starray, Okavango, Icon et Cowboy sous Flyme Auto 2.5.0 ne doivent jamais recevoir un firmware destiné aux IHU 624G, IHU535G, IHU715P ou IHU516G.';
       }
     }
 
@@ -778,19 +785,22 @@ app.post('/api/chinese-cockpit/plan', (req, res) => {
     const voltageNum = Number(batteryVoltage) || 0;
     const modules = Array.isArray(selectedModules) ? selectedModules.map(String) : [];
 
-    // 1. Blocage anti-croisement matériel critique
+    // 1. Blocage anti-croisement matériel critique (HARD_STOP)
     const combinedArch = `${String(clusterArch)} ${String(ihuArch)}`.toUpperCase();
+    const combinedNorm = combinedArch.replace(/\s+/g, '');
+    const geelyVariantsFound = ['624G', '715P', '535G', '516G'].filter((tag) => combinedNorm.includes(tag));
     if (
-      (String(brandId) === 'geely_coolray' && combinedArch.includes('FLYME')) ||
-      (combinedArch.includes('IHU715P') && combinedArch.includes('IHU535G')) ||
+      (String(brandId) === 'geely_coolray' && combinedNorm.includes('FLYME')) ||
+      geelyVariantsFound.length >= 2 ||
+      (combinedNorm.includes('FLYME') && geelyVariantsFound.length >= 1) ||
       (combinedArch.includes('DESAY') && combinedArch.includes('APTIV'))
     ) {
       return res.status(400).json({
         success: false,
         blocked: true,
-        alertTitle: 'BLOCAGE ANTI-BRICK : Croisement Architecture Cockpit Détecté',
+        alertTitle: 'HARD_STOP ANTI-BRICK : Croisement Architecture Cockpit Détecté',
         riskDetail:
-          'Incompatibilité matérielle entre le combiné IPC et la dalle centrale IHU/LVDS (ex: Flyme Auto SE1000 ≠ Coolray IHU715P/535G, Desay SV ≠ Aptiv). Risque de perte totale affichage compteur et caméras 540°.',
+          'Incompatibilité matérielle entre combiné IPC et IHU/firmware : les unités IHU 624G, IHU535G, IHU715P et Flyme Auto (ou Desay SV vs Aptiv) n’ont pas des pilotes d’affichage, de radio et de caméra interchangeables.',
       });
     }
 
@@ -892,6 +902,8 @@ app.post('/api/chinese-cockpit/ai-guard', async (req, res) => {
     } = req.body || {};
 
     const opUpper = String(intendedOperation || goal).toUpperCase();
+    const guardCombinedNorm = `${String(clusterArch)} ${String(ihuArch)} ${opUpper}`.replace(/\s+/g, '');
+    const geelyGuardTags = ['624G', '715P', '535G', '516G'].filter((tag) => guardCombinedNorm.includes(tag));
     let blocked = false;
     let alertTitle = 'Architecture Cockpit Validée (Anti-Brick Actif)';
     let riskDetail = `Concordance vérifiée pour ${modelVariant} (${clusterArch} / ${ihuArch}).`;
@@ -903,16 +915,17 @@ app.post('/api/chinese-cockpit/ai-guard', async (req, res) => {
       riskDetail =
         'AutoPro bloque strictement toute tentative de modification de kilométrage sur l’EEPROM du combiné. Seuls le flash UI/Thèmes, langues FR/AR, projection LVDS et calibration ADAS/TPMS sont autorisés.';
     } else if (
-      (String(brandId) === 'geely_coolray' && opUpper.includes('FLYME')) ||
-      (opUpper.includes('IHU535G') && String(ihuArch).toUpperCase().includes('IHU715P'))
+      (String(brandId) === 'geely_coolray' && guardCombinedNorm.includes('FLYME')) ||
+      geelyGuardTags.length >= 2 ||
+      (guardCombinedNorm.includes('FLYME') && geelyGuardTags.length >= 1)
     ) {
       blocked = true;
-      alertTitle = 'ALERTE ANTI-BRICK : Croisement Firmware IHU715P / IHU535G / Flyme Auto';
+      alertTitle = 'HARD_STOP ANTI-BRICK : Croisement IHU 624G / IHU715P / IHU535G / Flyme Auto';
       riskDetail =
-        'Ne jamais injecter un dump Flyme Auto (Cityray/Starray) ou IHU535G sur un Geely Coolray IHU715P : écran noir combiné + perte bus CAN + blocage caméras 540°.';
+        'Blocage strict (HARD_STOP) : les pilotes d’affichage, de radio et de caméra entre IHU 624G, IHU535G, IHU715P et Flyme Auto ne sont pas interchangeables.';
     }
 
-    const prompt = `Tu es l'ingénieur expert AutoPro spécialiste des Combinés Numériques (Digital Cockpit IPC) et doubles écrans chinois en Algérie (Geely Coolray SX11/Restylé IHU715P/535G/ECARX, Geely Cityray/Starray Flyme Auto, Jetour Dashing/T2/X70 Plus, Chery Tiggo 7/8 Pro Desay SV/Aptiv, Changan UNI-T/UNI-K, MG5/MG GT/Haval).
+    const prompt = `Tu es l'ingénieur expert AutoPro spécialiste des Combinés Numériques (Digital Cockpit IPC) et doubles écrans chinois en Algérie (Geely Coolray SX11/Restylé IHU624G/IHU715P/535G/ECARX, Geely Cityray/Starray Flyme Auto, Jetour Dashing/T2/X70 Plus, Chery Tiggo 7/8 Pro Desay SV/Aptiv, Changan UNI-T/UNI-K, MG5/MG GT/Haval).
 
 DEMANDE ATELIER COCKPIT :
 - Véhicule : ${modelVariant}
