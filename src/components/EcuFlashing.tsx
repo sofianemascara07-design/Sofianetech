@@ -336,6 +336,13 @@ const ECU_BUILD_WHITELIST_BY_VEHICLE: Record<string, EcuWhitelistProfile> = {
     allowedPrefixes: ['TC1782-UAES-COOL', '10375824'],
     riskNote: 'Coolray (2020–2026) IHU624G / IHU715P : HARD_STOP contre tout croisement avec IHU535G ou Flyme Auto (pilotes affichage/radio/caméra non interchangeables).',
   },
+  geely_coolray_battle_2026: {
+    ecuFamily: 'Bosch MED17.8.10 / UAES',
+    processorArch: 'Infineon TriCore TC1782 / TC1793 (BHE15 Coolray Battle 2026)',
+    allowedBuilds: ['TC1782-UAES-COOLRAY-BATTLE26', 'TC1782-UAES-COOLRAY-FULL', 'IHU624G', 'IHU 624G', 'IHU715P', '1037582400'],
+    allowedPrefixes: ['TC1782-UAES-COOL', '10375824'],
+    riskNote: 'Coolray Battle Edition 2026 : HARD_STOP contre tout croisement entre IHU 624G, IHU715P, IHU535G et Flyme Auto.',
+  },
   geely_starray_15t_20t: {
     ecuFamily: 'Bosch MED17.8.10 / MG1CS080',
     processorArch: 'Infineon TriCore TC1793 / AURIX TC298 (Boyue L / Starray)',

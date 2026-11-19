@@ -31,6 +31,7 @@ interface ChineseCockpitFlasherProps {
 
 type CockpitPlatformId =
   | 'geely_coolray'
+  | 'geely_coolray_battle_2026'
   | 'geely_flyme'
   | 'jetour_cockpit'
   | 'chery_curved'
@@ -79,6 +80,34 @@ const COCKPIT_PLATFORMS: Record<CockpitPlatformId, CockpitPlatformSpec> = {
       { id: 'coolray_sport_red', label: 'Sport R-Track Rouge (Boost 1.5TD)', accent: 'rose' },
       { id: 'coolray_dynamic_cyan', label: 'Dynamic Cyber Cyan (LVDS Maps)', accent: 'cyan' },
       { id: 'coolray_classic_gold', label: 'Confort Classic Or & Chrome', accent: 'amber' },
+    ],
+  },
+  geely_coolray_battle_2026: {
+    id: 'geely_coolray_battle_2026',
+    shortLabel: 'Geely Coolray Battle 2026',
+    badge: 'BATTLE 2026',
+    title: 'Geely Coolray Battle Edition 2026 — Cockpit Sport Dual-Display + IPC 10.25"/12.3"',
+    models: 'Coolray Battle Edition 1.5TD 2026 (Pack Sport / Échappement Quad / Caméras 540°)',
+    clusterVariants: [
+      'IPC-10.25-BATTLE-2026 (Coolray Battle Digital Cluster)',
+      'IPC-12.3-DUAL-CURVED-BATTLE (Coolray Battle / Neo 2026)',
+      'IPC-10.25-ECARX (Coolray Battle Standard)',
+    ],
+    ihuVariants: [
+      'IHU624G (Coolray Battle 2026)',
+      'IHU715P (Coolray Battle Full Option / 540°)',
+      'IHU535G (GKUI Gen 2)',
+    ],
+    busProtocol: 'CAN-FD / DoIP + LVDS Haute Vitesse Dual-Display',
+    ipcAddress: '0x714 (RX 0x71C) IPC Battle 2026 · 0x770 IHU',
+    lvdsNote:
+      'Flux LVDS dédié Coolray Battle 2026 : jauges Boost Turbo, Chronomètre 0-100 km/h, Valve Échappement Sport & projection Maps/CarPlay sur compteur.',
+    criticalWarning:
+      'HARD_STOP BATTLE 2026 : Vérifier impérativement la référence exacte IHU 624G vs IHU715P vs IHU535G vs Flyme Auto sur l’étiquette avant flash. Ne jamais croiser ces architectures ni écraser la calibration 540° / valves échappement.',
+    themes: [
+      { id: 'coolray_battle_track_2026', label: 'Battle 2026 Race Track Rouge/Carbone (Boost & Chrono)', accent: 'rose' },
+      { id: 'coolray_battle_cyber_lvds', label: 'Battle 2026 Cyber Cyan (Maps LVDS Plein Écran)', accent: 'cyan' },
+      { id: 'coolray_battle_gold_sport', label: 'Battle 2026 Signature Or & Titane', accent: 'amber' },
     ],
   },
   geely_flyme: {
@@ -311,12 +340,15 @@ export const ChineseCockpitFlasher: React.FC<ChineseCockpitFlasherProps> = ({
       };
     }
     const normOp = op.replace(/\s+/g, '');
-    if (selectedPlatformId === 'geely_coolray' && op.includes('FLYME')) {
+    if (
+      (selectedPlatformId === 'geely_coolray' || selectedPlatformId === 'geely_coolray_battle_2026') &&
+      op.includes('FLYME')
+    ) {
       return {
         blocked: true,
-        title: 'HARD_STOP : Flyme Auto incompatible sur Geely Coolray (624G / 715P / 535G)',
+        title: 'HARD_STOP : Flyme Auto incompatible sur Geely Coolray / Battle 2026 (624G / 715P / 535G)',
         reason:
-          'Le Coolray (2020–2026) utilise IHU 624G / IHU715P / IHU535G / ECARX, pas Flyme Auto. Leurs pilotes d’affichage, de radio et de caméra ne sont pas interchangeables.',
+          'Le Coolray & Coolray Battle 2026 utilisent IHU 624G / IHU715P / IHU535G / ECARX, pas Flyme Auto. Leurs pilotes d’affichage, de radio et de caméra ne sont pas interchangeables.',
       };
     }
     const geelyMatches = ['IHU624G', 'IHU715P', 'IHU535G', 'IHU516G'].filter(
@@ -614,7 +646,7 @@ pause
                   <span className="text-xs font-bold text-white">{p.shortLabel}</span>
                   <span
                     className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold ${
-                      p.id === 'geely_coolray'
+                      p.id === 'geely_coolray' || p.id === 'geely_coolray_battle_2026'
                         ? 'bg-rose-500 text-white'
                         : 'bg-slate-800 text-cyan-300 border border-slate-700'
                     }`}

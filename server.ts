@@ -840,7 +840,7 @@ app.post('/api/chinese-cockpit/plan', (req, res) => {
     const combinedNorm = combinedArch.replace(/\s+/g, '');
     const geelyVariantsFound = ['624G', '715P', '535G', '516G'].filter((tag) => combinedNorm.includes(tag));
     if (
-      (String(brandId) === 'geely_coolray' && combinedNorm.includes('FLYME')) ||
+      (String(brandId).startsWith('geely_coolray') && combinedNorm.includes('FLYME')) ||
       geelyVariantsFound.length >= 2 ||
       (combinedNorm.includes('FLYME') && geelyVariantsFound.length >= 1) ||
       (combinedArch.includes('DESAY') && combinedArch.includes('APTIV'))
@@ -965,7 +965,7 @@ app.post('/api/chinese-cockpit/ai-guard', async (req, res) => {
       riskDetail =
         'AutoPro bloque strictement toute tentative de modification de kilométrage sur l’EEPROM du combiné. Seuls le flash UI/Thèmes, langues FR/AR, projection LVDS et calibration ADAS/TPMS sont autorisés.';
     } else if (
-      (String(brandId) === 'geely_coolray' && guardCombinedNorm.includes('FLYME')) ||
+      (String(brandId).startsWith('geely_coolray') && guardCombinedNorm.includes('FLYME')) ||
       geelyGuardTags.length >= 2 ||
       (guardCombinedNorm.includes('FLYME') && geelyGuardTags.length >= 1)
     ) {
@@ -975,7 +975,7 @@ app.post('/api/chinese-cockpit/ai-guard', async (req, res) => {
         'Blocage strict (HARD_STOP) : les pilotes d’affichage, de radio et de caméra entre IHU 624G, IHU535G, IHU715P et Flyme Auto ne sont pas interchangeables.';
     }
 
-    const prompt = `Tu es l'ingénieur expert AutoPro spécialiste des Combinés Numériques (Digital Cockpit IPC) et doubles écrans chinois en Algérie (Geely Coolray SX11/Restylé IHU624G/IHU715P/535G/ECARX, Geely Cityray/Starray Flyme Auto, Jetour Dashing/T2/X70 Plus, Chery Tiggo 7/8 Pro Desay SV/Aptiv, Changan UNI-T/UNI-K, MG5/MG GT/Haval).
+    const prompt = `Tu es l'ingénieur expert AutoPro spécialiste des Combinés Numériques (Digital Cockpit IPC) et doubles écrans chinois en Algérie (Geely Coolray SX11/Restylé/Battle 2026 IHU624G/IHU715P/535G/ECARX, Geely Cityray/Starray Flyme Auto, Jetour Dashing/T2/X70 Plus, Chery Tiggo 7/8 Pro Desay SV/Aptiv, Changan UNI-T/UNI-K, MG5/MG GT/Haval).
 
 DEMANDE ATELIER COCKPIT :
 - Véhicule : ${modelVariant}
