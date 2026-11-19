@@ -1,5 +1,15 @@
 [
   {
+    "clientName": "Atelier Master Test Oran",
+    "hwid": "HWID-DZ-TEST-ORAN-001",
+    "actionType": "activation",
+    "actionDetails": "Abonnement activé (AP-DZ26-MST-80...)",
+    "locationCity": "Algérie (Passerelle DZ)",
+    "durationMinutes": 1,
+    "id": "ACT-DZ-1849",
+    "timestamp": "2026-11-19T13:28:18.263Z"
+  },
+  {
     "clientName": "Admin Sofiane Mascara",
     "hwid": "ADMIN-CONSOLE",
     "actionType": "activation",

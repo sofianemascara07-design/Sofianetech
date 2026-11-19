@@ -8,5 +8,19 @@
     "AUTOPRO-DEMO"
   ],
   "adminPasscode": "SOFIANE-DZ-2026",
-  "adminPasscodeUpdatedAt": "2026-11-14T08:33:29.945Z"
+  "adminPasscodeUpdatedAt": "2026-11-14T08:33:29.945Z",
+  "revokedRecords": [
+    {
+      "id": "SUB-DZ-RECOVERED-999",
+      "licenseKey": "AP-DZ26-MST-RECO-9999",
+      "revokedAt": "2026-11-19T13:28:18.305Z",
+      "reason": "Supprimé par Admin"
+    },
+    {
+      "id": "SUB-DZ-554-K5L",
+      "licenseKey": "AP-DZ26-MST-80YS-QRFQ-4652",
+      "revokedAt": "2026-11-19T13:28:18.300Z",
+      "reason": "Supprimé par Admin"
+    }
+  ]
 }

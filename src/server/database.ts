@@ -2,7 +2,19 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { DiagnosticScanSession, DatabaseStats, ClientActivityRecord, SubscriberRecord, SecuritySettings, LicenseTier, SdrProspect, SdrProspectStatus, SdrProspectSpecialty } from '../types/automotive';
+import {
+  DiagnosticScanSession,
+  DatabaseStats,
+  ClientActivityRecord,
+  SubscriberRecord,
+  SecuritySettings,
+  LicenseTier,
+  SdrProspect,
+  SdrProspectStatus,
+  SdrProspectSpecialty,
+  ConnectionPresenceStatus,
+  RevokedSubscriptionTombstone,
+} from '../types/automotive';
 
 const SERVER_HMAC_SECRET = process.env.SESSION_SECRET || process.env.ADMIN_PASSCODE || 'AUTOPRO-DZ-2026-HMAC-ROOT';
 
@@ -15,12 +27,48 @@ function constantTimeMatch(a: string, b: string): boolean {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.resolve(__dirname, '../../data');
+const DATA_DIR = process.env.AUTOPRO_DATA_DIR
+  ? path.resolve(process.env.AUTOPRO_DATA_DIR)
+  : path.resolve(__dirname, '../../data');
 const DB_FILE = path.resolve(DATA_DIR, 'autopro_database.json');
 const ACTIVITIES_FILE = path.resolve(DATA_DIR, 'autopro_activities.json');
 const SUBSCRIBERS_FILE = path.resolve(DATA_DIR, 'autopro_subscribers.json');
 const SECURITY_FILE = path.resolve(DATA_DIR, 'autopro_security.json');
 const SDR_PROSPECTS_FILE = path.resolve(DATA_DIR, 'autopro_sdr_prospects.json');
+
+const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || '').trim().replace(/\/+$/, '');
+const UPSTASH_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
+
+async function kvGetJson<T>(key: string): Promise<T | null> {
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
+  try {
+    const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
+    });
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    if (!data?.result) return null;
+    return JSON.parse(data.result) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function kvSetJson(key: string, value: unknown): Promise<void> {
+  if (!UPSTASH_URL || !UPSTASH_TOKEN) return;
+  try {
+    await fetch(`${UPSTASH_URL}/set/${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${UPSTASH_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(JSON.stringify(value)),
+    });
+  } catch {
+    // Non-fatal background backup
+  }
+}
 
 const INITIAL_SEEDED_SDR_PROSPECTS: SdrProspect[] = [
   {
@@ -79,6 +127,7 @@ const DEFAULT_SECURITY_SETTINGS: SecuritySettings & { adminPasscode: string } = 
   blockedDemoKeys: ['AP-DZ26-MST-9882-7EAB-5A63', 'DEMO-FREE', 'AUTOPRO-DEMO'],
   adminPasscode: process.env.ADMIN_PASSCODE || 'SOFIANE-DZ-2026',
   adminPasscodeUpdatedAt: new Date().toISOString(),
+  revokedRecords: [],
 };
 
 const INITIAL_SEEDED_SUBSCRIBERS: SubscriberRecord[] = [
@@ -368,9 +417,30 @@ export class AutoProDatabase {
   private totalQueriesServed = 0;
   private totalQueryTimeMs = 0;
   private lastOptimizedTimestamp = new Date().toISOString();
+  private lastSubscribersDiskSaveMs = 0;
 
   constructor() {
     this.init();
+    void this.hydrateFromCloudKv();
+  }
+
+  private async hydrateFromCloudKv() {
+    if (!UPSTASH_URL || !UPSTASH_TOKEN) return;
+    try {
+      const [kvSec, kvSubs] = await Promise.all([
+        kvGetJson<SecuritySettings & { adminPasscode?: string }>('autopro_security_v2'),
+        kvGetJson<SubscriberRecord[]>('autopro_subscribers_v2'),
+      ]);
+      if (kvSec && typeof kvSec === 'object') {
+        this.securitySettings = { ...this.securitySettings, ...kvSec };
+        this.saveSecurityToFile(true);
+      }
+      if (Array.isArray(kvSubs) && kvSubs.length > 0) {
+        this.syncSubscribersFromAdmin(kvSubs, []);
+      }
+    } catch {
+      // Ignore transient KV error
+    }
   }
 
   private init() {
@@ -516,21 +586,28 @@ export class AutoProDatabase {
     }
   }
 
-  private saveSubscribersToFile() {
+  private saveSubscribersToFile(skipKv = false) {
     try {
+      this.lastSubscribersDiskSaveMs = Date.now();
       const tempFile = `${SUBSCRIBERS_FILE}.tmp`;
       fs.writeFileSync(tempFile, JSON.stringify(this.subscribers, null, 2), 'utf-8');
       fs.renameSync(tempFile, SUBSCRIBERS_FILE);
+      if (!skipKv) {
+        void kvSetJson('autopro_subscribers_v2', this.subscribers);
+      }
     } catch (err) {
       console.error('[AutoProDatabase] Save subscribers error:', err);
     }
   }
 
-  private saveSecurityToFile() {
+  private saveSecurityToFile(skipKv = false) {
     try {
       const tempFile = `${SECURITY_FILE}.tmp`;
       fs.writeFileSync(tempFile, JSON.stringify(this.securitySettings, null, 2), 'utf-8');
       fs.renameSync(tempFile, SECURITY_FILE);
+      if (!skipKv) {
+        void kvSetJson('autopro_security_v2', this.securitySettings);
+      }
     } catch (err) {
       console.error('[AutoProDatabase] Save security error:', err);
     }
@@ -636,11 +713,80 @@ export class AutoProDatabase {
       'HMAC-' +
       crypto
         .createHmac('sha256', SERVER_HMAC_SECRET)
-        .update(`${licenseKey}:${clientName}:${hwid}`)
+        .update(`${licenseKey.trim().toUpperCase()}:${clientName.trim()}:${hwid.trim()}`)
         .digest('hex')
         .slice(0, 28)
         .toUpperCase()
     );
+  }
+
+  public verifySignedLicensePayload(
+    licenseKey: string,
+    clientName: string,
+    hwid: string,
+    signature: string
+  ): boolean {
+    if (!signature || typeof signature !== 'string' || !signature.startsWith('HMAC-')) return false;
+    const expectedExact = this.signLicensePayload(licenseKey, clientName, hwid || 'HWID');
+    const expectedFallback = this.signLicensePayload(licenseKey, clientName, 'HWID');
+    return (
+      constantTimeMatch(signature.trim().toUpperCase(), expectedExact) ||
+      constantTimeMatch(signature.trim().toUpperCase(), expectedFallback)
+    );
+  }
+
+  private computeConnectionStatus(sub: SubscriberRecord): ConnectionPresenceStatus {
+    const ref = sub.lastHeartbeatAt || sub.lastUsedAt;
+    if (!ref) return 'never_connected';
+    const refMs = new Date(ref).getTime();
+    if (!Number.isFinite(refMs)) return 'never_connected';
+    const ageSec = Math.max(0, (Date.now() - refMs) / 1000);
+    if (ageSec <= 45) {
+      if (typeof sub.lastStabilityScore === 'number' && sub.lastStabilityScore < 65) {
+        return 'unstable';
+      }
+      return 'online';
+    }
+    if (ageSec <= 120) {
+      return 'unstable';
+    }
+    return 'offline';
+  }
+
+  private addRevocationTombstone(id: string, licenseKey: string, reason?: string) {
+    const cleanKey = licenseKey.trim().toUpperCase();
+    const list = Array.isArray(this.securitySettings.revokedRecords)
+      ? [...this.securitySettings.revokedRecords]
+      : [];
+    const filtered = list.filter((r) => r.licenseKey.toUpperCase() !== cleanKey && r.id !== id);
+    filtered.unshift({
+      id,
+      licenseKey: cleanKey,
+      revokedAt: new Date().toISOString(),
+      ...(reason ? { reason } : {}),
+    });
+    this.securitySettings.revokedRecords = filtered.slice(0, 500);
+    this.saveSecurityToFile();
+  }
+
+  private clearRevocationTombstone(id: string, licenseKey: string) {
+    const cleanKey = licenseKey.trim().toUpperCase();
+    const list = Array.isArray(this.securitySettings.revokedRecords)
+      ? this.securitySettings.revokedRecords
+      : [];
+    const next = list.filter((r) => r.licenseKey.toUpperCase() !== cleanKey && r.id !== id);
+    if (next.length !== list.length) {
+      this.securitySettings.revokedRecords = next;
+      this.saveSecurityToFile();
+    }
+  }
+
+  private findRevocationTombstone(id: string | undefined, licenseKey: string): RevokedSubscriptionTombstone | undefined {
+    const cleanKey = licenseKey.trim().toUpperCase();
+    const list = Array.isArray(this.securitySettings.revokedRecords)
+      ? this.securitySettings.revokedRecords
+      : [];
+    return list.find((r) => r.licenseKey.toUpperCase() === cleanKey || (id && r.id === id));
   }
 
   public updateAdminPasscode(newPasscode: string): boolean {
@@ -678,7 +824,12 @@ export class AutoProDatabase {
     this.subscribers = this.subscribers.map(sub => {
       if (sub.tier === 'demo' && sub.status === 'active') {
         revokedCount++;
-        return { ...sub, status: 'revoked' as const, notes: `${sub.notes || ''} [Démo coupée par Admin]`.trim() };
+        return {
+          ...sub,
+          status: 'revoked' as const,
+          updatedAt: new Date().toISOString(),
+          notes: `${sub.notes || ''} [Démo coupée par Admin]`.trim(),
+        };
       }
       return sub;
     });
@@ -688,7 +839,12 @@ export class AutoProDatabase {
   }
 
   public getSubscribers(): SubscriberRecord[] {
-    return [...this.subscribers].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return [...this.subscribers]
+      .map((sub) => ({
+        ...sub,
+        connectionStatus: this.computeConnectionStatus(sub),
+      }))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
   public addSubscriber(input: {
@@ -717,9 +873,10 @@ export class AutoProDatabase {
     const licenseKey = (input.customKey && input.customKey.trim().toUpperCase()) || `${prefix}-${r1}-${r2}-${r3}`;
 
     const demoMins = input.tier === 'demo' ? (input.maxDemoMinutes || this.securitySettings.defaultDemoMinutes || 10) : null;
+    const nowIso = new Date().toISOString();
 
     const record: SubscriberRecord = {
-      id: `SUB-DZ-${Math.floor(100 + Math.random() * 900)}-${Date.now().toString().slice(-3)}`,
+      id: `SUB-DZ-${Math.floor(100 + Math.random() * 900)}-${Date.now().toString(36).slice(-3).toUpperCase()}`,
       clientName: input.clientName.trim(),
       phone: input.phone?.trim() || '',
       licenseKey,
@@ -728,47 +885,155 @@ export class AutoProDatabase {
       status: 'active',
       maxDemoMinutes: demoMins,
       demoExpiresAt: null,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
       lastUsedAt: null,
-      notes: input.notes?.trim() || (input.tier === 'demo' ? `Pass démo limité ${demoMins} min` : 'Abonné officiel'),
+      lastHeartbeatAt: null,
+      notes: input.notes?.trim() || (input.tier === 'demo' ? `Pass démo limité ${demoMins} min` : 'Abonné officiel permanent'),
     };
 
+    this.clearRevocationTombstone(record.id, record.licenseKey);
     this.subscribers.unshift(record);
     this.saveSubscribersToFile();
-    return record;
+    return { ...record, connectionStatus: 'never_connected' };
   }
 
   public updateSubscriberStatus(id: string, status: 'active' | 'suspended' | 'revoked', notes?: string): SubscriberRecord | null {
     const idx = this.subscribers.findIndex(s => s.id === id);
     if (idx === -1) return null;
 
+    const nowIso = new Date().toISOString();
     const updated: SubscriberRecord = {
       ...this.subscribers[idx],
       status,
+      updatedAt: nowIso,
       ...(notes !== undefined ? { notes } : {}),
     };
     if (status === 'active' && updated.tier === 'demo' && updated.maxDemoMinutes) {
       updated.demoExpiresAt = new Date(Date.now() + updated.maxDemoMinutes * 60_000).toISOString();
     }
+    if (status === 'active') {
+      this.clearRevocationTombstone(updated.id, updated.licenseKey);
+    } else {
+      this.addRevocationTombstone(updated.id, updated.licenseKey, `Statut ${status}`);
+    }
     this.subscribers[idx] = updated;
     this.saveSubscribersToFile();
-    return updated;
+    return { ...updated, connectionStatus: this.computeConnectionStatus(updated) };
   }
 
   public resetSubscriberHwid(id: string): SubscriberRecord | null {
     const idx = this.subscribers.findIndex(s => s.id === id);
     if (idx === -1) return null;
-    this.subscribers[idx] = { ...this.subscribers[idx], boundHwid: null };
+    this.subscribers[idx] = {
+      ...this.subscribers[idx],
+      boundHwid: null,
+      updatedAt: new Date().toISOString(),
+    };
     this.saveSubscribersToFile();
-    return this.subscribers[idx];
+    return { ...this.subscribers[idx], connectionStatus: this.computeConnectionStatus(this.subscribers[idx]) };
   }
 
   public deleteSubscriber(id: string): boolean {
+    const target = this.subscribers.find(s => s.id === id);
     const before = this.subscribers.length;
     this.subscribers = this.subscribers.filter(s => s.id !== id);
     if (this.subscribers.length === before) return false;
+    if (target) {
+      this.addRevocationTombstone(target.id, target.licenseKey, 'Supprimé par Admin');
+    }
     this.saveSubscribersToFile();
     return true;
+  }
+
+  public syncSubscribersFromAdmin(
+    adminSubscribers: SubscriberRecord[],
+    deletedTombstones: Array<{ id: string; licenseKey: string; deletedAt: string }> = []
+  ): SubscriberRecord[] {
+    let changed = false;
+
+    for (const del of deletedTombstones || []) {
+      const cleanKey = (del.licenseKey || '').trim().toUpperCase();
+      const delMs = new Date(del.deletedAt || 0).getTime();
+      const existingIdx = this.subscribers.findIndex(
+        (s) => s.id === del.id || (cleanKey && s.licenseKey.toUpperCase() === cleanKey)
+      );
+      if (existingIdx !== -1) {
+        const srvTime = new Date(this.subscribers[existingIdx].updatedAt || this.subscribers[existingIdx].createdAt || 0).getTime();
+        if (delMs >= srvTime) {
+          this.addRevocationTombstone(del.id, cleanKey, 'Supprimé (Sync Admin)');
+          this.subscribers.splice(existingIdx, 1);
+          changed = true;
+        }
+      } else if (cleanKey) {
+        this.addRevocationTombstone(del.id, cleanKey, 'Supprimé (Sync Admin)');
+      }
+    }
+
+    for (const incoming of adminSubscribers || []) {
+      if (!incoming || !incoming.licenseKey || !incoming.clientName) continue;
+      const cleanKey = incoming.licenseKey.trim().toUpperCase();
+      const deletedMatch = (deletedTombstones || []).find(
+        (d) => d.id === incoming.id || (d.licenseKey || '').trim().toUpperCase() === cleanKey
+      );
+      if (deletedMatch) {
+        const incTime = new Date(incoming.updatedAt || incoming.createdAt || 0).getTime();
+        const delTime = new Date(deletedMatch.deletedAt || 0).getTime();
+        if (delTime >= incTime) continue;
+      }
+
+      const existingIdx = this.subscribers.findIndex(
+        (s) => s.id === incoming.id || s.licenseKey.toUpperCase() === cleanKey
+      );
+
+      if (existingIdx === -1) {
+        const restored: SubscriberRecord = {
+          ...incoming,
+          licenseKey: cleanKey,
+          status: incoming.status || 'active',
+          createdAt: incoming.createdAt || new Date().toISOString(),
+          updatedAt: incoming.updatedAt || incoming.createdAt || new Date().toISOString(),
+        };
+        if (restored.status === 'active') {
+          this.clearRevocationTombstone(restored.id, cleanKey);
+        }
+        this.subscribers.push(restored);
+        changed = true;
+      } else {
+        const current = this.subscribers[existingIdx];
+        const currUpdateMs = new Date(current.updatedAt || current.createdAt || 0).getTime();
+        const incUpdateMs = new Date(incoming.updatedAt || incoming.createdAt || 0).getTime();
+
+        const currHbMs = new Date(current.lastHeartbeatAt || current.lastUsedAt || 0).getTime();
+        const incHbMs = new Date(incoming.lastHeartbeatAt || incoming.lastUsedAt || 0).getTime();
+        const useServerTelemetry = currHbMs >= incHbMs;
+
+        if (incUpdateMs > currUpdateMs) {
+          this.subscribers[existingIdx] = {
+            ...current,
+            ...incoming,
+            licenseKey: cleanKey,
+            lastUsedAt: useServerTelemetry ? current.lastUsedAt : incoming.lastUsedAt,
+            lastHeartbeatAt: useServerTelemetry ? current.lastHeartbeatAt : incoming.lastHeartbeatAt,
+            lastLatencyMs: useServerTelemetry ? current.lastLatencyMs : incoming.lastLatencyMs,
+            lastStabilityScore: useServerTelemetry ? current.lastStabilityScore : incoming.lastStabilityScore,
+            lastConnectionMode: useServerTelemetry ? current.lastConnectionMode : incoming.lastConnectionMode,
+            lastReconnectCount: useServerTelemetry ? current.lastReconnectCount : incoming.lastReconnectCount,
+            lastIp: useServerTelemetry ? current.lastIp : incoming.lastIp,
+            wakeLockActive: useServerTelemetry ? current.wakeLockActive : incoming.wakeLockActive,
+          };
+          if (incoming.status === 'active') {
+            this.clearRevocationTombstone(incoming.id, cleanKey);
+          }
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      this.saveSubscribersToFile();
+    }
+    return this.getSubscribers();
   }
 
   public verifyLicenseOrDemo(params: { key: string; hwid?: string; clientName?: string }): {
@@ -814,6 +1079,7 @@ export class AutoProDatabase {
         sub.demoExpiresAt = new Date(Date.now() + mins * 60_000).toISOString();
       } else if (Date.now() > new Date(sub.demoExpiresAt).getTime()) {
         sub.status = 'revoked';
+        sub.updatedAt = new Date().toISOString();
         this.subscribers[idx] = sub;
         this.saveSubscribersToFile();
         return {
@@ -836,14 +1102,16 @@ export class AutoProDatabase {
       sub.boundHwid = incomingHwid;
     }
 
-    sub.lastUsedAt = new Date().toISOString();
+    const nowIso = new Date().toISOString();
+    sub.lastUsedAt = nowIso;
+    sub.lastHeartbeatAt = nowIso;
     this.subscribers[idx] = sub;
     this.saveSubscribersToFile();
 
     return {
       valid: true,
       message: sub.tier === 'demo' ? 'Pass Démonstration Limité activé.' : 'Abonnement officiel authentifié.',
-      subscriber: sub,
+      subscriber: { ...sub, connectionStatus: 'online' },
     };
   }
 
@@ -856,8 +1124,22 @@ export class AutoProDatabase {
     stabilityScore?: number;
     connectionMode?: string;
     wakeLockActive?: boolean;
+    reconnectCount?: number;
+    ipAddress?: string;
+    sessionMeta?: {
+      subscriberId?: string;
+      clientName?: string;
+      tier?: LicenseTier;
+      phone?: string;
+      signature?: string;
+      createdAt?: string;
+    };
   }): {
     valid: boolean;
+    explicitlyRevoked?: boolean;
+    subscriberStatus?: 'active' | 'suspended' | 'revoked';
+    connectionStatus?: ConnectionPresenceStatus;
+    lastHeartbeatAt?: string | null;
     reason?: string;
     demoExpiresAt?: string | null;
   } {
@@ -866,37 +1148,113 @@ export class AutoProDatabase {
     }
     const cleanKey = (params.key || '').trim().toUpperCase();
     if (!cleanKey || this.securitySettings.blockedDemoKeys.includes(cleanKey)) {
-      return { valid: false, reason: 'Lien / clé de démonstration désactivé par l\'administrateur.' };
+      return {
+        valid: false,
+        explicitlyRevoked: true,
+        reason: 'Lien / clé de démonstration désactivé par l\'administrateur.',
+      };
     }
-    const subIdx = this.subscribers.findIndex(s => s.licenseKey.toUpperCase() === cleanKey);
-    const sub = subIdx !== -1 ? this.subscribers[subIdx] : undefined;
-    if (!sub) {
-      return { valid: false, reason: 'Abonnement introuvable ou supprimé par l\'administrateur.' };
-    }
-    if (sub.status !== 'active') {
-      return { valid: false, reason: 'Accès désactivé par l\'administrateur (client suspendu).' };
-    }
-    if (sub.boundHwid && params.hwid && sub.boundHwid !== params.hwid) {
-      return { valid: false, reason: 'Session invalide : clé liée à un autre appareil.' };
-    }
-    if (sub.tier === 'demo') {
-      if (!this.securitySettings.demoLinksEnabled) {
-        return { valid: false, reason: 'Les démonstrations partagées ont été fermées par l\'administrateur.' };
+
+    const tombstone = this.findRevocationTombstone(params.sessionMeta?.subscriberId, cleanKey);
+    let subIdx = this.subscribers.findIndex(s => s.licenseKey.toUpperCase() === cleanKey);
+
+    if (subIdx === -1) {
+      if (tombstone) {
+        return {
+          valid: false,
+          explicitlyRevoked: true,
+          subscriberStatus: 'revoked',
+          reason: 'Accès désactivé ou supprimé par l\'administrateur.',
+        };
       }
-      if (this.securitySettings.revokedAllDemosBefore && params.activatedAt) {
-        if (new Date(params.activatedAt).getTime() < new Date(this.securitySettings.revokedAllDemosBefore).getTime()) {
-          return { valid: false, reason: 'Toutes les démonstrations précédentes ont été révoquées par l\'administrateur.' };
-        }
-      }
-      if (sub.demoExpiresAt && Date.now() > new Date(sub.demoExpiresAt).getTime()) {
-        return { valid: false, reason: 'Durée de la démonstration gratuite expirée.' };
+
+      // Self-healing restoration for signed paid subscriptions after ephemeral server restarts (Render Free Tier)
+      const meta = params.sessionMeta;
+      const isPaidTier = meta?.tier && meta.tier !== 'demo' && meta.tier !== 'admin';
+      if (
+        isPaidTier &&
+        meta?.clientName &&
+        meta?.signature &&
+        this.verifySignedLicensePayload(cleanKey, meta.clientName, params.hwid || 'HWID', meta.signature)
+      ) {
+        const nowIso = new Date().toISOString();
+        const restoredSub: SubscriberRecord = {
+          id: meta.subscriberId || `SUB-DZ-REST-${Date.now().toString(36).toUpperCase()}`,
+          clientName: meta.clientName.trim(),
+          phone: meta.phone?.trim() || '',
+          licenseKey: cleanKey,
+          boundHwid: params.hwid?.trim() || null,
+          tier: meta.tier!,
+          status: 'active',
+          maxDemoMinutes: null,
+          demoExpiresAt: null,
+          createdAt: meta.createdAt || params.activatedAt || nowIso,
+          updatedAt: nowIso,
+          lastUsedAt: nowIso,
+          lastHeartbeatAt: nowIso,
+          notes: 'Abonnement vérifié HMAC · Synchronisé automatiquement',
+        };
+        this.subscribers.unshift(restoredSub);
+        subIdx = 0;
+        this.saveSubscribersToFile();
+      } else {
+        return {
+          valid: false,
+          explicitlyRevoked: meta?.tier === 'demo',
+          reason: 'Abonnement introuvable ou en attente de synchronisation serveur.',
+        };
       }
     }
 
-    // Update live remote client stability telemetry on subscriber record (throttled disk write)
+    const sub = this.subscribers[subIdx];
+    if (sub.status !== 'active') {
+      return {
+        valid: false,
+        explicitlyRevoked: true,
+        subscriberStatus: sub.status,
+        reason: 'Accès désactivé par l\'administrateur (client suspendu).',
+      };
+    }
+    if (sub.boundHwid && params.hwid && sub.boundHwid !== params.hwid) {
+      return {
+        valid: false,
+        explicitlyRevoked: true,
+        reason: 'Session invalide : clé liée à un autre appareil.',
+      };
+    }
+    if (sub.tier === 'demo') {
+      if (!this.securitySettings.demoLinksEnabled) {
+        return {
+          valid: false,
+          explicitlyRevoked: true,
+          reason: 'Les démonstrations partagées ont été fermées par l\'administrateur.',
+        };
+      }
+      if (this.securitySettings.revokedAllDemosBefore && params.activatedAt) {
+        if (new Date(params.activatedAt).getTime() < new Date(this.securitySettings.revokedAllDemosBefore).getTime()) {
+          return {
+            valid: false,
+            explicitlyRevoked: true,
+            reason: 'Toutes les démonstrations précédentes ont été révoquées par l\'administrateur.',
+          };
+        }
+      }
+      if (sub.demoExpiresAt && Date.now() > new Date(sub.demoExpiresAt).getTime()) {
+        return {
+          valid: false,
+          explicitlyRevoked: true,
+          reason: 'Durée de la démonstration gratuite expirée.',
+        };
+      }
+    }
+
+    // Update live remote client presence & stability telemetry on subscriber record
     const nowIso = new Date().toISOString();
-    const prevUsedMs = sub.lastUsedAt ? new Date(sub.lastUsedAt).getTime() : 0;
+    const prevHbMs = sub.lastHeartbeatAt ? new Date(sub.lastHeartbeatAt).getTime() : 0;
+    const wasOfflineOrFirstSeen = !prevHbMs || Date.now() - prevHbMs > 60_000;
+
     sub.lastUsedAt = nowIso;
+    sub.lastHeartbeatAt = nowIso;
     if (typeof params.latencyMs === 'number' && Number.isFinite(params.latencyMs)) {
       sub.lastLatencyMs = Math.round(params.latencyMs);
     }
@@ -909,12 +1267,26 @@ export class AutoProDatabase {
     if (typeof params.wakeLockActive === 'boolean') {
       sub.wakeLockActive = params.wakeLockActive;
     }
+    if (typeof params.reconnectCount === 'number' && Number.isFinite(params.reconnectCount)) {
+      sub.lastReconnectCount = Math.max(0, Math.round(params.reconnectCount));
+    }
+    if (typeof params.ipAddress === 'string' && params.ipAddress.trim()) {
+      sub.lastIp = params.ipAddress.trim();
+    }
     this.subscribers[subIdx] = sub;
-    if (Date.now() - prevUsedMs > 120_000) {
+
+    if (wasOfflineOrFirstSeen || Date.now() - this.lastSubscribersDiskSaveMs > 25_000) {
       this.saveSubscribersToFile();
     }
 
-    return sub.tier === 'demo' ? { valid: true, demoExpiresAt: sub.demoExpiresAt } : { valid: true };
+    const connectionStatus = this.computeConnectionStatus(sub);
+    return {
+      valid: true,
+      subscriberStatus: sub.status,
+      connectionStatus,
+      lastHeartbeatAt: sub.lastHeartbeatAt,
+      ...(sub.tier === 'demo' ? { demoExpiresAt: sub.demoExpiresAt } : {}),
+    };
   }
 
   public logActivity(record: Omit<ClientActivityRecord, 'id' | 'timestamp'> & { id?: string; timestamp?: string }): ClientActivityRecord {

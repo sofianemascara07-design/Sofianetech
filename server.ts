@@ -1422,10 +1422,11 @@ app.post('/api/license/verify', (req, res) => {
       ? ['diagnostic', 'cameras', 'history']
       : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'translator'];
 
+  const resolvedHwid = sub.boundHwid || hwid || 'HWID-AUTO-DETECTED';
   const signature = saasDatabase.signLicensePayload(
     sub.licenseKey,
     sub.clientName,
-    sub.boundHwid || hwid || 'HWID'
+    resolvedHwid
   );
 
   saasDatabase.logActivity({
@@ -1442,6 +1443,9 @@ app.post('/api/license/verify', (req, res) => {
     message: check.message,
     license: {
       key: sub.licenseKey,
+      subscriberId: sub.id,
+      phone: sub.phone || '',
+      createdAt: sub.createdAt,
       clientName: sub.clientName,
       hwid: sub.boundHwid || hwid || 'HWID-AUTO-DETECTED',
       tier,
@@ -1459,7 +1463,7 @@ app.post('/api/license/verify', (req, res) => {
   });
 });
 
-// API: Real-time Session Heartbeat & Kill-Switch (kicks out blocked clients or expired demos)
+// API: Real-time Session Heartbeat & Kill-Switch (kicks out blocked clients or expired demos; self-heals paid tiers)
 app.post('/api/license/check-session', (req, res) => {
   const {
     key,
@@ -1471,14 +1475,25 @@ app.post('/api/license/check-session', (req, res) => {
     stabilityScore,
     connectionMode,
     wakeLockActive,
+    reconnectCount,
+    subscriberId,
+    clientName,
+    tier,
+    phone,
+    signature,
+    createdAt,
   } = req.body || {};
+
   if (isAdmin && !saasDatabase.verifyAdminPasscode(adminPasscode || key || '')) {
     return res.status(403).json({
       valid: false,
       blocked: true,
+      explicitlyRevoked: true,
       reason: 'Session Administrateur expirée ou non authentifiée.',
     });
   }
+
+  const clientIp = (req.ip || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
   const result = saasDatabase.checkSessionHeartbeat({
     key,
     hwid,
@@ -1488,17 +1503,35 @@ app.post('/api/license/check-session', (req, res) => {
     stabilityScore,
     connectionMode,
     wakeLockActive,
+    reconnectCount,
+    ipAddress: clientIp,
+    sessionMeta: {
+      subscriberId,
+      clientName,
+      tier,
+      phone,
+      signature,
+      createdAt,
+    },
   });
+
   if (!result.valid) {
     return res.status(403).json({
       valid: false,
-      blocked: true,
+      blocked: Boolean(result.explicitlyRevoked),
+      explicitlyRevoked: Boolean(result.explicitlyRevoked),
+      subscriberStatus: result.subscriberStatus,
       reason: result.reason,
     });
   }
+
   return res.json({
     valid: true,
     blocked: false,
+    explicitlyRevoked: false,
+    subscriberStatus: result.subscriberStatus || 'active',
+    connectionStatus: result.connectionStatus || 'online',
+    lastHeartbeatAt: result.lastHeartbeatAt || new Date().toISOString(),
     demoExpiresAt: result.demoExpiresAt || null,
   });
 });
@@ -1534,6 +1567,21 @@ app.get('/api/admin/overview', requireAdmin, (_req, res) => {
     success: true,
     subscribers: saasDatabase.getSubscribers(),
     securitySettings: saasDatabase.getPublicSecuritySettings(),
+    serverTimestamp: new Date().toISOString(),
+  });
+});
+
+app.post('/api/admin/subscribers/sync', requireAdmin, (req, res) => {
+  const { subscribers, deletedTombstones } = req.body || {};
+  const merged = saasDatabase.syncSubscribersFromAdmin(
+    Array.isArray(subscribers) ? subscribers : [],
+    Array.isArray(deletedTombstones) ? deletedTombstones : []
+  );
+  return res.json({
+    success: true,
+    subscribers: merged,
+    securitySettings: saasDatabase.getPublicSecuritySettings(),
+    serverTimestamp: new Date().toISOString(),
   });
 });
 

@@ -121,7 +121,7 @@ export default function App() {
     }
   }, [licenseSession, activeTab]);
 
-  // Remote backend keep-alive (prevents Render hibernation mid-session) & 15s Kill-Switch heartbeat
+  // Remote backend keep-alive (prevents Render hibernation mid-session) & 15s presence + Kill-Switch heartbeat
   useEffect(() => {
     if (!licenseSession?.isValid) {
       remoteStabilityManager.stopKeepAlive();
@@ -139,6 +139,12 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             key: licenseSession.key,
+            subscriberId: licenseSession.subscriberId,
+            clientName: licenseSession.clientName,
+            tier: licenseSession.tier,
+            phone: licenseSession.phone,
+            signature: licenseSession.signature,
+            createdAt: licenseSession.createdAt,
             hwid: licenseSession.hwid,
             isAdmin: Boolean(licenseSession.isAdmin),
             activatedAt: licenseSession.activatedAt,
@@ -147,6 +153,7 @@ export default function App() {
             stabilityScore: snap.stabilityScore,
             connectionMode,
             wakeLockActive: snap.wakeLockActive,
+            reconnectCount: snap.reconnectCount,
           }),
         });
         const elapsed = Math.round(performance.now() - startMs);
@@ -154,19 +161,37 @@ export default function App() {
         const raw = await res.text();
         if (raw.trim().startsWith('<')) return;
         const data = JSON.parse(raw);
-        if (res.status === 403 || data?.blocked || data?.valid === false) {
+        // Paid subscriptions stay active until explicitly suspended/revoked/deleted by Admin
+        const isDemo = licenseSession.tier === 'demo';
+        const shouldLock =
+          data?.explicitlyRevoked === true ||
+          (isDemo && (res.status === 403 || data?.blocked || data?.valid === false));
+        if (shouldLock) {
           lockSession(data?.reason || 'Votre accès a été désactivé par l\'administrateur.');
         }
       } catch {
-        // Record blip without kicking out active session on transient 4G drop
+        // Record blip without kicking out active session on transient 4G drop or Render wakeup
         remoteStabilityManager.recordRequestOutcome(false);
       }
     };
 
-    verifySession();
+    const handleReconnectCheck = () => {
+      void verifySession();
+    };
+    const handleVisibilityCheck = () => {
+      if (document.visibilityState === 'visible') {
+        void verifySession();
+      }
+    };
+
+    void verifySession();
     const timer = setInterval(verifySession, 15000);
+    window.addEventListener('online', handleReconnectCheck);
+    document.addEventListener('visibilitychange', handleVisibilityCheck);
     return () => {
       clearInterval(timer);
+      window.removeEventListener('online', handleReconnectCheck);
+      document.removeEventListener('visibilitychange', handleVisibilityCheck);
       remoteStabilityManager.stopKeepAlive();
     };
   }, [licenseSession, lockSession, connectionMode]);

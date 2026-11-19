@@ -21,10 +21,136 @@ import {
   Sliders,
   FileText,
   FileSpreadsheet,
+  Wifi,
+  WifiOff,
+  Radio,
+  Activity,
 } from 'lucide-react';
-import { LicenseTier, SecuritySettings, SubscriberRecord } from '../types/automotive';
+import { ConnectionPresenceStatus, LicenseTier, SecuritySettings, SubscriberRecord } from '../types/automotive';
 import { apiFetch } from '../utils/apiBridge';
 import { downloadCommercialPacksPdf, downloadCommercialPacksExcel } from '../utils/commercialCatalogExport';
+
+interface DeletedTombstone {
+  id: string;
+  licenseKey: string;
+  deletedAt: string;
+}
+
+const ADMIN_SUBS_MIRROR_KEY = 'autopro_admin_subscribers_mirror_v1';
+const ADMIN_SUBS_DELETED_KEY = 'autopro_admin_deleted_subs_v1';
+
+function loadAdminMirror(): SubscriberRecord[] {
+  try {
+    const raw = localStorage.getItem(ADMIN_SUBS_MIRROR_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveAdminMirror(list: SubscriberRecord[]) {
+  try {
+    localStorage.setItem(ADMIN_SUBS_MIRROR_KEY, JSON.stringify(list));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function loadDeletedTombstones(): DeletedTombstone[] {
+  try {
+    const raw = localStorage.getItem(ADMIN_SUBS_DELETED_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function addDeletedTombstone(id: string, licenseKey: string): DeletedTombstone[] {
+  const prev = loadDeletedTombstones().filter(
+    (d) => d.id !== id && d.licenseKey.toUpperCase() !== licenseKey.toUpperCase()
+  );
+  const next: DeletedTombstone[] = [
+    { id, licenseKey: licenseKey.toUpperCase(), deletedAt: new Date().toISOString() },
+    ...prev,
+  ].slice(0, 300);
+  try {
+    localStorage.setItem(ADMIN_SUBS_DELETED_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore storage quota errors
+  }
+  return next;
+}
+
+function formatDurationFr(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  if (h < 24) return remM > 0 ? `${h}h ${remM}min` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}j ${h % 24}h`;
+}
+
+function getPresenceDetails(sub: SubscriberRecord, nowMs: number): {
+  status: ConnectionPresenceStatus;
+  label: string;
+  detail: string;
+  badgeClass: string;
+  dotClass: string;
+} {
+  const ref = sub.lastHeartbeatAt || sub.lastUsedAt;
+  if (!ref) {
+    return {
+      status: 'never_connected',
+      label: 'EN ATTENTE 1ère CONNEXION',
+      detail: 'Clé active · Le client ne s’est pas encore connecté',
+      badgeClass: 'bg-slate-800/90 text-slate-300 border-slate-700',
+      dotClass: 'bg-slate-400',
+    };
+  }
+  const refMs = new Date(ref).getTime();
+  if (!Number.isFinite(refMs)) {
+    return {
+      status: 'never_connected',
+      label: 'EN ATTENTE 1ère CONNEXION',
+      detail: 'Signal inconnu',
+      badgeClass: 'bg-slate-800/90 text-slate-300 border-slate-700',
+      dotClass: 'bg-slate-400',
+    };
+  }
+  const ageSec = Math.max(0, Math.floor((nowMs - refMs) / 1000));
+  if (ageSec <= 45 && (sub.lastStabilityScore === null || sub.lastStabilityScore === undefined || sub.lastStabilityScore >= 65)) {
+    return {
+      status: 'online',
+      label: 'CONNECTÉ EN DIRECT',
+      detail: `Signal reçu il y a ${formatDurationFr(ageSec)}`,
+      badgeClass: 'bg-emerald-950/90 text-emerald-300 border-emerald-500/60',
+      dotClass: 'bg-emerald-400 animate-ping',
+    };
+  }
+  if (ageSec <= 120) {
+    return {
+      status: 'unstable',
+      label: 'CONNEXION INSTABLE / VEILLE',
+      detail: `Dernier signal il y a ${formatDurationFr(ageSec)} (micro-coupure)`,
+      badgeClass: 'bg-amber-950/90 text-amber-300 border-amber-500/60',
+      dotClass: 'bg-amber-400 animate-pulse',
+    };
+  }
+  return {
+    status: 'offline',
+    label: 'CONNEXION PERDUE',
+    detail: `Hors-ligne depuis ${formatDurationFr(ageSec)} (dernier signal : ${new Date(refMs).toLocaleString('fr-FR')})`,
+    badgeClass: 'bg-rose-950/90 text-rose-300 border-rose-500/60',
+    dotClass: 'bg-rose-500',
+  };
+}
 
 interface AdminSubscribersPanelProps {
   onAdminSessionInvalid?: (reason: string) => void;
@@ -33,19 +159,23 @@ interface AdminSubscribersPanelProps {
 export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
   onAdminSessionInvalid,
 }) => {
-  const [subscribers, setSubscribers] = useState<SubscriberRecord[]>([]);
+  const [subscribers, setSubscribers] = useState<SubscriberRecord[]>(() => loadAdminMirror());
   const [security, setSecurity] = useState<SecuritySettings>({
     demoLinksEnabled: false,
     defaultDemoMinutes: 10,
     blockedDemoKeys: [],
   });
   const [loading, setLoading] = useState(true);
+  const [isMirrorOffline, setIsMirrorOffline] = useState(false);
+  const [liveAutoRefresh, setLiveAutoRefresh] = useState(true);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [nowTickMs, setNowTickMs] = useState<number>(() => Date.now());
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Filter & Search
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended' | 'revoked'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'lost' | 'active' | 'suspended' | 'revoked'>('all');
 
   // Add Subscriber / Limited Demo Form
   const [newClientName, setNewClientName] = useState('');
@@ -68,38 +198,82 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
     setTimeout(() => setFeedback(null), 5000);
   };
 
-  const loadOverview = useCallback(async () => {
+  const loadOverview = useCallback(async (silent = false) => {
     const pass = getAdminPasscode();
     if (!pass) {
       onAdminSessionInvalid?.('Mot de passe Admin manquant dans cette session.');
       return;
     }
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
-      const res = await apiFetch('/api/admin/overview', {
-        headers: { 'x-admin-passcode': pass },
+      const localMirror = loadAdminMirror();
+      const deletedTombstones = loadDeletedTombstones();
+
+      // Synchronize local Admin mirror with backend so wiped Render restarts auto-restore all subscribers
+      const res = await apiFetch('/api/admin/subscribers/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-passcode': pass,
+        },
+        body: JSON.stringify({
+          subscribers: localMirror,
+          deletedTombstones,
+        }),
       });
+
       if (res.status === 401) {
         onAdminSessionInvalid?.('Session Administrateur refusée ou mot de passe modifié.');
         return;
       }
+
       const data = await res.json();
-      if (data.success) {
-        setSubscribers(data.subscribers || []);
+      if (res.ok && data.success) {
+        const syncedList: SubscriberRecord[] = data.subscribers || [];
+        setSubscribers(syncedList);
+        saveAdminMirror(syncedList);
         if (data.securitySettings) {
           setSecurity(data.securitySettings);
         }
+        setIsMirrorOffline(false);
+        setLastSyncAt(new Date().toLocaleTimeString('fr-FR'));
+      } else {
+        throw new Error('SYNC_FAILED');
       }
     } catch {
-      showMsg('error', 'Impossible de contacter le serveur Admin.');
+      const fallbackMirror = loadAdminMirror();
+      if (fallbackMirror.length > 0) {
+        setSubscribers(fallbackMirror);
+      }
+      setIsMirrorOffline(true);
+      if (!silent) {
+        showMsg('error', 'Serveur en réveil / hors ligne — Affichage du coffre local Admin (sync auto à la reconnexion).');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [onAdminSessionInvalid]);
 
   useEffect(() => {
-    loadOverview();
+    void loadOverview(false);
   }, [loadOverview]);
+
+  // Real-time 15s polling for live client connection / lost-connection detection
+  useEffect(() => {
+    if (!liveAutoRefresh) return;
+    const poll = setInterval(() => {
+      void loadOverview(true);
+    }, 15_000);
+    return () => clearInterval(poll);
+  }, [liveAutoRefresh, loadOverview]);
+
+  // 1-second local tick so elapsed connection durations refresh smoothly
+  useEffect(() => {
+    const ticker = setInterval(() => {
+      setNowTickMs(Date.now());
+    }, 5000);
+    return () => clearInterval(ticker);
+  }, []);
 
   const handleCopyKey = (id: string, text: string) => {
     navigator.clipboard.writeText(text);
@@ -228,7 +402,11 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success && data.subscriber) {
-        setSubscribers(prev => [data.subscriber, ...prev]);
+        setSubscribers(prev => {
+          const next = [data.subscriber, ...prev];
+          saveAdminMirror(next);
+          return next;
+        });
         setLastCreatedSub(data.subscriber);
         setNewClientName('');
         setNewPhone('');
@@ -238,7 +416,7 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
           'success',
           newTier === 'demo'
             ? `Pass Démo Limité (${data.subscriber.maxDemoMinutes} min) créé pour ${data.subscriber.clientName} !`
-            : `Abonné ${data.subscriber.clientName} ajouté à la liste blanche !`
+            : `Abonné ${data.subscriber.clientName} ajouté et sécurisé (permanent jusqu'à désactivation) !`
         );
       } else {
         showMsg('error', data.error || 'Impossible d\'ajouter cet abonné.');
@@ -270,7 +448,11 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success && data.subscriber) {
-        setSubscribers(prev => prev.map(item => (item.id === sub.id ? data.subscriber : item)));
+        setSubscribers(prev => {
+          const next = prev.map(item => (item.id === sub.id ? data.subscriber : item));
+          saveAdminMirror(next);
+          return next;
+        });
         showMsg(
           'success',
           nextStatus === 'suspended'
@@ -296,7 +478,11 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success && data.subscriber) {
-        setSubscribers(prev => prev.map(item => (item.id === sub.id ? data.subscriber : item)));
+        setSubscribers(prev => {
+          const next = prev.map(item => (item.id === sub.id ? data.subscriber : item));
+          saveAdminMirror(next);
+          return next;
+        });
         showMsg('success', `Empreinte HWID réinitialisée pour ${sub.clientName}.`);
       } else {
         showMsg('error', data.error || 'Erreur reset HWID.');
@@ -317,7 +503,12 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setSubscribers(prev => prev.filter(item => item.id !== sub.id));
+        addDeletedTombstone(sub.id, sub.licenseKey);
+        setSubscribers(prev => {
+          const next = prev.filter(item => item.id !== sub.id);
+          saveAdminMirror(next);
+          return next;
+        });
         showMsg('success', `Abonné "${sub.clientName}" supprimé définitivement.`);
       } else {
         showMsg('error', data.error || 'Suppression refusée.');
@@ -349,7 +540,15 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
   };
 
   const filteredSubscribers = subscribers.filter(sub => {
-    const matchesStatus = statusFilter === 'all' || sub.status === statusFilter;
+    const presence = getPresenceDetails(sub, nowTickMs);
+    const matchesStatus =
+      statusFilter === 'all'
+        ? true
+        : statusFilter === 'online'
+        ? presence.status === 'online' || presence.status === 'unstable'
+        : statusFilter === 'lost'
+        ? presence.status === 'offline'
+        : sub.status === statusFilter;
     const q = searchTerm.trim().toLowerCase();
     const matchesSearch =
       !q ||
@@ -362,7 +561,15 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
 
   const activeCount = subscribers.filter(s => s.status === 'active').length;
   const blockedCount = subscribers.filter(s => s.status === 'suspended' || s.status === 'revoked').length;
-  const demoCount = subscribers.filter(s => s.tier === 'demo').length;
+  const onlineNowCount = subscribers.filter(s => {
+    if (s.status !== 'active') return false;
+    const p = getPresenceDetails(s, nowTickMs).status;
+    return p === 'online' || p === 'unstable';
+  }).length;
+  const lostConnCount = subscribers.filter(s => {
+    if (s.status !== 'active') return false;
+    return getPresenceDetails(s, nowTickMs).status === 'offline';
+  }).length;
 
   return (
     <div className="space-y-6">
@@ -385,17 +592,45 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
                   ? `Pass Démo Limité Autorisé (${security.defaultDemoMinutes} min)`
                   : 'Démos Publiques Verrouillées (Mode Strict)'}
               </span>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1.5 ${
+                  isMirrorOffline
+                    ? 'bg-amber-950/80 text-amber-300 border-amber-600/50'
+                    : 'bg-emerald-950/80 text-emerald-300 border-emerald-600/50'
+                }`}
+              >
+                <Radio className="w-3 h-3" />
+                <span>
+                  {isMirrorOffline
+                    ? 'Coffre Local Admin (Serveur hors-ligne)'
+                    : `Sync Direct${lastSyncAt ? ` · ${lastSyncAt}` : ''}`}
+                </span>
+              </span>
             </div>
             <h1 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2.5">
               <ShieldAlert className="w-6 h-6 text-amber-400 shrink-0" />
-              <span>Contrôle Abonnés, Pass Démo Limité &amp; Blocage Anti-Manipulation</span>
+              <span>Contrôle Abonnés Permanents, Présence Directe &amp; Anti-Manipulation</span>
             </h1>
             <p className="text-xs text-slate-300 max-w-3xl leading-relaxed">
-              Tous les anciens liens démo partagés sans limite sont neutralisés. Ajoutez vos abonnés officiels, générez des Pass Démo limités (5 à 30 min) et désactivez en 1 clic tout client manipulateur — même s'il a déjà ouvert l'application.
+              Tous les abonnés activés restent enregistrés et visibles en permanence jusqu’à désactivation manuelle (avec synchronisation coffre local + auto-restauration HMAC). Surveillez en direct qui est connecté ou a perdu la connexion.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setLiveAutoRefresh(prev => !prev)}
+              className={`px-3 py-2.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 cursor-pointer ${
+                liveAutoRefresh
+                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600/60'
+                  : 'bg-slate-900 text-slate-400 border-slate-700'
+              }`}
+              title="Actualisation automatique toutes les 15 secondes pour voir qui se connecte ou perd la connexion"
+            >
+              <Activity className={`w-3.5 h-3.5 ${liveAutoRefresh ? 'animate-pulse text-emerald-400' : ''}`} />
+              <span>Direct 15s : {liveAutoRefresh ? 'ON' : 'OFF'}</span>
+            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -422,12 +657,12 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
 
             <button
               type="button"
-              onClick={loadOverview}
+              onClick={() => void loadOverview(false)}
               disabled={loading}
               className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 flex items-center gap-1.5 cursor-pointer"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              <span>Actualiser</span>
+              <span>Synchroniser</span>
             </button>
 
             <button
@@ -437,28 +672,38 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
               className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-900/30 flex items-center gap-2 cursor-pointer"
             >
               <Lock className="w-4 h-4" />
-              <span>Couper &amp; Verrouiller Toutes les Démos</span>
+              <span>Couper Démos</span>
             </button>
           </div>
         </div>
 
         {/* Summary Counters */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-5">
           <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800">
             <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Enregistrés</span>
             <span className="text-xl font-extrabold text-white font-mono">{subscribers.length}</span>
           </div>
-          <div className="p-3 rounded-xl bg-slate-950/80 border border-emerald-800/40">
-            <span className="text-[10px] uppercase font-bold text-emerald-400 block">Clients Actifs</span>
-            <span className="text-xl font-extrabold text-emerald-400 font-mono">{activeCount}</span>
+          <div className="p-3 rounded-xl bg-slate-950/80 border border-emerald-700/50">
+            <span className="text-[10px] uppercase font-bold text-emerald-300 flex items-center gap-1">
+              <Wifi className="w-3 h-3 text-emerald-400" />
+              <span>En Ligne Maintenant</span>
+            </span>
+            <span className="text-xl font-extrabold text-emerald-400 font-mono">{onlineNowCount}</span>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-950/80 border border-amber-700/50">
+            <span className="text-[10px] uppercase font-bold text-amber-300 flex items-center gap-1">
+              <WifiOff className="w-3 h-3 text-amber-400" />
+              <span>Connexion Perdue</span>
+            </span>
+            <span className="text-xl font-extrabold text-amber-400 font-mono">{lostConnCount}</span>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-950/80 border border-cyan-800/40">
+            <span className="text-[10px] uppercase font-bold text-cyan-400 block">Actifs Permanents</span>
+            <span className="text-xl font-extrabold text-cyan-400 font-mono">{activeCount}</span>
           </div>
           <div className="p-3 rounded-xl bg-slate-950/80 border border-rose-800/40">
-            <span className="text-[10px] uppercase font-bold text-rose-400 block">Bloqués / Révoqués</span>
+            <span className="text-[10px] uppercase font-bold text-rose-400 block">Désactivés / Révoqués</span>
             <span className="text-xl font-extrabold text-rose-400 font-mono">{blockedCount}</span>
-          </div>
-          <div className="p-3 rounded-xl bg-slate-950/80 border border-amber-800/40">
-            <span className="text-[10px] uppercase font-bold text-amber-400 block">Pass Démo Limités</span>
-            <span className="text-xl font-extrabold text-amber-400 font-mono">{demoCount}</span>
           </div>
         </div>
       </div>
@@ -718,8 +963,8 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
               />
             </div>
 
-            <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
-              {(['all', 'active', 'suspended', 'revoked'] as const).map(st => (
+            <div className="flex flex-wrap bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
+              {(['all', 'online', 'lost', 'active', 'suspended', 'revoked'] as const).map(st => (
                 <button
                   key={st}
                   type="button"
@@ -728,7 +973,17 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
                     statusFilter === st ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  {st === 'all' ? 'Tous' : st === 'active' ? 'Actifs' : st === 'suspended' ? 'Bloqués' : 'Révoqués'}
+                  {st === 'all'
+                    ? 'Tous'
+                    : st === 'online'
+                    ? `En ligne (${onlineNowCount})`
+                    : st === 'lost'
+                    ? `Perte connexion (${lostConnCount})`
+                    : st === 'active'
+                    ? 'Actifs'
+                    : st === 'suspended'
+                    ? 'Désactivés'
+                    : 'Révoqués'}
                 </button>
               ))}
             </div>
@@ -743,16 +998,21 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
           ) : (
             filteredSubscribers.map(sub => {
               const isBlocked = sub.status !== 'active';
+              const presence = getPresenceDetails(sub, nowTickMs);
               return (
                 <div
                   key={sub.id}
                   className={`p-4 rounded-xl border transition-all flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${
                     isBlocked
                       ? 'bg-rose-950/20 border-rose-800/50'
+                      : presence.status === 'online'
+                      ? 'bg-slate-950/90 border-emerald-700/50 hover:border-emerald-600'
+                      : presence.status === 'offline'
+                      ? 'bg-slate-950/80 border-amber-700/40 hover:border-amber-600/60'
                       : 'bg-slate-950/80 border-slate-800 hover:border-slate-700'
                   }`}
                 >
-                  <div className="space-y-1.5 min-w-0">
+                  <div className="space-y-2 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-bold text-sm text-white">{sub.clientName}</span>
                       <span
@@ -775,8 +1035,25 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
                             : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
                         }`}
                       >
-                        {sub.status === 'active' ? 'ACTIF' : sub.status === 'suspended' ? 'BLOQUÉ' : 'RÉVOQUÉ'}
+                        {sub.status === 'active'
+                          ? sub.tier === 'demo'
+                            ? 'ACTIF'
+                            : 'ACTIF PERMANENT'
+                          : sub.status === 'suspended'
+                          ? 'DÉSACTIVÉ'
+                          : 'RÉVOQUÉ'}
                       </span>
+
+                      {/* Real-time Connection Presence Pill */}
+                      {!isBlocked && (
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border flex items-center gap-1.5 ${presence.badgeClass}`}
+                        >
+                          <span className={`w-2 h-2 rounded-full inline-block ${presence.dotClass}`} />
+                          <span>{presence.label}</span>
+                        </span>
+                      )}
+
                       {sub.phone && (
                         <span className="text-[11px] font-mono text-slate-400">{sub.phone}</span>
                       )}
@@ -789,11 +1066,19 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
                       <span className="text-slate-400 font-mono">
                         HWID : <strong className="text-slate-200">{sub.boundHwid || 'Non lié (Libre 1er appareil)'}</strong>
                       </span>
-                      {sub.lastUsedAt && (
-                        <span className="text-slate-500">
-                          Dernière connexion : {new Date(sub.lastUsedAt).toLocaleString('fr-FR')}
-                        </span>
-                      )}
+                      <span
+                        className={`text-[11px] font-medium ${
+                          presence.status === 'online'
+                            ? 'text-emerald-300'
+                            : presence.status === 'unstable'
+                            ? 'text-amber-300'
+                            : presence.status === 'offline'
+                            ? 'text-rose-300'
+                            : 'text-slate-400'
+                        }`}
+                      >
+                        {presence.detail}
+                      </span>
                       {typeof sub.lastStabilityScore === 'number' && (
                         <span
                           className={`px-2 py-0.5 rounded font-mono font-bold border ${
@@ -808,6 +1093,9 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
                           {typeof sub.lastLatencyMs === 'number' ? ` · ${sub.lastLatencyMs}ms` : ''}
                           {sub.lastConnectionMode ? ` · ${sub.lastConnectionMode.toUpperCase()}` : ''}
                           {sub.wakeLockActive ? ' · Éveillé' : ''}
+                          {typeof sub.lastReconnectCount === 'number' && sub.lastReconnectCount > 0
+                            ? ` · ${sub.lastReconnectCount} reconnexion(s)`
+                            : ''}
                         </span>
                       )}
                     </div>

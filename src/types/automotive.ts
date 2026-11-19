@@ -93,8 +93,13 @@ export interface SmartechDzConfig {
 
 export type LicenseTier = 'admin' | 'master' | 'reprog' | 'standard' | 'tablette_chinois' | 'demo';
 
+export type ConnectionPresenceStatus = 'online' | 'unstable' | 'offline' | 'never_connected';
+
 export interface LicenseSession {
   key: string;
+  subscriberId?: string;
+  phone?: string;
+  createdAt?: string;
   clientName: string;
   hwid: string;
   tier: LicenseTier;
@@ -119,12 +124,24 @@ export interface SubscriberRecord {
   maxDemoMinutes?: number | null;
   demoExpiresAt?: string | null;
   createdAt: string;
+  updatedAt?: string;
   lastUsedAt?: string | null;
+  lastHeartbeatAt?: string | null;
   notes?: string;
   lastLatencyMs?: number | null;
   lastStabilityScore?: number | null;
   lastConnectionMode?: string | null;
+  lastReconnectCount?: number | null;
+  lastIp?: string | null;
   wakeLockActive?: boolean;
+  connectionStatus?: ConnectionPresenceStatus;
+}
+
+export interface RevokedSubscriptionTombstone {
+  id: string;
+  licenseKey: string;
+  revokedAt: string;
+  reason?: string;
 }
 
 export interface SecuritySettings {
@@ -133,6 +150,7 @@ export interface SecuritySettings {
   revokedAllDemosBefore?: string | null;
   blockedDemoKeys: string[];
   adminPasscodeUpdatedAt?: string;
+  revokedRecords?: RevokedSubscriptionTombstone[];
 }
 
 export interface ComfortState {
