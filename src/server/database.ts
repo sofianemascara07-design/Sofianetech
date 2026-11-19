@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { DiagnosticScanSession, DatabaseStats, ClientActivityRecord, SubscriberRecord, SecuritySettings, LicenseTier } from '../types/automotive';
+import { DiagnosticScanSession, DatabaseStats, ClientActivityRecord, SubscriberRecord, SecuritySettings, LicenseTier, SdrProspect, SdrProspectStatus, SdrProspectSpecialty } from '../types/automotive';
 
 const SERVER_HMAC_SECRET = process.env.SESSION_SECRET || process.env.ADMIN_PASSCODE || 'AUTOPRO-DZ-2026-HMAC-ROOT';
 
@@ -20,6 +20,57 @@ const DB_FILE = path.resolve(DATA_DIR, 'autopro_database.json');
 const ACTIVITIES_FILE = path.resolve(DATA_DIR, 'autopro_activities.json');
 const SUBSCRIBERS_FILE = path.resolve(DATA_DIR, 'autopro_subscribers.json');
 const SECURITY_FILE = path.resolve(DATA_DIR, 'autopro_security.json');
+const SDR_PROSPECTS_FILE = path.resolve(DATA_DIR, 'autopro_sdr_prospects.json');
+
+const INITIAL_SEEDED_SDR_PROSPECTS: SdrProspect[] = [
+  {
+    id: 'SDR-DZ-001',
+    garageName: 'Électro-Auto El Amir',
+    contactName: 'Karim B.',
+    phone: '0551448820',
+    wilaya: '29 - Mascara',
+    commune: 'Zone Industrielle Mascara',
+    specialty: 'multimedia_ecrans',
+    status: 'demo_envoyee',
+    interestedPack: 'tablette_chinois',
+    estimatedValueDzd: 35000,
+    nextFollowUpDate: '2026-11-21',
+    notes: 'Pose beaucoup d’écrans Geely Coolray / Jetour. Intéressé par la traduction FR/AR et pare-feu anti-brick.',
+    lastContactAt: '2026-11-18T14:30:00Z',
+    createdAt: '2026-11-18T14:30:00Z',
+  },
+  {
+    id: 'SDR-DZ-002',
+    garageName: 'Atelier Mécanique Es-Sénia',
+    contactName: 'Nabil',
+    phone: '0662301945',
+    wilaya: '31 - Oran',
+    commune: 'Es-Sénia',
+    specialty: 'mecanicien_diag',
+    status: 'a_relancer',
+    interestedPack: 'master',
+    estimatedValueDzd: 45000,
+    nextFollowUpDate: '2026-11-20',
+    notes: 'Reçoit beaucoup de Fiat Doblò Tafraoui & Chery Tiggo. Veut tester sur place.',
+    lastContactAt: '2026-11-17T10:15:00Z',
+    createdAt: '2026-11-17T10:15:00Z',
+  },
+  {
+    id: 'SDR-DZ-003',
+    garageName: 'Sidi Bel Abbès Reprog & Clés',
+    contactName: 'Yacine',
+    phone: '0770881234',
+    wilaya: '22 - Sidi Bel Abbès',
+    commune: 'Boulevard Zabana',
+    specialty: 'chiptuner_immo',
+    status: 'abonne',
+    interestedPack: 'reprog',
+    estimatedValueDzd: 45000,
+    notes: 'Converti après démo Stage 1 & vérification anti-hallucination.',
+    lastContactAt: '2026-11-16T16:00:00Z',
+    createdAt: '2026-11-15T11:00:00Z',
+  },
+];
 
 const DEFAULT_SECURITY_SETTINGS: SecuritySettings & { adminPasscode: string } = {
   demoLinksEnabled: false,
@@ -309,6 +360,7 @@ export class AutoProDatabase {
   private scans: Map<string, DiagnosticScanSession> = new Map();
   private activities: ClientActivityRecord[] = [];
   private subscribers: SubscriberRecord[] = [];
+  private sdrProspects: SdrProspect[] = [];
   private securitySettings: SecuritySettings & { adminPasscode: string } = { ...DEFAULT_SECURITY_SETTINGS };
   private vinIndex: Map<string, string[]> = new Map(); // VIN -> array of scan IDs
   private codeIndex: Map<string, string[]> = new Map(); // DTC code -> array of scan IDs
@@ -377,6 +429,24 @@ export class AutoProDatabase {
         this.saveSubscribersToFile();
       }
 
+      if (fs.existsSync(SDR_PROSPECTS_FILE)) {
+        try {
+          const rawSdr = JSON.parse(fs.readFileSync(SDR_PROSPECTS_FILE, 'utf-8'));
+          if (Array.isArray(rawSdr)) {
+            this.sdrProspects = rawSdr;
+          } else {
+            this.sdrProspects = [...INITIAL_SEEDED_SDR_PROSPECTS];
+            this.saveSdrProspectsToFile();
+          }
+        } catch {
+          this.sdrProspects = [...INITIAL_SEEDED_SDR_PROSPECTS];
+          this.saveSdrProspectsToFile();
+        }
+      } else {
+        this.sdrProspects = [...INITIAL_SEEDED_SDR_PROSPECTS];
+        this.saveSdrProspectsToFile();
+      }
+
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed: DiagnosticScanSession[] = JSON.parse(raw);
@@ -396,6 +466,7 @@ export class AutoProDatabase {
       this.loadData(INITIAL_SEEDED_SCANS);
       this.activities = [...INITIAL_SEEDED_ACTIVITIES];
       this.subscribers = [...INITIAL_SEEDED_SUBSCRIBERS];
+      this.sdrProspects = [...INITIAL_SEEDED_SDR_PROSPECTS];
       this.isInitialized = true;
     }
   }
@@ -463,6 +534,86 @@ export class AutoProDatabase {
     } catch (err) {
       console.error('[AutoProDatabase] Save security error:', err);
     }
+  }
+
+  private saveSdrProspectsToFile() {
+    try {
+      const tempFile = `${SDR_PROSPECTS_FILE}.tmp`;
+      fs.writeFileSync(tempFile, JSON.stringify(this.sdrProspects, null, 2), 'utf-8');
+      fs.renameSync(tempFile, SDR_PROSPECTS_FILE);
+    } catch (err) {
+      console.error('[AutoProDatabase] Save SDR prospects error:', err);
+    }
+  }
+
+  // =========================================================
+  // SUIVI SDR PROSPECTS (CRM TERRAIN MARCHÉ ALGÉRIEN)
+  // =========================================================
+  public getSdrProspects(): SdrProspect[] {
+    return [...this.sdrProspects].sort(
+      (a, b) => new Date(b.lastContactAt).getTime() - new Date(a.lastContactAt).getTime()
+    );
+  }
+
+  public addSdrProspect(params: {
+    garageName: string;
+    contactName?: string;
+    phone: string;
+    wilaya: string;
+    commune?: string;
+    specialty?: SdrProspectSpecialty;
+    status?: SdrProspectStatus;
+    interestedPack?: 'master' | 'reprog' | 'tablette_chinois' | 'standard';
+    estimatedValueDzd?: number;
+    nextFollowUpDate?: string;
+    notes?: string;
+  }): SdrProspect {
+    const now = new Date().toISOString();
+    const record: SdrProspect = {
+      id: `SDR-DZ-${Math.floor(100 + Math.random() * 900)}-${Date.now().toString(36).slice(-3).toUpperCase()}`,
+      garageName: params.garageName.trim(),
+      contactName: params.contactName?.trim() || '',
+      phone: params.phone.trim(),
+      wilaya: params.wilaya.trim() || '29 - Mascara',
+      commune: params.commune?.trim() || '',
+      specialty: params.specialty || 'electricien_auto',
+      status: params.status || 'visite_fait',
+      interestedPack: params.interestedPack || 'master',
+      estimatedValueDzd: Number.isFinite(Number(params.estimatedValueDzd)) ? Math.max(0, Number(params.estimatedValueDzd)) : 45000,
+      nextFollowUpDate: params.nextFollowUpDate?.trim() || '',
+      notes: params.notes?.trim() || '',
+      lastContactAt: now,
+      createdAt: now,
+    };
+    this.sdrProspects.unshift(record);
+    this.saveSdrProspectsToFile();
+    return record;
+  }
+
+  public updateSdrProspect(
+    id: string,
+    patch: Partial<Omit<SdrProspect, 'id' | 'createdAt'>>
+  ): SdrProspect | null {
+    const idx = this.sdrProspects.findIndex((p) => p.id === id);
+    if (idx === -1) return null;
+    const updated: SdrProspect = {
+      ...this.sdrProspects[idx],
+      ...patch,
+      lastContactAt: new Date().toISOString(),
+    };
+    this.sdrProspects[idx] = updated;
+    this.saveSdrProspectsToFile();
+    return updated;
+  }
+
+  public deleteSdrProspect(id: string): boolean {
+    const before = this.sdrProspects.length;
+    this.sdrProspects = this.sdrProspects.filter((p) => p.id !== id);
+    if (this.sdrProspects.length !== before) {
+      this.saveSdrProspectsToFile();
+      return true;
+    }
+    return false;
   }
 
   // =========================================================

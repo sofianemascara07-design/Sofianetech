@@ -34,12 +34,14 @@ import {
   MapPin,
   Globe,
   FileDown,
-  Key
+  Key,
+  WifiOff
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { DiagnosticScanSession, DatabaseStats, Vehicle, ScanDtcItem, ClientActivityRecord } from '../types/automotive';
 import { VEHICLE_PRESETS } from '../data/mockVehicles';
 import { apiFetch } from '../utils/apiBridge';
+import { formatCacheTimestampFr, loadHistoryCache, saveHistoryCache } from '../utils/diagnosticCache';
 
 interface DiagnosticHistoryProps {
   selectedVehicle?: Vehicle;
@@ -87,6 +89,10 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
     technicianNotes: 'Contrôle périodique atelier.',
   });
 
+  // Offline Cache state
+  const [isCacheMode, setIsCacheMode] = useState(false);
+  const [cacheUpdatedAt, setCacheUpdatedAt] = useState<string | null>(null);
+
   // Action status message
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -108,18 +114,53 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
       const statsData = await statsRes.json();
       const actData = actRes.ok ? await actRes.json() : { activities: [] };
 
-      setScans(scansData.scans || []);
-      setDbStats(statsData.stats || null);
-      setActivities(actData.activities || []);
+      const nextScans = scansData.scans || [];
+      const nextStats = statsData.stats || null;
+      const nextActs = actData.activities || [];
+
+      setScans(nextScans);
+      setDbStats(nextStats);
+      setActivities(nextActs);
+      setIsCacheMode(false);
+      const saved = saveHistoryCache({
+        scans: nextScans,
+        stats: nextStats,
+        activities: nextActs,
+      });
+      setCacheUpdatedAt(saved.updatedAt);
     } catch (err: any) {
-      setError(err.message || 'Impossible de se connecter à la base de données SaaS');
+      const cached = loadHistoryCache();
+      if (cached && ((cached.scans && cached.scans.length > 0) || (cached.activities && cached.activities.length > 0))) {
+        setScans(cached.scans || []);
+        setDbStats(cached.stats || null);
+        setActivities(cached.activities || []);
+        setIsCacheMode(true);
+        setCacheUpdatedAt(cached.updatedAt);
+        setError(null);
+      } else {
+        setError(err.message || 'Impossible de se connecter à la base de données SaaS');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    const cached = loadHistoryCache();
+    if (cached && ((cached.scans && cached.scans.length > 0) || (cached.activities && cached.activities.length > 0))) {
+      setScans(cached.scans || []);
+      setDbStats(cached.stats || null);
+      setActivities(cached.activities || []);
+      setCacheUpdatedAt(cached.updatedAt);
+      setLoading(false);
+    }
     fetchScansAndStats();
+
+    const handleOnline = () => {
+      fetchScansAndStats();
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
   }, []);
 
   const showToast = (msg: string) => {
@@ -601,6 +642,38 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
           <div className="mt-3 p-2.5 rounded-lg bg-emerald-950/60 border border-emerald-700/60 text-xs text-emerald-300 flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>{optimizeMessage}</span>
+          </div>
+        )}
+
+        {isCacheMode && (
+          <div className="mt-3 p-3 rounded-xl bg-amber-950/50 border border-amber-500/60 text-xs text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2">
+              <WifiOff className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                <strong>Mode Cache Hors-Ligne :</strong> Connexion serveur temporairement perdue. Affichage des dernières données de diagnostic consultées (synchronisées {formatCacheTimestampFr(cacheUpdatedAt)}).
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={fetchScansAndStats}
+              className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Réessayer Sync</span>
+            </button>
+          </div>
+        )}
+
+        {error && !isCacheMode && (
+          <div className="mt-3 p-3 rounded-xl bg-rose-950/50 border border-rose-700/60 text-xs text-rose-200 flex items-center justify-between gap-2">
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={fetchScansAndStats}
+              className="px-3 py-1 rounded-lg bg-rose-500/20 border border-rose-500/50 text-rose-200 font-bold cursor-pointer"
+            >
+              Réessayer
+            </button>
           </div>
         )}
 

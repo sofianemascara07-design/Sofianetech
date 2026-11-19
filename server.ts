@@ -1606,6 +1606,71 @@ app.patch('/api/admin/security', requireAdmin, (req, res) => {
 });
 
 // ==========================================
+// SUIVI SDR PROSPECTS (CRM TERRAIN MARCHÉ ALGÉRIEN)
+// ==========================================
+app.get('/api/sdr/prospects', requireAdmin, (_req, res) => {
+  return res.json({
+    success: true,
+    prospects: saasDatabase.getSdrProspects(),
+  });
+});
+
+app.post('/api/sdr/prospects', requireAdmin, (req, res) => {
+  const {
+    garageName,
+    contactName,
+    phone,
+    wilaya,
+    commune,
+    specialty,
+    status,
+    interestedPack,
+    estimatedValueDzd,
+    nextFollowUpDate,
+    notes,
+  } = req.body || {};
+
+  if (!garageName || typeof garageName !== 'string' || !garageName.trim()) {
+    return res.status(400).json({ success: false, error: 'Le nom du garage ou atelier est requis.' });
+  }
+  if (!phone || typeof phone !== 'string' || !phone.trim()) {
+    return res.status(400).json({ success: false, error: 'Le numéro de téléphone / WhatsApp est requis.' });
+  }
+
+  const created = saasDatabase.addSdrProspect({
+    garageName,
+    contactName,
+    phone,
+    wilaya: typeof wilaya === 'string' ? wilaya : '29 - Mascara',
+    commune,
+    specialty,
+    status,
+    interestedPack,
+    estimatedValueDzd,
+    nextFollowUpDate,
+    notes,
+  });
+
+  return res.status(201).json({ success: true, prospect: created });
+});
+
+app.patch('/api/sdr/prospects/:id', requireAdmin, (req, res) => {
+  const updated = saasDatabase.updateSdrProspect(req.params.id, req.body || {});
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Prospect introuvable.' });
+  }
+  return res.json({ success: true, prospect: updated });
+});
+
+app.delete('/api/sdr/prospects/:id', requireAdmin, (req, res) => {
+  const ok = saasDatabase.deleteSdrProspect(req.params.id);
+  if (!ok) {
+    return res.status(404).json({ success: false, error: 'Prospect introuvable.' });
+  }
+  return res.json({ success: true });
+});
+
+// ==========================================
 // SAAS HIGH-PERFORMANCE DATABASE & HISTORY APIS
 // ==========================================
 

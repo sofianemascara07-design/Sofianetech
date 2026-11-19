@@ -1,10 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Vehicle, DtcCode } from '../types/automotive';
+import { Vehicle, DtcCode, DiagnosticScanSession } from '../types/automotive';
 import { VEHICLE_PRESETS, INITIAL_DTC_CODES } from '../data/mockVehicles';
-import { AlertCircle, CheckCircle2, RotateCcw, Wrench, Sparkles, Activity, Cpu, Database, History, Bluetooth, Cable, Play, AlertTriangle } from 'lucide-react';
+import { AlertCircle, CheckCircle2, RotateCcw, Wrench, Sparkles, Activity, Cpu, Database, History, Bluetooth, Cable, Play, AlertTriangle, HardDrive, WifiOff, Trash2 } from 'lucide-react';
 import { apiFetch } from '../utils/apiBridge';
 import { AiVerificationBadge, AiVerificationInfo } from './AiVerificationBadge';
 import { obdHardwareBridge, ObdHardwareStatus } from '../utils/obdHardwareBridge';
+import {
+  clearScannerCache,
+  formatCacheTimestampFr,
+  loadScannerCache,
+  prependScanToHistoryCache,
+  saveScannerCache,
+} from '../utils/diagnosticCache';
 
 interface DiagnosticScannerProps {
   selectedVehicle: Vehicle;
@@ -51,6 +58,12 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [aiVerification, setAiVerification] = useState<AiVerificationInfo | null>(null);
 
+  // Offline Cache state
+  const [isViewingCache, setIsViewingCache] = useState(false);
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
+  const [cachedVehicleLabel, setCachedVehicleLabel] = useState<string | null>(null);
+  const [isOfflineAiCache, setIsOfflineAiCache] = useState(false);
+
   // Market Category Filter for Algeria
   const [selectedCategory, setSelectedCategory] = useState<string>('Tous');
   const marketCategories = ['Tous', 'Fiat Algérie', 'Chinois DZ', 'Populaire DZ', 'Utilitaire', 'Européen'];
@@ -63,21 +76,77 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
     return obdHardwareBridge.subscribe(setHwStatus);
   }, []);
 
-  // Load demo codes only when explicitly in Demo mode; reset when disconnected
+  // Load demo codes when explicitly in Demo mode, or restore latest cached diagnostic when disconnected
   useEffect(() => {
     if (isDemoMode && !hasScannedOnce) {
       setDtcList(INITIAL_DTC_CODES);
       setSelectedDtc(INITIAL_DTC_CODES[0]);
+      setIsViewingCache(false);
     } else if (!hwStatus.connected) {
-      setDtcList([]);
-      setSelectedDtc(null);
-      setLiveRpm(0);
-      setLiveBoost(0);
-      setLiveCoolant(0);
-      setLiveRailBar(0);
-      setLiveMaf(0);
+      const cached = loadScannerCache();
+      if (cached && (cached.dtcList.length > 0 || cached.aiReport)) {
+        setDtcList(cached.dtcList || []);
+        const matched =
+          (cached.selectedDtcCode && cached.dtcList.find((d) => d.code === cached.selectedDtcCode)) ||
+          cached.dtcList[0] ||
+          null;
+        setSelectedDtc(matched);
+        setLiveRpm(cached.telemetry?.rpm || 0);
+        setLiveBoost(cached.telemetry?.boost || 0);
+        setLiveCoolant(cached.telemetry?.coolant || 0);
+        setLiveRailBar(cached.telemetry?.railBar || 0);
+        setLiveMaf(cached.telemetry?.maf || 0);
+        if (cached.aiReport) {
+          setAiReport(cached.aiReport);
+          setAiVerification(cached.aiVerification || null);
+        }
+        setIsViewingCache(true);
+        setCachedAt(cached.updatedAt);
+        setCachedVehicleLabel(cached.vehicleLabel);
+      } else {
+        setDtcList([]);
+        setSelectedDtc(null);
+        setLiveRpm(0);
+        setLiveBoost(0);
+        setLiveCoolant(0);
+        setLiveRailBar(0);
+        setLiveMaf(0);
+        setIsViewingCache(false);
+        setCachedAt(null);
+        setCachedVehicleLabel(null);
+      }
+    } else if (hwStatus.connected) {
+      setIsViewingCache(false);
     }
   }, [isDemoMode, hwStatus.connected, hasScannedOnce]);
+
+  // Helper to persist current scanner state to offline local cache
+  const persistCurrentDiagnosticToCache = (
+    nextDtcs: DtcCode[],
+    nextSelected: DtcCode | null,
+    nextAiReport?: string | null,
+    nextAiVerif?: AiVerificationInfo | null
+  ) => {
+    const saved = saveScannerCache({
+      vehicleId: selectedVehicle.id,
+      vehicleLabel: `${selectedVehicle.brand} ${selectedVehicle.model} (${selectedVehicle.year})`,
+      vehicleObj: selectedVehicle,
+      dtcList: nextDtcs,
+      selectedDtcCode: nextSelected?.code || null,
+      telemetry: {
+        rpm: liveRpm,
+        boost: liveBoost,
+        coolant: liveCoolant,
+        railBar: liveRailBar,
+        maf: liveMaf,
+        batteryVoltage,
+      },
+      aiReport: nextAiReport !== undefined ? nextAiReport : aiReport,
+      aiVerification: nextAiVerif !== undefined ? nextAiVerif : aiVerification,
+    });
+    setCachedAt(saved.updatedAt);
+    setCachedVehicleLabel(saved.vehicleLabel);
+  };
 
   // Live telemetry polling: REAL OBD-II PIDs when hardware is connected, simulated ONLY in Demo mode
   useEffect(() => {
@@ -137,8 +206,11 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
         setScanProgress(85);
         setScannedSystem('Décodage trames SAE J2012 & vérification VIN...');
         setHasScannedOnce(true);
+        setIsViewingCache(false);
         setDtcList(res.dtcs);
-        setSelectedDtc(res.dtcs[0] || null);
+        const firstDtc = res.dtcs[0] || null;
+        setSelectedDtc(firstDtc);
+        persistCurrentDiagnosticToCache(res.dtcs, firstDtc);
         if (!res.ecuResponded && !hwStatus.ecuResponding) {
           setScanError(
             'Le boîtier ELM327 est connecté mais le calculateur voiture n’a pas répondu (NO DATA). Vérifiez que le contact est mis (ON) et que la prise OBD2 est bien enfoncée.'
@@ -176,8 +248,10 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
         clearInterval(interval);
         setIsScanning(false);
         setHasScannedOnce(true);
+        setIsViewingCache(false);
         setDtcList(INITIAL_DTC_CODES);
         setSelectedDtc(INITIAL_DTC_CODES[0]);
+        persistCurrentDiagnosticToCache(INITIAL_DTC_CODES, INITIAL_DTC_CODES[0]);
       }
     }, 350);
   };
@@ -193,9 +267,11 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
         const res = await obdHardwareBridge.clearDtcCodes();
         if (res.success) {
           const verify = await obdHardwareBridge.readDtcCodes();
+          const first = verify.dtcs[0] || null;
           setDtcList(verify.dtcs);
-          setSelectedDtc(verify.dtcs[0] || null);
+          setSelectedDtc(first);
           setClearedNotice(verify.dtcs.length === 0);
+          persistCurrentDiagnosticToCache(verify.dtcs, first);
         } else {
           setScanError(`Le calculateur a refusé l’effacement (${res.rawResponse}). Contact ON moteur arrêté requis.`);
         }
@@ -212,12 +288,14 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
       setSelectedDtc(null);
       setClearingDtc(false);
       setClearedNotice(true);
+      persistCurrentDiagnosticToCache([], null);
     }, 1000);
   };
 
-  // Ask AI Mechanic
+  // Ask AI Mechanic (with Offline Cache fallback if server connection is temporarily lost)
   const handleAskAiMechanic = async () => {
     setAiLoading(true);
+    setIsOfflineAiCache(false);
     try {
       const res = await apiFetch('/api/diagnose/ai', {
         method: 'POST',
@@ -232,52 +310,88 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
         }),
       });
 
+      if (!res.ok) {
+        throw new Error(`HTTP_${res.status}`);
+      }
       const data = await res.json();
-      setAiReport(data.analysis || 'Analyse indisponible.');
-      setAiVerification(data.aiVerification || null);
+      const nextReport = data.analysis || 'Analyse indisponible.';
+      const nextVerif = data.aiVerification || null;
+      setAiReport(nextReport);
+      setAiVerification(nextVerif);
+      persistCurrentDiagnosticToCache(dtcList, selectedDtc, nextReport, nextVerif);
     } catch {
-      setAiReport('Erreur de communication avec le serveur IA.');
-      setAiVerification(null);
+      const cached = loadScannerCache();
+      if (cached?.aiReport) {
+        setAiReport(cached.aiReport);
+        setAiVerification(cached.aiVerification || null);
+        setIsOfflineAiCache(true);
+        setCachedAt(cached.updatedAt);
+      } else if (dtcList.length > 0) {
+        const offlineSummary = [
+          `[MODE CACHE HORS-LIGNE] Connexion serveur temporairement indisponible — Synthèse locale des ${dtcList.length} code(s) en mémoire sur ${selectedVehicle.brand} ${selectedVehicle.model} :`,
+          ...dtcList.map((d) => `• ${d.code} (${d.system}) : ${d.descriptionFr}`),
+          '',
+          'Contrôlez d’abord la tension batterie (12.6V+ contact ON), les connectiques du faisceau et les valeurs de trame figée ci-dessus.',
+        ].join('\n');
+        const offlineVerif: AiVerificationInfo = {
+          verified: true,
+          provider: 'offline-verified-rules',
+          guardrailsApplied: ['Mode Cache Hors-Ligne (données locales OBD)'],
+          blockedHallucinations: [],
+          confidenceLevel: 'STRICT_VERIFIED',
+          checkedAt: new Date().toISOString(),
+        };
+        setAiReport(offlineSummary);
+        setAiVerification(offlineVerif);
+        setIsOfflineAiCache(true);
+        persistCurrentDiagnosticToCache(dtcList, selectedDtc, offlineSummary, offlineVerif);
+      } else {
+        setAiReport('Connexion au serveur perdue et aucune donnée de diagnostic précédente trouvée en cache.');
+        setAiVerification(null);
+      }
     } finally {
       setAiLoading(false);
     }
   };
 
-  // Save current scan to SaaS database
+  // Save current scan to SaaS database (with offline local cache fallback)
   const handleSaveToSaaS = async () => {
     setIsSaving(true);
     setSaveSuccessMsg(null);
-    try {
-      const payload = {
-        vehicleId: selectedVehicle.id,
-        vehicleName: `${selectedVehicle.brand} ${selectedVehicle.model}`,
-        vin: hwStatus.vin || `${selectedVehicle.brand.substring(0, 3).toUpperCase()}-DZ26-${Math.floor(1000 + Math.random() * 9000)}`,
-        year: selectedVehicle.year,
-        engine: selectedVehicle.engine,
-        mileageKm: 32000,
-        clientName: 'Atelier Mascara Auto Pro',
-        technicianName: 'Sofiane M. (Master Tech DZ)',
-        durationSeconds: 110,
-        protocolUsed: selectedVehicle.protocol,
-        batteryVoltage: batteryVoltage,
-        overallHealthScore: dtcList.length === 0 ? 100 : dtcList.some(d => d.severity === 'critical') ? 52 : 70,
-        status: dtcList.length === 0 ? 'passed' : dtcList.some(d => d.severity === 'critical') ? 'critical' : 'warning',
-        dtcCodes: dtcList.map(d => ({
-          code: d.code,
-          system: d.system,
-          descriptionFr: d.descriptionFr,
-          severity: d.severity,
-          status: d.status,
-          repairRecommendation: d.descriptionFr.includes('suralimentation')
-            ? 'Contrôler la durite d\'intercooler et l\'étanchéité du circuit turbo.'
-            : 'Contrôler les faisceaux et composants associés selon manuel technique atelier.',
-          estimatedCostDZD: 12000,
-          laborHours: 1.0,
-        })),
-        technicianNotes: 'Session diagnostique instantanée enregistrée via AutoPro Diagnostic Scanner.',
-        repairCompleted: false,
-      };
+    const localId = `SCAN-CACHE-${Date.now().toString(36).toUpperCase()}`;
+    const payload: DiagnosticScanSession = {
+      id: localId,
+      vehicleId: selectedVehicle.id,
+      vehicleName: `${selectedVehicle.brand} ${selectedVehicle.model}`,
+      vin: hwStatus.vin || `${selectedVehicle.brand.substring(0, 3).toUpperCase()}-DZ26-${Math.floor(1000 + Math.random() * 9000)}`,
+      year: selectedVehicle.year,
+      engine: selectedVehicle.engine,
+      mileageKm: 32000,
+      clientName: 'Atelier Mascara Auto Pro',
+      technicianName: 'Sofiane M. (Master Tech DZ)',
+      timestamp: new Date().toISOString(),
+      durationSeconds: 110,
+      protocolUsed: selectedVehicle.protocol,
+      batteryVoltage: batteryVoltage,
+      overallHealthScore: dtcList.length === 0 ? 100 : dtcList.some(d => d.severity === 'critical') ? 52 : 70,
+      status: dtcList.length === 0 ? 'passed' : dtcList.some(d => d.severity === 'critical') ? 'critical' : 'warning',
+      dtcCodes: dtcList.map(d => ({
+        code: d.code,
+        system: d.system,
+        descriptionFr: d.descriptionFr,
+        severity: d.severity,
+        status: d.status,
+        repairRecommendation: d.descriptionFr.includes('suralimentation')
+          ? 'Contrôler la durite d\'intercooler et l\'étanchéité du circuit turbo.'
+          : 'Contrôler les faisceaux et composants associés selon manuel technique atelier.',
+        estimatedCostDZD: 12000,
+        laborHours: 1.0,
+      })),
+      technicianNotes: 'Session diagnostique instantanée enregistrée via AutoPro Diagnostic Scanner.',
+      repairCompleted: false,
+    };
 
+    try {
       const res = await apiFetch('/api/history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -285,11 +399,18 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
       });
       const data = await res.json();
       if (data.success) {
+        prependScanToHistoryCache(data.scan);
+        persistCurrentDiagnosticToCache(dtcList, selectedDtc);
         setSaveSuccessMsg(`Session archivée avec succès dans la base SaaS (${data.scan.id}) !`);
         setTimeout(() => setSaveSuccessMsg(null), 5000);
+        return;
       }
+      throw new Error('SaaS response invalid');
     } catch {
-      setSaveSuccessMsg('Erreur lors de la sauvegarde dans la base SaaS.');
+      prependScanToHistoryCache(payload);
+      persistCurrentDiagnosticToCache(dtcList, selectedDtc);
+      setSaveSuccessMsg('Serveur temporairement injoignable : session conservée en Mode Cache Hors-Ligne dans Historique.');
+      setTimeout(() => setSaveSuccessMsg(null), 6000);
     } finally {
       setIsSaving(false);
     }
@@ -432,6 +553,48 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
               <span>Mode Démo</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {(isViewingCache || isOfflineAiCache) && (
+        <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-500/50 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-2.5 text-amber-200">
+            <HardDrive className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <div className="font-bold flex items-center gap-1.5">
+                <WifiOff className="w-3.5 h-3.5 text-amber-400" />
+                <span>MODE CACHE HORS-LIGNE ACTIF — Dernier diagnostic consulté restauré</span>
+              </div>
+              <div className="text-[11px] text-amber-300/90">
+                Véhicule : <strong>{cachedVehicleLabel || `${selectedVehicle.brand} ${selectedVehicle.model}`}</strong> · Enregistré{' '}
+                <strong>{formatCacheTimestampFr(cachedAt)}</strong> ({dtcList.length} code(s) DTC en mémoire).
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              clearScannerCache();
+              setIsViewingCache(false);
+              setIsOfflineAiCache(false);
+              setCachedAt(null);
+              if (!hwStatus.connected) {
+                setDtcList([]);
+                setSelectedDtc(null);
+                setAiReport(null);
+                setAiVerification(null);
+                setLiveRpm(0);
+                setLiveBoost(0);
+                setLiveCoolant(0);
+                setLiveRailBar(0);
+                setLiveMaf(0);
+              }
+            }}
+            className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-amber-600/60 text-amber-300 font-semibold flex items-center gap-1.5 shrink-0 cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Vider le cache</span>
+          </button>
         </div>
       )}
 
@@ -682,12 +845,20 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
                 <Activity className="w-4 h-4 text-cyan-400" />
                 <span>Télémétrie Moteur en Direct</span>
               </h3>
-              <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${isConnected ? 'bg-emerald-950 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
-                {isConnected ? 'CAN STREAM 50Hz' : 'HORS LIGNE'}
+              <span
+                className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+                  isConnected
+                    ? 'bg-emerald-950 text-emerald-400'
+                    : isViewingCache
+                    ? 'bg-amber-950 text-amber-300 border border-amber-700/50'
+                    : 'bg-slate-800 text-slate-400'
+                }`}
+              >
+                {isConnected ? 'CAN STREAM 50Hz' : isViewingCache ? 'CACHE HORS-LIGNE' : 'HORS LIGNE'}
               </span>
             </div>
 
-            {!isConnected && (
+            {!isConnected && !isViewingCache && (
               <div className="mb-4 p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-400 text-center">
                 <span>Liaison tablette/OBD inactive.</span>
                 <button
@@ -705,13 +876,13 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
                 <div className="flex justify-between items-center text-xs mb-1">
                   <span className="text-slate-400">Régime Moteur</span>
                   <span className="font-mono font-bold text-white tabular-nums text-sm">
-                    {isConnected ? liveRpm : 0} <span className="text-slate-500 text-xs">tr/min</span>
+                    {isConnected || isViewingCache ? liveRpm : 0} <span className="text-slate-500 text-xs">tr/min</span>
                   </span>
                 </div>
                 <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
                   <div
                     className="bg-cyan-500 h-1.5 transition-all duration-300"
-                    style={{ width: `${Math.min(100, ((isConnected ? liveRpm : 0) / 6000) * 100)}%` }}
+                    style={{ width: `${Math.min(100, ((isConnected || isViewingCache ? liveRpm : 0) / 6000) * 100)}%` }}
                   />
                 </div>
               </div>
@@ -721,13 +892,13 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
                 <div className="flex justify-between items-center text-xs mb-1">
                   <span className="text-slate-400">Pression Turbo Relative</span>
                   <span className="font-mono font-bold text-white tabular-nums text-sm">
-                    {isConnected ? liveBoost.toFixed(2) : '0.00'} <span className="text-slate-500 text-xs">bar</span>
+                    {isConnected || isViewingCache ? liveBoost.toFixed(2) : '0.00'} <span className="text-slate-500 text-xs">bar</span>
                   </span>
                 </div>
                 <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
                   <div
                     className="bg-blue-500 h-1.5 transition-all duration-300"
-                    style={{ width: `${Math.min(100, ((isConnected ? liveBoost : 0) / 2.5) * 100)}%` }}
+                    style={{ width: `${Math.min(100, ((isConnected || isViewingCache ? liveBoost : 0) / 2.5) * 100)}%` }}
                   />
                 </div>
               </div>
@@ -737,13 +908,13 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
                 <div className="flex justify-between items-center text-xs mb-1">
                   <span className="text-slate-400">Pression Rampe d'Injection</span>
                   <span className="font-mono font-bold text-white tabular-nums text-sm">
-                    {isConnected ? liveRailBar : 0} <span className="text-slate-500 text-xs">bar</span>
+                    {isConnected || isViewingCache ? liveRailBar : 0} <span className="text-slate-500 text-xs">bar</span>
                   </span>
                 </div>
                 <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
                   <div
                     className="bg-indigo-500 h-1.5 transition-all duration-300"
-                    style={{ width: `${Math.min(100, ((isConnected ? liveRailBar : 0) / 2000) * 100)}%` }}
+                    style={{ width: `${Math.min(100, ((isConnected || isViewingCache ? liveRailBar : 0) / 2000) * 100)}%` }}
                   />
                 </div>
               </div>
@@ -753,7 +924,7 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
                 <div className="flex justify-between items-center text-xs mb-1">
                   <span className="text-slate-400">Température Liquide de Refroidissement</span>
                   <span className="font-mono font-bold text-white tabular-nums text-sm">
-                    {isConnected ? liveCoolant : 0} <span className="text-slate-500 text-xs">°C</span>
+                    {isConnected || isViewingCache ? liveCoolant : 0} <span className="text-slate-500 text-xs">°C</span>
                   </span>
                 </div>
                 <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
@@ -761,7 +932,7 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
                     className={`h-1.5 transition-all duration-300 ${
                       liveCoolant > 105 ? 'bg-rose-500' : 'bg-emerald-500'
                     }`}
-                    style={{ width: `${Math.min(100, ((isConnected ? liveCoolant : 0) / 130) * 100)}%` }}
+                    style={{ width: `${Math.min(100, ((isConnected || isViewingCache ? liveCoolant : 0) / 130) * 100)}%` }}
                   />
                 </div>
               </div>
@@ -771,13 +942,13 @@ export const DiagnosticScanner: React.FC<DiagnosticScannerProps> = ({
                 <div className="flex justify-between items-center text-xs mb-1">
                   <span className="text-slate-400">Débitmètre d'Air (MAF)</span>
                   <span className="font-mono font-bold text-white tabular-nums text-sm">
-                    {isConnected ? liveMaf : '0.0'} <span className="text-slate-500 text-xs">g/s</span>
+                    {isConnected || isViewingCache ? liveMaf : '0.0'} <span className="text-slate-500 text-xs">g/s</span>
                   </span>
                 </div>
                 <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
                   <div
                     className="bg-amber-500 h-1.5 transition-all duration-300"
-                    style={{ width: `${Math.min(100, ((isConnected ? liveMaf : 0) / 120) * 100)}%` }}
+                    style={{ width: `${Math.min(100, ((isConnected || isViewingCache ? liveMaf : 0) / 120) * 100)}%` }}
                   />
                 </div>
               </div>

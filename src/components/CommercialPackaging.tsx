@@ -36,12 +36,14 @@ import {
   Camera,
   Server,
   Terminal,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Users
 } from 'lucide-react';
 import { Vehicle } from '../types/automotive';
 import { VEHICLE_PRESETS } from '../data/mockVehicles';
 import { getBackendBaseUrl, setBackendBaseUrl } from '../utils/apiBridge';
 import { downloadCommercialPacksPdf, downloadCommercialPacksExcel } from '../utils/commercialCatalogExport';
+import { SdrProspectsTracker } from './SdrProspectsTracker';
 
 interface CommercialPackagingProps {
   appUrl: string;
@@ -56,7 +58,7 @@ export const CommercialPackaging: React.FC<CommercialPackagingProps> = ({
   onSelectVehicle,
   isAdmin = false,
 }) => {
-  const [activeSection, setActiveSection] = useState<'share' | 'simulator' | 'feasibility' | 'licenses'>('simulator');
+  const [activeSection, setActiveSection] = useState<'share' | 'simulator' | 'feasibility' | 'sdr' | 'licenses'>('simulator');
   const [workshopName, setWorkshopName] = useState('Garage Auto Tech Mascara');
   const [hwid, setHwid] = useState('HWID-DZ-9882-1270-1770-WIN11');
   const [licenseType, setLicenseType] = useState<'master' | 'reprog' | 'standard'>('master');
@@ -504,6 +506,18 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
         >
           <Share2 className="w-4 h-4" />
           <span>Démos Guidées &amp; WhatsApp</span>
+        </button>
+
+        <button
+          onClick={() => setActiveSection('sdr')}
+          className={`px-4 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+            activeSection === 'sdr'
+              ? 'bg-indigo-500 text-white shadow-md ring-2 ring-indigo-400/40'
+              : 'bg-slate-900 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>Suivi SDR Prospects</span>
         </button>
 
         {isAdmin && (
@@ -1255,6 +1269,9 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
           </div>
         </div>
       )}
+
+      {/* SECTION 3B: SUIVI SDR PROSPECTS (CRM PORTE-A-PORTE ALGERIE) */}
+      {activeSection === 'sdr' && <SdrProspectsTracker sharedAppUrl={sharedAppUrl} />}
 
       {/* SECTION 4: LICENSES & WINDOWS PACKAGES (ADMIN ONLY) */}
       {isAdmin && activeSection === 'licenses' && (

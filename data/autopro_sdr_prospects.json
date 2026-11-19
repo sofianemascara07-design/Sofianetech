@@ -1,0 +1,49 @@
+[
+  {
+    "id": "SDR-DZ-001",
+    "garageName": "Électro-Auto El Amir",
+    "contactName": "Karim B.",
+    "phone": "0551448820",
+    "wilaya": "29 - Mascara",
+    "commune": "Zone Industrielle Mascara",
+    "specialty": "multimedia_ecrans",
+    "status": "demo_envoyee",
+    "interestedPack": "tablette_chinois",
+    "estimatedValueDzd": 35000,
+    "nextFollowUpDate": "2026-11-21",
+    "notes": "Pose beaucoup d’écrans Geely Coolray / Jetour. Intéressé par la traduction FR/AR et pare-feu anti-brick.",
+    "lastContactAt": "2026-11-18T14:30:00Z",
+    "createdAt": "2026-11-18T14:30:00Z"
+  },
+  {
+    "id": "SDR-DZ-002",
+    "garageName": "Atelier Mécanique Es-Sénia",
+    "contactName": "Nabil",
+    "phone": "0662301945",
+    "wilaya": "31 - Oran",
+    "commune": "Es-Sénia",
+    "specialty": "mecanicien_diag",
+    "status": "a_relancer",
+    "interestedPack": "master",
+    "estimatedValueDzd": 45000,
+    "nextFollowUpDate": "2026-11-20",
+    "notes": "Reçoit beaucoup de Fiat Doblò Tafraoui & Chery Tiggo. Veut tester sur place.",
+    "lastContactAt": "2026-11-17T10:15:00Z",
+    "createdAt": "2026-11-17T10:15:00Z"
+  },
+  {
+    "id": "SDR-DZ-003",
+    "garageName": "Sidi Bel Abbès Reprog & Clés",
+    "contactName": "Yacine",
+    "phone": "0770881234",
+    "wilaya": "22 - Sidi Bel Abbès",
+    "commune": "Boulevard Zabana",
+    "specialty": "chiptuner_immo",
+    "status": "abonne",
+    "interestedPack": "reprog",
+    "estimatedValueDzd": 45000,
+    "notes": "Converti après démo Stage 1 & vérification anti-hallucination.",
+    "lastContactAt": "2026-11-16T16:00:00Z",
+    "createdAt": "2026-11-15T11:00:00Z"
+  }
+]

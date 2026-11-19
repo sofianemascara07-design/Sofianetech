@@ -278,3 +278,34 @@ export interface VehicleCameraSystem {
   distanceToObstacleMeters?: number;
 }
 
+export type SdrProspectStatus =
+  | 'a_visiter'
+  | 'visite_fait'
+  | 'demo_envoyee'
+  | 'a_relancer'
+  | 'abonne'
+  | 'refus';
+
+export type SdrProspectSpecialty =
+  | 'electricien_auto'
+  | 'multimedia_ecrans'
+  | 'mecanicien_diag'
+  | 'chiptuner_immo'
+  | 'concession_multi';
+
+export interface SdrProspect {
+  id: string;
+  garageName: string;
+  contactName?: string;
+  phone: string;
+  wilaya: string;
+  commune?: string;
+  specialty: SdrProspectSpecialty;
+  status: SdrProspectStatus;
+  interestedPack?: 'master' | 'reprog' | 'tablette_chinois' | 'standard';
+  estimatedValueDzd: number;
+  nextFollowUpDate?: string;
+  notes?: string;
+  lastContactAt: string;
+  createdAt: string;
+}
