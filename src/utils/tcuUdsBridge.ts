@@ -8,6 +8,11 @@ import {
 } from '../types/automotive';
 import { obdHardwareBridge } from './obdHardwareBridge';
 import { apiFetch } from './apiBridge';
+import {
+  getOrCreateAgentPairToken,
+  sendUdsViaLocalPcAgent,
+  submitWriteRequestToLocalAgent,
+} from './localPcAgent';
 
 /**
  * Constantes d'adressage ISO 15765-4 / ISO 14229 UDS pour Calculateur Boîte (TCU/TCM)
@@ -405,6 +410,8 @@ export async function executeTcuUdsCommand(params: {
   txLog: UdsCanFrameLog;
   rxLog: UdsCanFrameLog;
   parsedDtcs?: TransmissionDtc[];
+  pendingApproval?: boolean;
+  writeRequestId?: string;
   message: string;
 }> {
   const { transport, transmissionType, scenario, serviceHex, payloadHex, label } = params;
@@ -457,7 +464,115 @@ export async function executeTcuUdsCommand(params: {
     }
   }
 
-  // 2) API REST J2534 Passthru (ou Simulation via Backend REST)
+  // 2) Agent Micro Client PC (Loopback 127.0.0.1:38450 — J2534 & Écriture Auto sur Demande)
+  if (transport === 'LOCAL_PC_AGENT') {
+    const token = getOrCreateAgentPairToken();
+    const svcUpper = serviceHex.trim().toUpperCase();
+    const payloadUpper = payloadHex.trim().toUpperCase();
+    const isWriteOp =
+      svcUpper === '14' ||
+      svcUpper === '31' ||
+      svcUpper === '34' ||
+      (svcUpper === '10' && payloadUpper === '02');
+
+    if (isWriteOp) {
+      try {
+        const writeRes = await submitWriteRequestToLocalAgent(token, {
+          targetModule: 'TCU 0x7E1',
+          operationType:
+            svcUpper === '14' ? 'CLEAR_DTC' : svcUpper === '10' || svcUpper === '34' ? 'FLASH_TCU' : 'ROUTINE_UDS',
+          title: label,
+          txId: TCU_CAN_TX_ID,
+          serviceHex: svcUpper,
+          payloadHex: payloadUpper,
+          batteryVoltage: 13.8,
+        });
+        const pending = writeRes.request?.status === 'PENDING_APPROVAL';
+        const rxLog: UdsCanFrameLog = {
+          id: `RX-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: new Date().toLocaleTimeString('fr-FR'),
+          direction: 'RX <- 0x7E9',
+          serviceHex: pending ? '0x7F' : `0x${(parseInt(svcUpper, 16) + 0x40).toString(16).toUpperCase()}`,
+          rawHex: writeRes.request?.rxHex || (pending ? 'EN ATTENTE APPROBATION AGENT PC' : '7F 00 11'),
+          label: writeRes.message,
+          transport: 'LOCAL_PC_AGENT',
+          isNegativeResponse: !writeRes.ok && !pending,
+        };
+        return {
+          ok: writeRes.ok,
+          txLog,
+          rxLog,
+          pendingApproval: pending,
+          writeRequestId: writeRes.request?.id,
+          message: writeRes.message,
+        };
+      } catch {
+        const rxLog: UdsCanFrameLog = {
+          id: `RX-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString('fr-FR'),
+          direction: 'RX <- 0x7E9',
+          serviceHex: '0x7F',
+          rawHex: 'AGENT_PC_OFFLINE',
+          label: 'Agent Micro Client PC non démarré sur 127.0.0.1:38450',
+          transport: 'LOCAL_PC_AGENT',
+          isNegativeResponse: true,
+        };
+        return {
+          ok: false,
+          txLog,
+          rxLog,
+          message: 'Agent PC Client hors ligne. Téléchargez et lancez INSTALL-AUTOPRO-AGENT.bat sur le micro client.',
+        };
+      }
+    }
+
+    try {
+      const agentRes = await sendUdsViaLocalPcAgent(token, {
+        txId: TCU_CAN_TX_ID,
+        rxId: TCU_CAN_RX_ID,
+        serviceHex: svcUpper,
+        payloadHex: payloadUpper,
+        label,
+      });
+      const rxLog: UdsCanFrameLog = {
+        id: `RX-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: new Date().toLocaleTimeString('fr-FR'),
+        direction: 'RX <- 0x7E9',
+        serviceHex: agentRes.positiveServiceHex || `0x${(parseInt(svcUpper, 16) + 0x40).toString(16).toUpperCase()}`,
+        rawHex: agentRes.rxHex,
+        label: agentRes.message,
+        transport: 'LOCAL_PC_AGENT',
+        isNegativeResponse: !agentRes.ok,
+      };
+      const parsedDtcs = svcUpper === '19' ? parseDtcFromUdsResponse(agentRes.rxHex) : undefined;
+      return {
+        ok: agentRes.ok,
+        txLog,
+        rxLog,
+        parsedDtcs,
+        message: agentRes.message,
+      };
+    } catch {
+      const rxLog: UdsCanFrameLog = {
+        id: `RX-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString('fr-FR'),
+        direction: 'RX <- 0x7E9',
+        serviceHex: '0x7F',
+        rawHex: 'AGENT_PC_OFFLINE',
+        label: 'Agent Micro Client PC non démarré sur 127.0.0.1:38450',
+        transport: 'LOCAL_PC_AGENT',
+        isNegativeResponse: true,
+      };
+      return {
+        ok: false,
+        txLog,
+        rxLog,
+        message: 'Agent PC Client hors ligne (127.0.0.1:38450). Ouvrez le panneau Agent PC pour le lancer.',
+      };
+    }
+  }
+
+  // 3) API REST J2534 Passthru (ou Simulation via Backend REST)
   if (transport === 'J2534_PASSTHRU') {
     const res = await apiFetch('/api/transmission/uds-exchange', {
       method: 'POST',

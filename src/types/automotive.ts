@@ -485,7 +485,54 @@ export interface DtcRawTranslateResult {
 // =========================================================
 export type TransmissionType = 'BVA' | 'DSG_DCT' | 'CVT' | 'ROBOTISEE';
 
-export type TransmissionTransportMode = 'SIMULATION' | 'ELM327_BRIDGE' | 'J2534_PASSTHRU';
+export type TransmissionTransportMode =
+  | 'SIMULATION'
+  | 'ELM327_BRIDGE'
+  | 'J2534_PASSTHRU'
+  | 'LOCAL_PC_AGENT';
+
+export type LocalAgentWritePolicy = 'ASK_EACH_WRITE' | 'AUTO_ON_REQUEST';
+
+export interface LocalAgentDriverInfo {
+  name: string;
+  vendor?: string;
+  dllPath?: string;
+  kind: 'J2534_DLL' | 'COM_PORT' | 'SIMULATED_VCI';
+}
+
+export interface LocalAgentWriteRequest {
+  id: string;
+  createdAt: string;
+  targetModule: string;
+  operationType: 'FLASH_TCU' | 'ROUTINE_UDS' | 'CLEAR_DTC' | 'EEPROM_WRITE';
+  title: string;
+  txId: string;
+  serviceHex: string;
+  payloadHex: string;
+  fileName?: string;
+  sha256Short?: string;
+  batteryVoltage: number;
+  status: 'PENDING_APPROVAL' | 'EXECUTED' | 'REJECTED' | 'FAILED';
+  resultMessage?: string;
+  rxHex?: string;
+  executedAt?: string;
+}
+
+export interface LocalAgentStatus {
+  connected: boolean;
+  version: string;
+  hostname: string;
+  osPlatform: string;
+  nodeVersion: string;
+  agentUrl: string;
+  writePolicy: LocalAgentWritePolicy;
+  batteryVoltage: number;
+  drivers: LocalAgentDriverInfo[];
+  pendingRequests: LocalAgentWriteRequest[];
+  recentRequests: LocalAgentWriteRequest[];
+  executedCount: number;
+  lastPingAt: string;
+}
 
 export type TransmissionSimScenario =
   | 'optimal_hot'

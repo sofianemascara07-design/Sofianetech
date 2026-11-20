@@ -2702,6 +2702,27 @@ FORMAT JSON EXACT ATTENDU :
   }
 });
 
+// POST /api/agent/audit-write - Log local PC agent write authorization & execution
+app.post('/api/agent/audit-write', (req, res) => {
+  try {
+    const { actionTitle, targetModule, autoExecuted, status, batteryVoltage } = req.body || {};
+    const record = saasDatabase.logActivity({
+      clientName: 'Poste Client Agent PC',
+      hwid: 'LOCAL-PC-AGENT-38450',
+      actionType: 'flash_executed',
+      actionDetails: `Agent PC (${targetModule || 'TCU'}) : ${actionTitle || 'Écriture UDS'} · ${
+        autoExecuted ? 'Exécution Auto' : 'Validation Manuelle'
+      } · Statut ${status || 'OK'} (${batteryVoltage || '13.8'}V)`,
+      vehicleName: String(targetModule || 'TCU 0x7E1'),
+      locationCity: 'Atelier Client DZ',
+      durationMinutes: 1,
+    });
+    return res.status(201).json({ success: true, record });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ==========================================
 // SAAS HIGH-PERFORMANCE DATABASE & HISTORY APIS
 // ==========================================

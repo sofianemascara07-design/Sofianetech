@@ -18,7 +18,13 @@ import {
   Cable,
   ShieldCheck,
   Sliders,
+  Laptop,
 } from 'lucide-react';
+import { LocalPcAgentPanel } from './LocalPcAgentPanel';
+import {
+  getOrCreateAgentPairToken,
+  submitWriteRequestToLocalAgent,
+} from '../utils/localPcAgent';
 import {
   Vehicle,
   TransmissionType,
@@ -91,6 +97,10 @@ export const TransmissionTcuSuite: React.FC<TransmissionTcuSuiteProps> = ({
   const [symptomInput, setSymptomInput] = useState<string>(SYMPTOM_PRESETS[0]);
   const [isAiAnalyzing, setIsAiAnalyzing] = useState<boolean>(false);
   const [aiResult, setAiResult] = useState<TransmissionAiDiagnosticResult | null>(null);
+
+  // Client PC Agent state
+  const [showAgentPanel, setShowAgentPanel] = useState<boolean>(false);
+  const [agentConnected, setAgentConnected] = useState<boolean>(false);
 
   const profile = useMemo(() => TRANSMISSION_PROFILES[transmissionType], [transmissionType]);
 
@@ -348,6 +358,35 @@ export const TransmissionTcuSuite: React.FC<TransmissionTcuSuiteProps> = ({
     setBusyRoutine('flash_tcu');
     setFlashProgress(10);
     try {
+      if (transportMode === 'LOCAL_PC_AGENT') {
+        const writeReq = await submitWriteRequestToLocalAgent(getOrCreateAgentPairToken(), {
+          targetModule: `TCU ${TCU_CAN_TX_ID} (${profile.shortLabel})`,
+          operationType: 'FLASH_TCU',
+          title: `Flash Binaire TCU : ${flashFile.name}`,
+          txId: TCU_CAN_TX_ID,
+          serviceHex: '34',
+          payloadHex: `00 44 ${flashFile.headerHex.slice(0, 11)}`,
+          fileName: flashFile.name,
+          sha256Short: flashFile.sha256Short,
+          batteryVoltage: liveData.tcuVoltage,
+        });
+        if (writeReq.request?.status === 'PENDING_APPROVAL') {
+          setShowAgentPanel(true);
+          setFlashProgress(25);
+          setStatusBanner({
+            type: 'warn',
+            text: 'Demande de Flash transmise à l’Agent PC (en attente). Cliquez sur « Approuver & Exécuter Auto » ci-dessous ou activez le mode Exécution Auto.',
+          });
+          return;
+        }
+        setFlashProgress(100);
+        setStatusBanner({
+          type: writeReq.ok ? 'ok' : 'err',
+          text: writeReq.message,
+        });
+        return;
+      }
+
       // 0x10 02 Programming Session
       const progSess = await executeTcuUdsCommand({
         transport: transportMode,
@@ -448,15 +487,37 @@ export const TransmissionTcuSuite: React.FC<TransmissionTcuSuiteProps> = ({
             {/* Transport Bridge Selector */}
             <select
               value={transportMode}
-              onChange={(e) => setTransportMode(e.target.value as TransmissionTransportMode)}
+              onChange={(e) => {
+                const mode = e.target.value as TransmissionTransportMode;
+                setTransportMode(mode);
+                if (mode === 'LOCAL_PC_AGENT') setShowAgentPanel(true);
+              }}
               className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-xs font-semibold text-white focus:outline-none focus:border-cyan-400"
             >
               <option value="SIMULATION">Simulation Atelier Intégrée (Sans Véhicule)</option>
+              <option value="LOCAL_PC_AGENT">
+                Agent Micro Client PC (J2534 &amp; Écriture Auto{agentConnected ? ' · CONNECTÉ' : ''})
+              </option>
               <option value="ELM327_BRIDGE">
                 Pont Web BLE / Serial (ELM327 / OBDLink{obdHardwareBridge.isRealHardwareConnected() ? ' · CONNECTÉ' : ''})
               </option>
               <option value="J2534_PASSTHRU">API REST Passthru J2534 (0x7E1/0x7E9)</option>
             </select>
+
+            <button
+              type="button"
+              onClick={() => setShowAgentPanel((v) => !v)}
+              className={`px-3 py-2 rounded-lg border text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
+                agentConnected
+                  ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
+                  : showAgentPanel
+                  ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
+                  : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-cyan-400'
+              }`}
+            >
+              <Laptop className="w-3.5 h-3.5" />
+              <span>Agent PC {agentConnected ? '(En ligne)' : '1-Clic'}</span>
+            </button>
 
             {transportMode === 'ELM327_BRIDGE' && !obdHardwareBridge.isRealHardwareConnected() && (
               <button
@@ -541,6 +602,14 @@ export const TransmissionTcuSuite: React.FC<TransmissionTcuSuiteProps> = ({
           </button>
         </div>
       </div>
+
+      {showAgentPanel && (
+        <LocalPcAgentPanel
+          batteryVoltage={liveData.tcuVoltage}
+          compact
+          onAgentConnectionChange={setAgentConnected}
+        />
+      )}
 
       {statusBanner && (
         <div

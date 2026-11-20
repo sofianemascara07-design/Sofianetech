@@ -7,6 +7,7 @@ import {
   RemoteStabilitySnapshot,
   downloadWindowsRemoteStabilizerBat,
 } from '../utils/remoteStability';
+import { LocalPcAgentPanel } from './LocalPcAgentPanel';
 
 interface ConnectionManagerProps {
   connectionMode: ConnectionMode;
@@ -730,6 +731,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Agent Micro Client PC (Installateur 1-Clic & Exécution Écriture Auto sur Demande) */}
+      <LocalPcAgentPanel batteryVoltage={batteryVoltage} />
 
       {/* Guide Pas-à-Pas : Démonstration sur Voiture Réelle & Tablette d'Atelier */}
       <div className="p-6 rounded-2xl bg-gradient-to-r from-cyan-950/40 via-slate-900 to-slate-950 border border-cyan-500/40 space-y-5 shadow-xl">
