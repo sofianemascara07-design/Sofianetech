@@ -781,7 +781,15 @@ export interface CoolrayInterventionLog {
   id: string;
   dateIso: string;
   mileageKm: number;
-  type: 'OIL_CHANGE' | 'SPARK_PLUGS' | 'GDI_PEA_CLEANER' | 'ECU_FLASH' | 'TCU_FLASH' | 'OBD_AUDIT';
+  type:
+    | 'OIL_CHANGE'
+    | 'SPARK_PLUGS'
+    | 'GDI_PEA_CLEANER'
+    | 'ECU_FLASH'
+    | 'TCU_FLASH'
+    | 'OBD_AUDIT'
+    | 'CENTRAL_UNIT_REPROG'
+    | 'BCM_RESET';
   title: string;
   details: string;
   technician?: string;
@@ -803,4 +811,60 @@ export interface CoolrayVehicleFollowUpRecord {
   interventions: CoolrayInterventionLog[];
   updatedAt: string;
 }
+
+export type CoolrayCentralUnitModelId =
+  | 'IHU624G'
+  | 'IHU715P'
+  | 'IHU535G_ECARX'
+  | 'BCM_SGW_CONTINENTAL';
+
+export type CoolrayCentralUnitOpId =
+  | 'dz_ihu_locale_thermal_pack'
+  | 'dz_ihu_camera_lvds_realign'
+  | 'dz_bcm_peps_tpms_reset'
+  | 'dz_ihu_bootloop_rescue';
+
+export interface CoolrayAlgeriaIssueEntry {
+  id: string;
+  domain: 'ECU_MOTEUR' | 'TCU_7DCT' | 'IHU_COCKPIT' | 'BCM_PEPS_SGW';
+  domainLabel: string;
+  severity: LspiRiskSeverity;
+  title: string;
+  ecuAddress: string;
+  typicalDtcs: string[];
+  algeriaRootCause: string;
+  multimeterChecks: string[];
+  recommendedActionLabel: string;
+  targetSubTab: 'flash' | 'obd_audit' | 'maintenance' | 'central_unit_dz';
+  linkedOperationId?: CoolrayCentralUnitOpId;
+}
+
+export interface CoolrayCentralUnitOption {
+  id: CoolrayCentralUnitOpId;
+  title: string;
+  targetUnits: CoolrayCentralUnitModelId[];
+  udsOrInterface: string;
+  badge: string;
+  oemUpdateSafeNote: string;
+  summary: string;
+  steps: string[];
+  binaryTag: string;
+}
+
+export type CoolraySupplierId = 'BOSCH' | 'GETRAG_MAGNA' | 'ECARX_GEELY' | 'CONTINENTAL';
+
+export interface CoolrayOemModuleCompat {
+  moduleName: string;
+  supplierId: CoolraySupplierId;
+  supplierLabel: string;
+  udsAddress: string;
+  oemPartDidF187: string;
+  oemSwDidF188: string;
+  hardwareIdDidF191: string;
+  otaAndDealerPolicy: string;
+  preservesSignedPartitions: boolean;
+  supportsOfficialRestore: boolean;
+}
+
+
 

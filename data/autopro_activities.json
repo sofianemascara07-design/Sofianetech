@@ -1,5 +1,23 @@
 [
   {
+    "clientName": "Geely Coolray DZ (L6T7824Z9RZ001540)",
+    "hwid": "BCM_SGW_CONTINENTAL",
+    "actionType": "flash_executed",
+    "actionDetails": "Unité Centrale DZ dz_bcm_peps_tpms_reset [COOLRAY_DZ_BCM_SGW_PEPS_RESET] · 13.6V",
+    "vehicleName": "Geely Coolray (BCM_SGW_CONTINENTAL)",
+    "id": "ACT-DZ-5169",
+    "timestamp": "2026-11-20T17:36:41.227Z"
+  },
+  {
+    "clientName": "Geely Coolray DZ (L6T7824Z9RZ001540)",
+    "hwid": "IHU624G",
+    "actionType": "flash_executed",
+    "actionDetails": "Unité Centrale DZ dz_ihu_locale_thermal_pack [COOLRAY_DZ_IHU_LOCALE_THERMAL_V4] · 13.5V",
+    "vehicleName": "Geely Coolray (IHU624G)",
+    "id": "ACT-DZ-2413",
+    "timestamp": "2026-11-20T17:36:41.220Z"
+  },
+  {
     "clientName": "Geely Coolray (L6T7824Z9TEST026)",
     "hwid": "MG1US008",
     "actionType": "flash_executed",

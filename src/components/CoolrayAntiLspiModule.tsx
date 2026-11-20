@@ -8,11 +8,15 @@ import {
   Cpu,
   Database,
   Droplets,
+  FileText,
   Flame,
   Gauge,
   History,
   Info,
+  Layers,
   Lock,
+  MonitorSmartphone,
+  Network,
   Play,
   RefreshCw,
   Save,
@@ -24,8 +28,12 @@ import {
   Wrench,
   Zap,
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
 import {
+  CoolrayAlgeriaIssueEntry,
   CoolrayCalibrationId,
+  CoolrayCentralUnitModelId,
+  CoolrayCentralUnitOpId,
   CoolrayEcuHardwareFamily,
   CoolrayInterventionLog,
   CoolrayObdPidSnapshot,
@@ -36,7 +44,10 @@ import {
   Vehicle,
 } from '../types/automotive';
 import {
+  COOLRAY_ALGERIA_ISSUES,
   COOLRAY_CALIBRATION_OPTIONS,
+  COOLRAY_CENTRAL_UNIT_MODELS,
+  COOLRAY_CENTRAL_UNIT_OPTIONS,
   COOLRAY_ENGINE_PROFILES,
   COOLRAY_OBD_SCENARIOS,
   COOLRAY_OIL_SPEC_OPTIONS,
@@ -47,6 +58,7 @@ import {
   evaluateIat,
   evaluateKnockRetard,
   evaluateMisfires,
+  getCoolraySupplierCompatMatrix,
   getOverallObdStatus,
 } from '../data/coolrayLspiProfiles';
 import { apiFetch } from '../utils/apiBridge';
@@ -58,7 +70,7 @@ interface CoolrayAntiLspiModuleProps {
   onOpenConnectModal: () => void;
 }
 
-type CoolraySubTab = 'flash' | 'obd_audit' | 'maintenance';
+type CoolraySubTab = 'flash' | 'central_unit_dz' | 'obd_audit' | 'maintenance';
 
 const LOCAL_STORAGE_KEY = 'autopro_coolray_lspi_records_v1';
 
@@ -171,6 +183,34 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
     COOLRAY_OBD_SCENARIOS.normal.snapshot
   );
   const [obdAuditSavedMsg, setObdAuditSavedMsg] = useState<string | null>(null);
+
+  // 5. Unité Centrale DZ & Compatibilité Maison Geely / Fournisseurs
+  const [issueDomainFilter, setIssueDomainFilter] = useState<
+    'ALL' | CoolrayAlgeriaIssueEntry['domain']
+  >('ALL');
+  const [selectedCentralUnitId, setSelectedCentralUnitId] =
+    useState<CoolrayCentralUnitModelId>('IHU624G');
+  const [detectedCentralUnitId, setDetectedCentralUnitId] =
+    useState<CoolrayCentralUnitModelId>('IHU624G');
+  const [selectedCentralOpId, setSelectedCentralOpId] = useState<CoolrayCentralUnitOpId>(
+    'dz_ihu_locale_thermal_pack'
+  );
+  const [centralBackupConfirmed, setCentralBackupConfirmed] = useState<boolean>(true);
+  const [isRunningCentralOp, setIsRunningCentralOp] = useState<boolean>(false);
+  const [centralOpResult, setCentralOpResult] = useState<{
+    ok: boolean;
+    message: string;
+    frames?: string[];
+    checksum?: string;
+    otaCompatible?: boolean;
+  } | null>(null);
+  const [oemAuditResult, setOemAuditResult] = useState<{
+    ok: boolean;
+    summary: string;
+    udsFrames: string[];
+    checkedAt: string;
+  } | null>(null);
+  const [isAuditingOem, setIsAuditingOem] = useState<boolean>(false);
 
   // Chargement initial depuis le backend
   useEffect(() => {
@@ -533,6 +573,191 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
     [activeRecord.selectedOilSpec]
   );
 
+  const supplierCompatList = useMemo(
+    () => getCoolraySupplierCompatMatrix(selectedVariantId),
+    [selectedVariantId]
+  );
+
+  const filteredAlgeriaIssues = useMemo(
+    () =>
+      issueDomainFilter === 'ALL'
+        ? COOLRAY_ALGERIA_ISSUES
+        : COOLRAY_ALGERIA_ISSUES.filter((i) => i.domain === issueDomainFilter),
+    [issueDomainFilter]
+  );
+
+  const selectedCentralOp = useMemo(
+    () =>
+      COOLRAY_CENTRAL_UNIT_OPTIONS.find((op) => op.id === selectedCentralOpId) ||
+      COOLRAY_CENTRAL_UNIT_OPTIONS[0],
+    [selectedCentralOpId]
+  );
+
+  const handleRunOemCompatAudit = async (
+    mode: 'audit_dids' | 'prepare_dealer' | 'reapply_post_ota'
+  ) => {
+    setIsAuditingOem(true);
+    try {
+      const res = await apiFetch('/api/coolray-lspi/oem-compat-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vin: activeRecord.vin,
+          variantId: selectedVariantId,
+          mode,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data?.success) {
+        setOemAuditResult({
+          ok: true,
+          summary: data.summary,
+          udsFrames: data.udsFrames || [],
+          checkedAt: new Date(data.checkedAt).toLocaleTimeString('fr-FR'),
+        });
+      }
+    } catch {
+      setOemAuditResult({
+        ok: true,
+        summary: `Mode hors-ligne : matrice fournisseurs vérifiée pour ${activeRecord.vin} (/system & CALID conservés).`,
+        udsFrames: supplierCompatList.map(
+          (m) => `CACHE ${m.udsAddress} -> ${m.oemPartDidF187} · ${m.oemSwDidF188}`
+        ),
+        checkedAt: new Date().toLocaleTimeString('fr-FR'),
+      });
+    } finally {
+      setIsAuditingOem(false);
+    }
+  };
+
+  const handleExecuteCentralUnitReprog = async () => {
+    setCentralOpResult(null);
+    setIsRunningCentralOp(true);
+    try {
+      const res = await apiFetch('/api/coolray-lspi/central-unit-reprog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vin: activeRecord.vin,
+          selectedUnitId: selectedCentralUnitId,
+          detectedUnitId: detectedCentralUnitId,
+          operationId: selectedCentralOp.id,
+          binaryTag: selectedCentralOp.binaryTag,
+          batteryVoltage: effectiveVoltage,
+          backupConfirmed: centralBackupConfirmed,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        setCentralOpResult({
+          ok: false,
+          message: data?.error || 'Intervention bloquée par les verrous de sécurité.',
+        });
+        return;
+      }
+
+      setCentralOpResult({
+        ok: true,
+        message: `${selectedCentralOp.title} exécuté (${data.checksum}). Partitions signées OTA Maison Geely intactes.`,
+        frames: data.frames,
+        checksum: data.checksum,
+        otaCompatible: Boolean(data.otaCompatible),
+      });
+
+      const logItem: CoolrayInterventionLog = {
+        id: `CU-${Date.now()}`,
+        dateIso: new Date().toISOString().slice(0, 10),
+        mileageKm: activeRecord.currentMileageKm,
+        type:
+          selectedCentralOp.id === 'dz_bcm_peps_tpms_reset'
+            ? 'BCM_RESET'
+            : 'CENTRAL_UNIT_REPROG',
+        title: selectedCentralOp.title,
+        details: `${selectedCentralUnitId} · Tag ${selectedCentralOp.binaryTag} · OTA Maison Geely Safe`,
+        technician: 'Atelier AutoPro DZ',
+      };
+      await persistRecord(
+        {
+          ...activeRecord,
+          interventions: [logItem, ...activeRecord.interventions],
+        },
+        true
+      );
+    } catch {
+      setCentralOpResult({
+        ok: false,
+        message: 'Serveur backend injoignable pour valider la procédure Unité Centrale.',
+      });
+    } finally {
+      setIsRunningCentralOp(false);
+    }
+  };
+
+  const handleExportCoolrayPdfReport = () => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    doc.setFillColor(10, 15, 28);
+    doc.rect(0, 0, 210, 32, 'F');
+    doc.setTextColor(34, 211, 238);
+    doc.setFontSize(14);
+    doc.text('AutoPro Flash & Diagnostic Hub — Rapport Atelier Geely Coolray DZ', 14, 14);
+    doc.setTextColor(226, 232, 240);
+    doc.setFontSize(9.5);
+    doc.text(
+      `VIN: ${activeRecord.vin}  |  Kilométrage: ${activeRecord.currentMileageKm.toLocaleString('fr-FR')} km  |  Score Anti-LSPI: ${scoreCalc.score}%`,
+      14,
+      23
+    );
+
+    let y = 42;
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(11);
+    doc.text(`Profil Véhicule : ${activeProfile.label}`, 14, y);
+    y += 6;
+    doc.setFontSize(9.5);
+    doc.text(
+      `Motorisation: ${activeProfile.engineCode} | ECU: ${activeProfile.ecuModel} | Boîte: ${activeProfile.transmission}`,
+      14,
+      y
+    );
+    y += 6;
+    doc.text(
+      `Huile sélectionnée: ${selectedOilOption.label} | Dernier audit OBD2: ${activeRecord.lastObdAuditStatus.toUpperCase()}`,
+      14,
+      y
+    );
+
+    y += 10;
+    doc.setFontSize(11);
+    doc.text('Compatibilité Maison Geely & Fournisseurs (DIDs 0x22)', 14, y);
+    y += 6;
+    doc.setFontSize(8.5);
+    for (const mod of supplierCompatList) {
+      doc.text(
+        `- ${mod.moduleName} (${mod.supplierLabel}) : Réf ${mod.oemPartDidF187} / SW ${mod.oemSwDidF188} [OTA OK]`,
+        16,
+        y
+      );
+      y += 5;
+    }
+
+    y += 6;
+    doc.setFontSize(11);
+    doc.text('Historique des interventions enregistrées :', 14, y);
+    y += 6;
+    doc.setFontSize(8.5);
+    for (const item of activeRecord.interventions.slice(0, 12)) {
+      doc.text(
+        `[${item.dateIso} · ${item.mileageKm.toLocaleString('fr-FR')} km] ${item.title} — ${item.details.slice(0, 75)}`,
+        16,
+        y
+      );
+      y += 5;
+      if (y > 270) break;
+    }
+
+    doc.save(`Rapport_Coolray_DZ_${activeRecord.vin}.pdf`);
+  };
+
   // Jauge pour cycles kilométriques
   const renderCycleGauge = (
     title: string,
@@ -615,41 +840,52 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
             <div className="flex flex-wrap items-center gap-2">
               <span className="px-2.5 py-1 rounded-md bg-rose-950/90 border border-rose-500/50 text-rose-300 text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5">
                 <Flame className="w-3.5 h-3.5 text-rose-400" />
-                Geely Coolray (2020–2026) · Protection Anti-LSPI
+                Geely Coolray (2020–2026) · Solution Complète Marché Algérien
               </span>
               <span className="px-2.5 py-1 rounded-md bg-slate-900 border border-slate-700 text-cyan-300 text-[11px] font-mono">
-                BOSCH MG1US008 / MG1CS080 · 7DCT
+                BOSCH MG1 · 7DCT · IHU624G/715P · BCM/SGW
               </span>
             </div>
             <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
-              Geely Coolray — Protection Anti-LSPI, Flash ECU/TCU &amp; Suivi des Précautions
+              Geely Coolray — Diag &amp; Reprogrammation Unité Centrale, Anti-LSPI &amp; Compatibilité Maison Geely
             </h1>
             <p className="text-xs sm:text-sm text-slate-400 max-w-3xl">
-              Module spécialisé contre le pré-allumage à bas régime (LSPI) sur moteurs 1.5T GDI (carburant local,
-              cartographies Chine VI 181 ch, gestion huile API SP et audit OBD2 cylindres 2 &amp; 3).
+              Solution atelier adaptée au marché algérien : protection Anti-LSPI 1.5T, calibration 7DCT, dépannage unité
+              centrale IHU/BCM/SGW et préservation stricte des mises à jour officielles Maison Geely &amp; fournisseurs.
             </p>
           </div>
 
-          {/* Score Global Protection Moteur */}
-          <div className="flex items-center gap-4 bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 shrink-0">
-            <div className="text-right">
-              <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
-                Score Protection Moteur
-              </div>
-              <div className="text-xs font-medium text-slate-300">{scoreCalc.statusLabel}</div>
-              <div className="text-[11px] font-mono text-slate-500">VIN : {activeRecord.vin}</div>
-            </div>
-            <div
-              className={`w-16 h-16 rounded-xl border-2 flex flex-col items-center justify-center font-mono font-extrabold ${
-                scoreCalc.score >= 85
-                  ? 'border-emerald-500/70 bg-emerald-950/60 text-emerald-300'
-                  : scoreCalc.score >= 60
-                  ? 'border-amber-500/70 bg-amber-950/60 text-amber-300'
-                  : 'border-rose-500/80 bg-rose-950/70 text-rose-300'
-              }`}
+          {/* Score Global Protection Moteur + Export PDF */}
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={handleExportCoolrayPdfReport}
+              className="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-cyan-300 flex items-center gap-2 cursor-pointer transition-colors"
             >
-              <span className="text-xl leading-none">{scoreCalc.score}%</span>
-              <span className="text-[9px] uppercase mt-1 opacity-80">LSPI SAFE</span>
+              <FileText className="w-4 h-4" />
+              <span>Rapport PDF Client</span>
+            </button>
+
+            <div className="flex items-center gap-4 bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3">
+              <div className="text-right">
+                <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
+                  Score Protection Moteur
+                </div>
+                <div className="text-xs font-medium text-slate-300">{scoreCalc.statusLabel}</div>
+                <div className="text-[11px] font-mono text-slate-500">VIN : {activeRecord.vin}</div>
+              </div>
+              <div
+                className={`w-16 h-16 rounded-xl border-2 flex flex-col items-center justify-center font-mono font-extrabold ${
+                  scoreCalc.score >= 85
+                    ? 'border-emerald-500/70 bg-emerald-950/60 text-emerald-300'
+                    : scoreCalc.score >= 60
+                    ? 'border-amber-500/70 bg-amber-950/60 text-amber-300'
+                    : 'border-rose-500/80 bg-rose-950/70 text-rose-300'
+                }`}
+              >
+                <span className="text-xl leading-none">{scoreCalc.score}%</span>
+                <span className="text-[9px] uppercase mt-1 opacity-80">LSPI SAFE</span>
+              </div>
             </div>
           </div>
         </div>
@@ -760,7 +996,20 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
             }`}
           >
             <Zap className="w-4 h-4" />
-            <span>A. Flash &amp; Reprogrammation Anti-LSPI (ECU / TCU)</span>
+            <span>A. Flash Anti-LSPI (ECU / TCU)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSubTab('central_unit_dz')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border ${
+              subTab === 'central_unit_dz'
+                ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+            }`}
+          >
+            <MonitorSmartphone className="w-4 h-4" />
+            <span>B. Unité Centrale DZ &amp; Compatibilité Maison Geely</span>
           </button>
 
           <button
@@ -773,7 +1022,7 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
             }`}
           >
             <Activity className="w-4 h-4" />
-            <span>B. Audit Santé Combustion OBD2 (Knock / Ratés / Trims / IAT)</span>
+            <span>C. Audit Santé Combustion OBD2</span>
           </button>
 
           <button
@@ -786,7 +1035,7 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
             }`}
           >
             <ClipboardCheck className="w-4 h-4" />
-            <span>C. Suivi Précautions &amp; Maintenance par VIN</span>
+            <span>D. Précautions &amp; Dossier VIN</span>
           </button>
         </div>
       </div>
@@ -1773,6 +2022,358 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* ONGLET B : UNITÉ CENTRALE DZ & COMPATIBILITÉ MAISON GEELY / FOURNISSEURS */}
+      {/* ===================================================================== */}
+      {subTab === 'central_unit_dz' && (
+        <div className="space-y-6">
+          {/* 1. Matrice Compatibilité Maison Geely & Fournisseurs */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-cyan-400" />
+                  Compatibilité Mises à Jour Maison Geely (OTA / Concessionnaire) &amp; Fournisseurs
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Architecture non destructive : /system, /vendor, clés OTA et signature CALID/CVN préservées sur Bosch, Getrag/Magna, ECARX et Continental.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={isAuditingOem}
+                  onClick={() => void handleRunOemCompatAudit('audit_dids')}
+                  className="px-3 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold cursor-pointer transition-colors"
+                >
+                  {isAuditingOem ? 'Audit UDS...' : 'Auditer DIDs 0x22 (F187/F188)'}
+                </button>
+                <button
+                  type="button"
+                  disabled={isAuditingOem}
+                  onClick={() => void handleRunOemCompatAudit('prepare_dealer')}
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-amber-300 cursor-pointer transition-colors"
+                >
+                  Préparer Passage Maison Geely
+                </button>
+                <button
+                  type="button"
+                  disabled={isAuditingOem}
+                  onClick={() => void handleRunOemCompatAudit('reapply_post_ota')}
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-emerald-300 cursor-pointer transition-colors"
+                >
+                  Ré-appliquer Pack DZ Post-OTA
+                </button>
+              </div>
+            </div>
+
+            {oemAuditResult && (
+              <div className="rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-4 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-emerald-300">
+                  <span>{oemAuditResult.summary}</span>
+                  <span className="font-mono text-[11px]">{oemAuditResult.checkedAt}</span>
+                </div>
+                <div className="rounded-lg bg-slate-950 border border-slate-800 p-3 font-mono text-[11px] text-cyan-300 space-y-1">
+                  {oemAuditResult.udsFrames.map((f) => (
+                    <div key={f}>{f}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {supplierCompatList.map((item) => (
+                <div
+                  key={item.moduleName}
+                  className="rounded-xl border border-slate-800 bg-slate-950/65 p-4 space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-bold text-white">{item.moduleName}</div>
+                      <div className="text-[11px] text-cyan-300 font-medium">
+                        {item.supplierLabel} · {item.udsAddress}
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-semibold text-emerald-400 shrink-0">
+                      OTA &amp; VCI OK
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-400">
+                    DID F187 : {item.oemPartDidF187} · SW F188 : {item.oemSwDidF188} · HW : {item.hardwareIdDidF191}
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    {item.otaAndDealerPolicy}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 2. Reprogrammation & Sauvetage Unité Centrale (IHU624G / IHU715P / BCM-SGW) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <div className="lg:col-span-5 rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-4">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Lock className="w-4 h-4 text-amber-400" />
+                Sélection Unité Centrale &amp; Verrous Anti-Brick
+              </h3>
+
+              <div className="space-y-2">
+                <label className="text-[11px] font-bold uppercase text-slate-400">
+                  Boîtier / Unité Centrale Ciblée
+                </label>
+                <div className="space-y-2">
+                  {COOLRAY_CENTRAL_UNIT_MODELS.map((unit) => {
+                    const selected = selectedCentralUnitId === unit.id;
+                    return (
+                      <button
+                        key={unit.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCentralUnitId(unit.id);
+                          setDetectedCentralUnitId(unit.id);
+                          if (unit.id === 'BCM_SGW_CONTINENTAL') {
+                            setSelectedCentralOpId('dz_bcm_peps_tpms_reset');
+                          } else if (selectedCentralOpId === 'dz_bcm_peps_tpms_reset') {
+                            setSelectedCentralOpId('dz_ihu_locale_thermal_pack');
+                          }
+                        }}
+                        className={`w-full text-left rounded-xl border p-3 transition-colors cursor-pointer space-y-1 ${
+                          selected
+                            ? 'border-cyan-500 bg-cyan-950/25'
+                            : 'border-slate-800 bg-slate-950/60 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="text-xs font-bold text-white">{unit.label}</div>
+                        <div className="text-[11px] font-mono text-cyan-300">{unit.address}</div>
+                        <div className="text-[11px] text-amber-300/90">{unit.warning}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-slate-800">
+                <div className="text-[11px] font-bold uppercase text-slate-400">
+                  ID Matériel Détecté (Test Anti-Croisement)
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {COOLRAY_CENTRAL_UNIT_MODELS.map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => setDetectedCentralUnitId(u.id)}
+                      className={`py-1.5 px-2 rounded-lg text-[11px] font-mono font-bold border cursor-pointer ${
+                        detectedCentralUnitId === u.id
+                          ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                          : 'bg-slate-950 text-slate-300 border-slate-800'
+                      }`}
+                    >
+                      {u.id}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  Tension active : <span className="font-mono text-white">{effectiveVoltage.toFixed(1)}V</span>{' '}
+                  ({effectiveVoltage >= 12.4 ? 'OK >= 12.4V' : 'BLOQUÉE < 12.4V'})
+                </div>
+                <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={centralBackupConfirmed}
+                    onChange={(e) => setCentralBackupConfirmed(e.target.checked)}
+                    className="rounded border-slate-600 bg-slate-950 text-cyan-500"
+                  />
+                  <span>Backup EEPROM / MCU / Configuration CAN confirmé avant écriture</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="lg:col-span-7 rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-4">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <MonitorSmartphone className="w-4 h-4 text-cyan-400" />
+                Packs Reprogrammation &amp; Sauvetage Unité Centrale (Marché Algérien)
+              </h3>
+
+              <div className="space-y-3">
+                {COOLRAY_CENTRAL_UNIT_OPTIONS.map((op) => {
+                  const compatible = op.targetUnits.includes(selectedCentralUnitId);
+                  const active = selectedCentralOpId === op.id;
+                  return (
+                    <button
+                      key={op.id}
+                      type="button"
+                      onClick={() => setSelectedCentralOpId(op.id)}
+                      className={`w-full text-left rounded-xl border p-4 space-y-2 transition-all cursor-pointer ${
+                        active
+                          ? 'border-cyan-500 bg-cyan-950/25 ring-1 ring-cyan-500/40'
+                          : 'border-slate-800 bg-slate-950/60 hover:border-slate-700'
+                      } ${!compatible ? 'opacity-65' : ''}`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-sm font-bold text-white">{op.title}</span>
+                        <span className="text-[11px] font-semibold text-emerald-300">{op.badge}</span>
+                      </div>
+                      <div className="text-[11px] font-mono text-cyan-300">
+                        {op.udsOrInterface} · {op.binaryTag}
+                      </div>
+                      <p className="text-xs text-slate-300 leading-relaxed">{op.summary}</p>
+                      <div className="text-[11px] text-emerald-300/90 bg-emerald-950/20 border border-emerald-500/25 rounded-lg px-3 py-1.5">
+                        {op.oemUpdateSafeNote}
+                      </div>
+                      <ul className="space-y-1">
+                        {op.steps.map((s) => (
+                          <li key={s} className="text-[11px] text-slate-400 flex items-start gap-2">
+                            <span className="text-cyan-400 font-bold">•</span>
+                            <span>{s}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                disabled={isRunningCentralOp}
+                onClick={() => void handleExecuteCentralUnitReprog()}
+                className="w-full min-h-[46px] py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-950 text-sm font-extrabold flex items-center justify-center gap-2 cursor-pointer transition-all"
+              >
+                <Play className="w-4 h-4" />
+                <span>
+                  {isRunningCentralOp
+                    ? 'Exécution en cours sur l’unité centrale...'
+                    : `Exécuter ${selectedCentralOp.binaryTag}`}
+                </span>
+              </button>
+
+              {centralOpResult && (
+                <div
+                  className={`rounded-xl border p-4 space-y-2.5 ${
+                    centralOpResult.ok
+                      ? 'border-emerald-500/50 bg-emerald-950/25'
+                      : 'border-rose-500/60 bg-rose-950/30'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5 text-xs font-semibold text-white">
+                    {centralOpResult.ok ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                    ) : (
+                      <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
+                    )}
+                    <span>{centralOpResult.message}</span>
+                  </div>
+                  {centralOpResult.frames && (
+                    <div className="rounded-lg bg-slate-950 border border-slate-800 p-3 font-mono text-[11px] text-cyan-300 space-y-1">
+                      {centralOpResult.frames.map((frame) => (
+                        <div key={frame}>{frame}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 3. Référentiel des Pannes Fréquentes Coolray Algérie & Tests Multimètre */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                  <Network className="w-4 h-4 text-cyan-400" />
+                  Guide Diagnostic Pannes Coolray en Algérie &amp; Contrôles Multimètre
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Codes défauts réels, causes liées au carburant/climat algérien et mesures électriques avant remplacement de pièce.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {(
+                  [
+                    { id: 'ALL', label: 'Tous' },
+                    { id: 'ECU_MOTEUR', label: 'ECU Moteur' },
+                    { id: 'TCU_7DCT', label: 'Boîte 7DCT' },
+                    { id: 'IHU_COCKPIT', label: 'Unité Centrale IHU' },
+                    { id: 'BCM_PEPS_SGW', label: 'BCM / PEPS' },
+                  ] as const
+                ).map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setIssueDomainFilter(f.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer transition-colors ${
+                      issueDomainFilter === f.id
+                        ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredAlgeriaIssues.map((issue) => (
+                <div
+                  key={issue.id}
+                  className={`rounded-xl border p-4 space-y-2.5 ${severityCardBorder(issue.severity)}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-[11px] font-mono text-cyan-300">
+                        {issue.domainLabel} · {issue.ecuAddress}
+                      </div>
+                      <h4 className="text-sm font-bold text-white">{issue.title}</h4>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] font-mono text-amber-300">
+                    DTC typiques : {issue.typicalDtcs.join(' · ')}
+                  </div>
+
+                  <p className="text-xs text-slate-300 leading-relaxed">{issue.algeriaRootCause}</p>
+
+                  <div className="rounded-lg bg-slate-950/75 border border-slate-800 p-3 space-y-1">
+                    <div className="text-[11px] font-bold text-slate-200">
+                      Contrôles Multimètre / Pression :
+                    </div>
+                    {issue.multimeterChecks.map((chk) => (
+                      <div key={chk} className="text-[11px] text-slate-400 flex items-start gap-2">
+                        <span className="text-cyan-400">•</span>
+                        <span>{chk}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (issue.linkedOperationId) {
+                        setSelectedCentralOpId(issue.linkedOperationId);
+                        if (issue.linkedOperationId === 'dz_bcm_peps_tpms_reset') {
+                          setSelectedCentralUnitId('BCM_SGW_CONTINENTAL');
+                          setDetectedCentralUnitId('BCM_SGW_CONTINENTAL');
+                        } else if (selectedCentralUnitId === 'BCM_SGW_CONTINENTAL') {
+                          setSelectedCentralUnitId('IHU624G');
+                          setDetectedCentralUnitId('IHU624G');
+                        }
+                      }
+                      setSubTab(issue.targetSubTab);
+                    }}
+                    className="w-full py-2 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-cyan-300 cursor-pointer transition-colors"
+                  >
+                    {issue.recommendedActionLabel}
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         </div>

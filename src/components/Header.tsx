@@ -304,7 +304,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Flame className="w-3.5 h-3.5 text-rose-400" />
-              <span>Coolray Anti-LSPI</span>
+              <span>Coolray DZ &amp; Unité Centrale</span>
             </button>
           )}
 
