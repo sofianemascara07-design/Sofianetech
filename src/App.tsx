@@ -22,11 +22,19 @@ import { ConnectModal } from './components/ConnectModal';
 import { LicenseGate } from './components/LicenseGate';
 import { LicenseModal } from './components/LicenseModal';
 import { VoiceAssistantModal } from './components/VoiceAssistantModal';
+import { WallpaperBackdrop } from './components/WallpaperBackdrop';
+import { WallpaperDrawerModal } from './components/WallpaperDrawerModal';
 import { INITIAL_DTC_CODES } from './data/mockVehicles';
 import { ShieldCheck, Cpu } from 'lucide-react';
 import { apiFetch } from './utils/apiBridge';
 import { obdHardwareBridge, ObdHardwareStatus } from './utils/obdHardwareBridge';
 import { remoteStabilityManager } from './utils/remoteStability';
+import {
+  ActiveWallpaperConfig,
+  getCustomWallpaperById,
+  loadActiveWallpaperSync,
+  saveActiveWallpaperSync,
+} from './utils/wallpaperManager';
 
 const REVOKED_LEGACY_DEMO_KEYS = new Set([
   'AP-DZ26-MST-9882-7EAB-5A63',
@@ -81,8 +89,27 @@ export default function App() {
   const [batteryVoltage, setBatteryVoltage] = useState<number>(12.6);
   const [hardwareStatus, setHardwareStatus] = useState<ObdHardwareStatus>(() => obdHardwareBridge.getStatus());
   const [isConnectModalOpen, setIsConnectModalOpen] = useState<boolean>(false);
+  const [isWallpaperDrawerOpen, setIsWallpaperDrawerOpen] = useState<boolean>(false);
+  const [activeWallpaper, setActiveWallpaper] = useState<ActiveWallpaperConfig>(() =>
+    loadActiveWallpaperSync()
+  );
   const [dtcCodes] = useState(INITIAL_DTC_CODES);
   const [demoRemainingText, setDemoRemainingText] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activeWallpaper.kind === 'custom' && !activeWallpaper.src) {
+      void getCustomWallpaperById(activeWallpaper.id).then((item) => {
+        if (item?.dataUrl) {
+          setActiveWallpaper((prev) => ({ ...prev, src: item.dataUrl }));
+        }
+      });
+    }
+  }, [activeWallpaper.id, activeWallpaper.kind, activeWallpaper.src]);
+
+  const handleApplyWallpaper = useCallback((next: ActiveWallpaperConfig) => {
+    setActiveWallpaper(next);
+    saveActiveWallpaperSync(next);
+  }, []);
 
   useEffect(() => {
     return obdHardwareBridge.subscribe((status) => {
@@ -307,7 +334,10 @@ export default function App() {
   };
 
   return (
-    <div className={`min-h-screen bg-[#070b14] text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-slate-950 ${atelierMode ? 'atelier-mode' : ''}`}>
+    <div className={`relative min-h-screen text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-slate-950 ${atelierMode ? 'atelier-mode bg-[#070b14]' : 'bg-transparent'}`}>
+      <WallpaperBackdrop wallpaper={activeWallpaper} atelierMode={atelierMode} />
+
+      <div className="relative z-10 flex flex-col min-h-screen">
       <Header
         activeTab={activeTab}
         onSelectTab={setActiveTab}
@@ -321,6 +351,7 @@ export default function App() {
         onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
         atelierMode={atelierMode}
         onToggleAtelierMode={toggleAtelierMode}
+        onOpenWallpaperDrawer={() => setIsWallpaperDrawerOpen(true)}
         isAdmin={isAdmin}
         demoRemainingText={demoRemainingText}
       />
@@ -517,6 +548,14 @@ export default function App() {
         selectedVehicle={selectedVehicle}
         onSelectTab={setActiveTab}
       />
+
+      <WallpaperDrawerModal
+        isOpen={isWallpaperDrawerOpen}
+        onClose={() => setIsWallpaperDrawerOpen(false)}
+        activeWallpaper={activeWallpaper}
+        onApplyWallpaper={handleApplyWallpaper}
+      />
+      </div>
     </div>
   );
 }

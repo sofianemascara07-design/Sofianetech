@@ -1,8 +1,40 @@
-/* AutoPro Flash & Diagnostic Hub — Service Worker Anti-Blocage & Cache-Busting */
-const CACHE_VERSION = 'autopro-v2026-11-20-akl1';
+/* AutoPro Flash & Diagnostic Hub — Service Worker Anti-Blocage, PWA & Cache Fonds d'Écran */
+const CACHE_VERSION = 'autopro-v2026-11-20-wallpapers-v1';
+const WALLPAPER_CACHE = 'autopro-wallpapers-v1';
+
+const DEFAULT_WALLPAPER_ASSETS = [
+  '/wallpapers/amoled-cockpit.webp',
+  '/wallpapers/amoled-cockpit-thumb.webp',
+  '/wallpapers/carbon-3k.webp',
+  '/wallpapers/carbon-3k-thumb.webp',
+  '/wallpapers/ecu-telemetry.webp',
+  '/wallpapers/ecu-telemetry-thumb.webp',
+  '/wallpapers/diagnostic-bay.webp',
+  '/wallpapers/diagnostic-bay-thumb.webp',
+  '/wallpapers/titanium-brake.webp',
+  '/wallpapers/titanium-brake-thumb.webp',
+];
+
+async function precacheDefaultWallpapers() {
+  try {
+    const cache = await caches.open(WALLPAPER_CACHE);
+    await Promise.allSettled(
+      DEFAULT_WALLPAPER_ASSETS.map(async (assetUrl) => {
+        const alreadyCached = await cache.match(assetUrl);
+        if (alreadyCached) return;
+        const res = await fetch(assetUrl, { cache: 'default' });
+        if (res && res.ok) {
+          await cache.put(assetUrl, res);
+        }
+      })
+    );
+  } catch {
+    // Silencieux en mode hors ligne initial
+  }
+}
 
 self.addEventListener('install', (event) => {
-  // Activation immédiate sans bloquer l'utilisateur sur une ancienne version
+  // Activation immédiate sans bloquer le chargement initial de l'application
   event.waitUntil(self.skipWaiting());
 });
 
@@ -12,7 +44,7 @@ self.addEventListener('activate', (event) => {
       const keys = await caches.keys();
       await Promise.all(
         keys
-          .filter((key) => key !== CACHE_VERSION)
+          .filter((key) => key !== CACHE_VERSION && key !== WALLPAPER_CACHE)
           .map((oldKey) => caches.delete(oldKey))
       );
       await self.clients.claim();
@@ -24,6 +56,9 @@ self.addEventListener('message', (event) => {
   const data = event.data || {};
   if (data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+  } else if (data.type === 'PRECACHE_WALLPAPERS') {
+    // Mise en cache asynchrone déclenchée après chargement initial (idle)
+    event.waitUntil(precacheDefaultWallpapers());
   } else if (data.type === 'PURGE_ALL_CACHES') {
     event.waitUntil(
       (async () => {
@@ -47,7 +82,28 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 2. Documents HTML / Navigations SPA -> NetworkOnly / NetworkFirst no-store
+  // 2. Fonds d'écran WebP (/wallpapers/*) -> CacheFirst ultra-rapide hors-ligne
+  if (url.pathname.startsWith('/wallpapers/')) {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(WALLPAPER_CACHE);
+        const hit = await cache.match(req);
+        if (hit) return hit;
+        try {
+          const netRes = await fetch(req);
+          if (netRes && netRes.ok) {
+            cache.put(req, netRes.clone());
+          }
+          return netRes;
+        } catch {
+          return hit || Response.error();
+        }
+      })()
+    );
+    return;
+  }
+
+  // 3. Documents HTML / Navigations SPA -> NetworkOnly / NetworkFirst no-store
   // Empêche l'écran figé sur un ancien index.html pointant vers des chunks JS supprimés
   if (req.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html') {
     event.respondWith(
@@ -59,7 +115,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 3. Assets hashés (/assets/*.js, *.css) -> CacheFirst sécurisé
+  // 4. Assets hashés (/assets/*.js, *.css) -> CacheFirst sécurisé
   if (url.pathname.startsWith('/assets/')) {
     event.respondWith(
       (async () => {

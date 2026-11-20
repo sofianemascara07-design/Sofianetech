@@ -1,6 +1,6 @@
 import React from 'react';
 import { ConnectionMode, LicenseSession } from '../types/automotive';
-import { ShieldCheck, Mic, Sun, Camera, ShieldAlert, Clock, Wrench, Flame } from 'lucide-react';
+import { ShieldCheck, Mic, Sun, Camera, ShieldAlert, Clock, Wrench, Flame, Wallpaper } from 'lucide-react';
 
 export type NavTab =
   | 'diagnostic'
@@ -33,6 +33,7 @@ interface HeaderProps {
   onOpenVoiceModal?: () => void;
   atelierMode?: boolean;
   onToggleAtelierMode?: () => void;
+  onOpenWallpaperDrawer?: () => void;
   isAdmin?: boolean;
   demoRemainingText?: string | null;
 }
@@ -50,6 +51,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenVoiceModal,
   atelierMode = false,
   onToggleAtelierMode,
+  onOpenWallpaperDrawer,
   isAdmin = false,
   demoRemainingText,
 }) => {
@@ -130,6 +132,18 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="text-[11px]">
                   {atelierMode ? 'Atelier ON' : 'Mode Atelier'}
                 </span>
+              </button>
+            )}
+
+            {onOpenWallpaperDrawer && (
+              <button
+                type="button"
+                onClick={onOpenWallpaperDrawer}
+                className="min-h-[36px] px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 border border-slate-700 hover:border-cyan-400 text-slate-200 hover:text-cyan-300 flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                title="Changer le fond d'écran tablette Android (WebP / Galerie)"
+              >
+                <Wallpaper className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="hidden sm:inline text-[11px]">Fond d&apos;écran</span>
               </button>
             )}
 

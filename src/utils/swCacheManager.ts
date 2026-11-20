@@ -1,4 +1,4 @@
-export const APP_BUILD_VERSION = '2026.11.20-AKL-1';
+export const APP_BUILD_VERSION = '2026.11.20-WALLPAPER-1';
 
 export interface CacheHealthState {
   buildVersion: string;
@@ -38,6 +38,21 @@ export function registerAutoUpdateServiceWorker(
     })
     .then((reg) => {
       reg.update().catch(() => undefined);
+      // Mise en cache des fonds d'écran WebP en tâche de fond après rendu initial
+      const scheduleWallpaperPrecache = () => {
+        const target = navigator.serviceWorker.controller || reg.active;
+        if (target) {
+          target.postMessage({ type: 'PRECACHE_WALLPAPERS' });
+        }
+      };
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback(
+          scheduleWallpaperPrecache,
+          { timeout: 4000 }
+        );
+      } else {
+        setTimeout(scheduleWallpaperPrecache, 2500);
+      }
       reg.addEventListener('updatefound', () => {
         const newWorker = reg.installing;
         if (!newWorker) return;
