@@ -480,4 +480,83 @@ export interface DtcRawTranslateResult {
   translatedAt: string;
 }
 
+// =========================================================
+// MODULE 5: TRANSMISSION & TCU DIAGNOSTIC SUITE (UDS 0x7E1/0x7E9)
+// =========================================================
+export type TransmissionType = 'BVA' | 'DSG_DCT' | 'CVT' | 'ROBOTISEE';
 
+export type TransmissionTransportMode = 'SIMULATION' | 'ELM327_BRIDGE' | 'J2534_PASSTHRU';
+
+export type TransmissionSimScenario =
+  | 'optimal_hot'
+  | 'slip_overheat'
+  | 'mechatronic_pressure_drop'
+  | 'solenoid_u0101_limp';
+
+export interface SolenoidCurrentReading {
+  id: string; // Ex: "N88", "N89", "N90", "N91", "N92", "N93"
+  label: string;
+  targetMa: number;
+  actualMa: number;
+  dutyCyclePct: number;
+  status: 'OK' | 'Dérive' | 'Ouvert/C-C';
+}
+
+export interface TransmissionLiveData {
+  transmissionType: TransmissionType;
+  ecuName: string;
+  atfTempC: number;
+  targetPressureBar: number;
+  actualPressureBar: number;
+  currentGear: string;
+  clutchState: string;
+  inputShaftRpm: number;
+  outputShaftRpm: number;
+  slipRpm: number;
+  tcuVoltage: number;
+  solenoids: SolenoidCurrentReading[];
+  timestamp: string;
+}
+
+export interface TransmissionDtc {
+  code: string;
+  rangeCategory: 'P0700-P0999' | 'P1700-P1899' | 'P2700-P2795' | 'U0101 / CAN';
+  descriptionFr: string;
+  severity: 'critical' | 'high' | 'medium';
+  status: 'Actif' | 'Fugitif' | 'Mémorisé';
+  rawHexFrame?: string;
+}
+
+export interface UdsCanFrameLog {
+  id: string;
+  timestamp: string;
+  direction: 'TX -> 0x7E1' | 'RX <- 0x7E9';
+  serviceHex: string;
+  rawHex: string;
+  label: string;
+  transport: TransmissionTransportMode;
+  isNegativeResponse?: boolean;
+}
+
+export interface TransmissionAiDiagnosticResult {
+  probableCause: {
+    category: 'Électrique/Capteur' | 'Hydraulique/Mécatronique' | 'Mécanique';
+    summary: string;
+    details: string[];
+  };
+  controlTests: Array<{
+    tool: 'Multimètre' | 'Oscilloscope' | 'Manomètre / UDS';
+    point: string;
+    expectedValue: string;
+  }>;
+  repairProcedure: string[];
+  aiVerification?: {
+    verified: boolean;
+    provider: string;
+    guardrailsApplied: string[];
+    blockedHallucinations: string[];
+    confidenceLevel: 'STRICT_VERIFIED' | 'WARNING_FILTERED';
+    checkedAt: string;
+  };
+  generatedAt: string;
+}

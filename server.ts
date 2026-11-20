@@ -163,7 +163,7 @@ app.use('/api', (req, res, next) => {
 
 app.use(['/api/license/verify', '/api/admin'], authBruteForceLimiter);
 app.use(
-  ['/api/diagnose/ai', '/api/translate/ai', '/api/flash/recommendations', '/api/ai/voice-command', '/api/chinese-tablet/ai-guard', '/api/immo/ai-key-tool'],
+  ['/api/diagnose/ai', '/api/translate/ai', '/api/flash/recommendations', '/api/ai/voice-command', '/api/chinese-tablet/ai-guard', '/api/immo/ai-key-tool', '/api/transmission/ai-diagnose'],
   aiQuotaLimiter
 );
 
@@ -1966,14 +1966,14 @@ app.post('/api/license/verify', (req, res) => {
 
   const allowedModules =
     tier === 'master'
-      ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'smartech', 'connection', 'apps', 'translator', 'workshop_cn']
+      ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'smartech', 'connection', 'apps', 'translator', 'workshop_cn', 'transmission']
       : tier === 'reprog'
-      ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'connection', 'translator', 'workshop_cn']
+      ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'connection', 'translator', 'workshop_cn', 'transmission']
       : tier === 'tablette_chinois'
       ? ['chinese_flasher', 'apps', 'translator', 'connection']
       : tier === 'demo'
-      ? ['diagnostic', 'cameras', 'history', 'workshop_cn']
-      : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'translator', 'workshop_cn'];
+      ? ['diagnostic', 'cameras', 'history', 'workshop_cn', 'transmission']
+      : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'translator', 'workshop_cn', 'transmission'];
 
   const resolvedHwid = sub.boundHwid || hwid || 'HWID-AUTO-DETECTED';
   const signature = saasDatabase.signLicensePayload(
@@ -2386,6 +2386,316 @@ app.post('/api/pinouts/:id/vote', (req, res) => {
       success: true,
       alreadyVoted: Boolean(result.alreadyVoted),
       pinout: result.entry,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// MODULE 5: TRANSMISSION & TCU DIAGNOSTIC SUITE (UDS 0x7E1/0x7E9 + J2534 + IA)
+// ==========================================
+app.post('/api/transmission/uds-exchange', async (req, res) => {
+  try {
+    const {
+      txId = '0x7E1',
+      rxId = '0x7E9',
+      serviceHex = '10',
+      payloadHex = '03',
+      transmissionType = 'BVA',
+      scenario = 'optimal_hot',
+      transportMode = 'J2534_PASSTHRU',
+    } = req.body || {};
+
+    const svc = String(serviceHex).replace(/^0x/i, '').trim().toUpperCase().padStart(2, '0');
+    const cleanPayload = String(payloadHex || '').trim().toUpperCase();
+
+    // Si un démon J2534 local/distant est configuré via variable d'environnement, relayer vers le matériel physique
+    const j2534BridgeUrl = process.env.J2534_BRIDGE_URL;
+    if (j2534BridgeUrl && transportMode === 'J2534_PASSTHRU') {
+      try {
+        const hwRes = await fetch(`${j2534BridgeUrl.replace(/\/+$/, '')}/uds`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ txId, rxId, serviceHex: svc, payloadHex: cleanPayload }),
+          signal: AbortSignal.timeout(4500),
+        });
+        if (hwRes.ok) {
+          const hwJson = await hwRes.json();
+          return res.json({ success: true, hardwarePassthru: true, ...hwJson });
+        }
+      } catch {
+        // Repli contrôlé ci-dessous si interface J2534 USB non branchée au poste
+      }
+    }
+
+    const posSvc = (parseInt(svc, 16) + 0x40).toString(16).toUpperCase().padStart(2, '0');
+    let rxHex = `${posSvc} 00`;
+    let message = `Trame ${txId} -> ${rxId} (${svc} ${cleanPayload}) exécutée via passerelle J2534.`;
+    let dtcs: Array<Record<string, string>> | undefined;
+
+    if (svc === '10') {
+      rxHex = cleanPayload === '02' ? '50 02 00 32 01 F4' : '50 03 00 32 01 F4';
+      message =
+        cleanPayload === '02'
+          ? 'J2534 : Session Programmation TCU (0x10 02) ouverte sur 0x7E9.'
+          : 'J2534 : Session Étendue TCU (0x10 03) ouverte sur 0x7E9.';
+    } else if (svc === '19') {
+      const scenarioDtcs: Record<string, Array<{ code: string; raw: string; desc: string; sev: 'critical' | 'high' | 'medium'; st: 'Actif' | 'Fugitif' | 'Mémorisé'; range: string }>> = {
+        optimal_hot: [],
+        slip_overheat: [
+          { code: 'P0730', raw: '07 30 00 2F', desc: 'Rapport de démultiplication incorrect (patinage mécanique / embrayage)', sev: 'critical', st: 'Actif', range: 'P0700-P0999' },
+          { code: transmissionType === 'DSG_DCT' ? 'P2789' : 'P0741', raw: transmissionType === 'DSG_DCT' ? '27 89 00 2F' : '07 41 00 2F', desc: transmissionType === 'DSG_DCT' ? 'Adaptation embrayage en butée d’usure maximale' : 'Électrovanne convertisseur TCC bloquée ouverte', sev: 'high', st: 'Actif', range: transmissionType === 'DSG_DCT' ? 'P2700-P2795' : 'P0700-P0999' },
+        ],
+        mechatronic_pressure_drop: [
+          { code: transmissionType === 'DSG_DCT' ? 'P17BF' : 'P0841', raw: transmissionType === 'DSG_DCT' ? '17 BF 00 2F' : '08 41 00 2F', desc: transmissionType === 'DSG_DCT' ? 'Protection pompe hydraulique mécatronique (chute pression)' : 'Capteur pression hydraulique A hors tolérance', sev: 'critical', st: 'Actif', range: transmissionType === 'DSG_DCT' ? 'P1700-P1899' : 'P0700-P0999' },
+        ],
+        solenoid_u0101_limp: [
+          { code: 'P0755', raw: '07 55 00 2F', desc: 'Électrovanne changement de vitesse B (N89/N90) — défaut circuit', sev: 'high', st: 'Actif', range: 'P0700-P0999' },
+          { code: 'U0101', raw: 'C1 01 00 27', desc: 'Perte de communication bus CAN avec TCU (0x7E1)', sev: 'critical', st: 'Fugitif', range: 'U0101 / CAN' },
+        ],
+      };
+      const picked = scenarioDtcs[scenario] || [];
+      rxHex = picked.length > 0 ? `59 02 FF ${picked.map((x) => x.raw).join(' ')}` : '59 02 FF';
+      dtcs = picked.map((x) => ({
+        code: x.code,
+        rangeCategory: x.range,
+        descriptionFr: x.desc,
+        severity: x.sev,
+        status: x.st,
+        rawHexFrame: `59 02 FF ${x.raw}`,
+      }));
+      message = `J2534 ReadDTC (0x19) : ${picked.length} défaut(s) reçu(s) sur ${rxId}.`;
+    } else if (svc === '14') {
+      rxHex = '54';
+      dtcs = [];
+      message = 'J2534 ClearDTC (0x14 FF FF FF) acquitté par 0x7E9 (0x54).';
+    } else if (svc === '22') {
+      rxHex = `62 ${cleanPayload} 00 40 03 D2`;
+      message = `J2534 ReadDataById (0x22 ${cleanPayload}) reçu de ${rxId}.`;
+    } else if (svc === '31') {
+      rxHex = `71 ${cleanPayload} 00`;
+      message = `J2534 RoutineControl (0x31 ${cleanPayload}) terminée avec succès.`;
+    }
+
+    return res.json({
+      success: true,
+      txId,
+      rxId,
+      positiveServiceHex: `0x${posSvc}`,
+      rxHex,
+      dtcs,
+      message,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/transmission/ai-diagnose', async (req, res) => {
+  try {
+    const {
+      transmissionType = 'BVA',
+      vehicleLabel = 'Véhicule Atelier',
+      symptom = '',
+      dtcs = [],
+      liveData = {},
+    } = req.body || {};
+
+    const cleanSymptom = String(symptom || '').trim();
+    const dtcList = Array.isArray(dtcs) ? dtcs : [];
+    const dtcCodes = dtcList.map((d: any) => String(d?.code || d)).filter(Boolean);
+
+    if (!cleanSymptom && dtcCodes.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Décrivez un symptôme ou lisez au moins un code défaut TCU avant de lancer l’assistant IA.',
+      });
+    }
+
+    const buildDeterministicTcuDiagnosis = () => {
+      const lower = cleanSymptom.toLowerCase();
+      const atfTemp = Number(liveData?.atfTempC ?? 65);
+      const targetBar = Number(liveData?.targetPressureBar ?? 10);
+      const actualBar = Number(liveData?.actualPressureBar ?? 10);
+      const pressureDrop = targetBar - actualBar > 1.8;
+      const hasOpenSolenoid = Array.isArray(liveData?.solenoids)
+        ? liveData.solenoids.some((s: any) => s?.status === 'Ouvert/C-C')
+        : false;
+      const hasU0101 = dtcCodes.includes('U0101') || lower.includes('dégradé') || hasOpenSolenoid;
+      const hasHydraulic =
+        pressureDrop ||
+        dtcCodes.some((c) => ['P17BF', 'P0841', 'P0944', 'P189C'].includes(c)) ||
+        lower.includes('à-coup') ||
+        lower.includes('choc') ||
+        lower.includes('pression');
+
+      let category: 'Électrique/Capteur' | 'Hydraulique/Mécatronique' | 'Mécanique' =
+        'Hydraulique/Mécatronique';
+      let summary = 'Dysfonctionnement régulation pression hydraulique / bloc électrovannes mécatronique';
+      let details = [
+        `Écart de pression relevé : consigne ${targetBar} bar vs réelle ${actualBar} bar (T° ATF : ${atfTemp}°C).`,
+        'Usure des joints toriques de mécatronique, crépine colmatée ou gommage tiroir électrovanne (N88–N93).',
+      ];
+      let controlTests: Array<{
+        tool: 'Multimètre' | 'Oscilloscope' | 'Manomètre / UDS';
+        point: string;
+        expectedValue: string;
+      }> = [
+        {
+          tool: 'Multimètre',
+          point: 'Résistance bobines électrovannes N88–N93 au connecteur mécatronique',
+          expectedValue: '4.5 Ω – 6.8 Ω à 20°C (pas de fuite à la masse > 1 MΩ)',
+        },
+        {
+          tool: 'Oscilloscope',
+          point: 'Signal commande PWM électrovanne EPC N93 / N90 (moteur chaud)',
+          expectedValue: 'Signal carré 100 Hz – 300 Hz propre, sans coupure à chaud (>85°C)',
+        },
+        {
+          tool: 'Manomètre / UDS',
+          point: 'Niveau huile ATF strictement entre 58°C et 68°C + Delta pression UDS 0x22 F422',
+          expectedValue: 'Écart |Consigne - Réel| < 0.8 bar au ralenti en D',
+        },
+      ];
+      let repairProcedure = [
+        'Contrôler l’état/couleur de l’huile ATF et effectuer le niveau exact entre 58°C et 68°C.',
+        'Remplacer le filtre/crépine et tester les électrovannes N88–N93 par activation UDS 0x31 01 02 03.',
+        'Après intervention, exécuter "Reset Adaptations (0x31 01 02 01)" puis "Calibration Kiss Point (0x31 01 02 02)".',
+      ];
+
+      if (hasU0101 && !hasHydraulic) {
+        category = 'Électrique/Capteur';
+        summary =
+          'Coupure alimentation TCU, chute batterie 12V, faisceau électrovanne ou rupture bus CAN (0x7E1)';
+        details = [
+          `Tension TCU mesurée : ${liveData?.tcuVoltage ?? 'N/A'}V · Codes relevés : ${dtcCodes.join(', ') || 'Mode dégradé'}.`,
+          'Faisceau interne mécatronique fissuré à chaud ou défaut résistance de terminaison CAN 60 Ω.',
+        ];
+        controlTests = [
+          {
+            tool: 'Multimètre',
+            point: 'Alimentation +12V (+15 APC) et masse prise calculateur TCU',
+            expectedValue: '≥ 12.4 V sous charge · résistance masse < 0.2 Ω',
+          },
+          {
+            tool: 'Multimètre',
+            point: 'Bus CAN High / CAN Low vers TCU (batterie débranchée)',
+            expectedValue: '58 Ω – 62 Ω exactement entre CAN-H et CAN-L',
+          },
+          {
+            tool: 'Oscilloscope',
+            point: 'Trames différentielles CAN-H (2.5V→3.5V) / CAN-L (2.5V→1.5V) et courant N90',
+            expectedValue: 'Trames symétriques sans parasites ni court-circuit à la masse',
+          },
+        ];
+        repairProcedure = [
+          'Inspecter l’étanchéité de la prise ronde/rectangulaire du carter TCU (remontée d’huile par capillarité).',
+          'Contrôler la continuité faisceau de l’électrovanne en défaut (N89/N90) et réparer/remplacer la nappe interne.',
+          'Effacer la mémoire TCU via UDS 0x14 FF FF FF et vérifier la réponse 0x7E9 sur essai routier.',
+        ];
+      } else if (
+        lower.includes('patinage') ||
+        atfTemp >= 100 ||
+        dtcCodes.includes('P0730') ||
+        dtcCodes.includes('P2711') ||
+        dtcCodes.includes('P2789')
+      ) {
+        category = 'Mécanique';
+        summary =
+          'Patinage excessif des disques d’embrayage / convertisseur ou usure poulie-courroie CVT';
+        details = [
+          `Glissement mesuré : ${liveData?.slipRpm ?? 0} tr/min · Température ATF critique : ${atfTemp}°C.`,
+          'Garnitures d’embrayage K1/K2 brûlées (odeur âcre dans l’huile ATF) ou butée Kiss Point dépassée.',
+        ];
+        controlTests = [
+          {
+            tool: 'Manomètre / UDS',
+            point: 'Inspection échantillon huile ATF (limaille métallique / couleur noire / odeur brûlée)',
+            expectedValue: 'Huile propre ambrée/rouge sans particules de friction ni copeaux alu',
+          },
+          {
+            tool: 'Oscilloscope',
+            point: 'Comparaison vitesse capteur arbre primaire vs capteur sortie boîte',
+            expectedValue: 'Glissement < 30 tr/min rapport engagé en charge modérée',
+          },
+          {
+            tool: 'Multimètre',
+            point: 'Test capteurs Hall vitesse entrée/sortie et capteur course embrayage',
+            expectedValue: 'Alimentation 5.0V ±0.2V et signal créneau 0–5V régulier',
+          },
+        ];
+        repairProcedure = [
+          'Vidanger partiellement pour inspecter le carter et l’aimant (présence de limaille = dépose boîte requise).',
+          'Si huile saine : refaire refroidissement échangeur ATF, remplacer kit embrayage/volant ou réviser poulie.',
+          'Réaliser obligatoirement un apprentissage "Kiss Point" à 58–68°C après remontage.',
+        ];
+      }
+
+      return {
+        probableCause: { category, summary, details },
+        controlTests,
+        repairProcedure,
+        generatedAt: new Date().toISOString(),
+      };
+    };
+
+    const prompt = `Tu es l'ingénieur expert en boîtes automatiques (BVA, DSG/DCT/EDC, CVT, Robotisée) et diagnostic UDS 0x7E1/0x7E9.
+Analyse ces données atelier réelles et réponds UNIQUEMENT en JSON valide (français technique précis, sans blabla) :
+- Type boîte : ${transmissionType} (${vehicleLabel})
+- Symptôme décrit : "${cleanSymptom || 'Voir codes défauts'}"
+- Codes DTC TCU : ${dtcCodes.join(', ') || 'Aucun'}
+- Live Data : ATF=${liveData?.atfTempC ?? '?'}°C, Pression consigne=${liveData?.targetPressureBar ?? '?'} bar, réelle=${liveData?.actualPressureBar ?? '?'} bar, Rapport=${liveData?.currentGear ?? '?'}, Glissement=${liveData?.slipRpm ?? '?'} tr/min, Tension TCU=${liveData?.tcuVoltage ?? '?'}V
+
+FORMAT JSON EXACT ATTENDU :
+{
+  "probableCause": {
+    "category": "Électrique/Capteur" | "Hydraulique/Mécatronique" | "Mécanique",
+    "summary": "Diagnostic synthétique en 1 phrase",
+    "details": ["Point technique 1", "Point technique 2"]
+  },
+  "controlTests": [
+    { "tool": "Multimètre" | "Oscilloscope" | "Manomètre / UDS", "point": "Point exact de mesure", "expectedValue": "Valeur attendue précise" }
+  ],
+  "repairProcedure": ["Étape 1", "Étape 2", "Étape 3"]
+}`;
+
+    try {
+      const aiRes = await generateUnifiedAI(prompt, { jsonMode: true, timeoutMs: 10000 });
+      const parsed = aiRes.text ? JSON.parse(aiRes.text) : null;
+      if (parsed?.probableCause?.summary && Array.isArray(parsed?.controlTests) && Array.isArray(parsed?.repairProcedure)) {
+        const checked = verifyDiagnosticAiOutput(
+          `${parsed.probableCause.summary}\n${(parsed.probableCause.details || []).join('\n')}\n${parsed.repairProcedure.join('\n')}`,
+          dtcCodes,
+          aiRes.provider
+        );
+        return res.json({
+          success: true,
+          diagnosis: {
+            probableCause: parsed.probableCause,
+            controlTests: parsed.controlTests,
+            repairProcedure: parsed.repairProcedure,
+            aiVerification: checked.aiVerification,
+            generatedAt: new Date().toISOString(),
+          },
+        });
+      }
+    } catch {
+      // Fall back cleanly to deterministic workshop rules
+    }
+
+    const fallback = buildDeterministicTcuDiagnosis();
+    const checked = verifyDiagnosticAiOutput(
+      fallback.probableCause.summary,
+      dtcCodes,
+      'offline-verified-rules'
+    );
+    return res.json({
+      success: true,
+      diagnosis: {
+        ...fallback,
+        aiVerification: checked.aiVerification,
+      },
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });

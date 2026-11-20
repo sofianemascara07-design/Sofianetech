@@ -15,6 +15,7 @@ import { BodyComfortControl } from './components/BodyComfortControl';
 import { KeylessProximitySecurity } from './components/KeylessProximitySecurity';
 import { CameraIntegration } from './components/CameraIntegration';
 import { ChinaWorkshopToolsHub } from './components/ChinaWorkshopToolsHub';
+import { TransmissionTcuSuite } from './components/TransmissionTcuSuite';
 import { AdminSubscribersPanel } from './components/AdminSubscribersPanel';
 import { ConnectModal } from './components/ConnectModal';
 import { LicenseGate } from './components/LicenseGate';
@@ -120,7 +121,9 @@ export default function App() {
     const isPermitted =
       allowed.includes(activeTab) ||
       (activeTab === 'workshop_cn' &&
-        (allowed.includes('diagnostic') || allowed.includes('cameras')));
+        (allowed.includes('diagnostic') || allowed.includes('cameras'))) ||
+      (activeTab === 'transmission' &&
+        (allowed.includes('diagnostic') || allowed.includes('flash')));
     if (allowed.length > 0 && !isPermitted) {
       setActiveTab((allowed[0] as NavTab) || 'diagnostic');
     }
@@ -286,6 +289,9 @@ export default function App() {
     if (tab === 'workshop_cn') {
       return allowed.includes('workshop_cn') || allowed.includes('diagnostic') || allowed.includes('cameras');
     }
+    if (tab === 'transmission') {
+      return allowed.includes('transmission') || allowed.includes('diagnostic') || allowed.includes('flash');
+    }
     return allowed.includes(tab);
   };
 
@@ -432,6 +438,14 @@ export default function App() {
 
         {activeTab === 'workshop_cn' && canRenderTab('workshop_cn') && (
           <ChinaWorkshopToolsHub selectedVehicle={selectedVehicle} />
+        )}
+
+        {activeTab === 'transmission' && canRenderTab('transmission') && (
+          <TransmissionTcuSuite
+            selectedVehicle={selectedVehicle}
+            isConnected={isConnected}
+            onOpenConnectModal={() => setIsConnectModalOpen(true)}
+          />
         )}
       </main>
 

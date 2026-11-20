@@ -16,6 +16,7 @@ export type NavTab =
   | 'keyless'
   | 'cameras'
   | 'workshop_cn'
+  | 'transmission'
   | 'admin';
 
 interface HeaderProps {
@@ -74,6 +75,9 @@ export const Header: React.FC<HeaderProps> = ({
     }
     if (tab === 'workshop_cn') {
       return mods.includes('workshop_cn') || mods.includes('diagnostic') || mods.includes('cameras');
+    }
+    if (tab === 'transmission') {
+      return mods.includes('transmission') || mods.includes('diagnostic') || mods.includes('flash');
     }
     return mods.includes(tab);
   };
@@ -250,6 +254,20 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Wrench className="w-3.5 h-3.5 text-cyan-400" />
               <span>Atelier CN (Pinouts · ADAS · VIN)</span>
+            </button>
+          )}
+
+          {canAccess('transmission') && (
+            <button
+              onClick={() => onSelectTab('transmission')}
+              className={`whitespace-nowrap transition-colors pb-1 border-b-2 cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'transmission'
+                  ? 'text-cyan-300 border-cyan-400 font-bold'
+                  : 'border-transparent hover:text-cyan-300 text-slate-300'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-cyan-400" />
+              <span>Boîte &amp; TCU UDS</span>
             </button>
           )}
 
