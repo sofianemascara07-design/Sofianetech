@@ -420,6 +420,7 @@ export default function App() {
             selectedVehicle={selectedVehicle}
             connectionMode={connectionMode}
             isConnected={isConnected}
+            batteryVoltage={batteryVoltage}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
             onSelectTab={setActiveTab}
           />

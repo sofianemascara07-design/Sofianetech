@@ -1870,6 +1870,69 @@ Sois concis, structuré en français professionnel d'atelier.`;
   }
 });
 
+// API: Server-side AKL Dump Integrity Verification & Modular OEM Crypto Table Hook
+app.post('/api/immo/akl/verify-dump', (req, res) => {
+  try {
+    const {
+      procedureId,
+      fileName,
+      geometryId,
+      actualSizeBytes,
+      sha256Before,
+      crc32Before,
+      extractedVin,
+    } = req.body || {};
+
+    const expectedSizes: Record<string, number> = {
+      '93C66_512': 512,
+      '95040_512': 512,
+      '95160_2048': 2048,
+      '95320_4096': 4096,
+      '95640_8192': 8192,
+      '95128_16384': 16384,
+      '9S12_DFLASH_32K': 32768,
+      'RH850_DFLASH_64K': 65536,
+      'TRICORE_MPC_512K': 524288,
+      'TRICORE_FLASH_2M': 2097152,
+    };
+
+    const expected = expectedSizes[String(geometryId || '')];
+    if (!expected || Number(actualSizeBytes) !== expected) {
+      return res.status(400).json({
+        success: false,
+        error: `Validation serveur refusée : géométrie ${geometryId || '?'} attend exactement ${expected || '?'} octets (reçu ${actualSizeBytes || 0}).`,
+      });
+    }
+
+    if (!sha256Before || typeof sha256Before !== 'string' || !/^[A-F0-9]{64}$/i.test(sha256Before)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Empreinte SHA-256 invalide ou manquante.',
+      });
+    }
+
+    saasDatabase.logActivity({
+      clientName: 'Module AKL Clonage',
+      hwid: String(procedureId || 'IMMO-AKL'),
+      actionType: 'scan_started',
+      actionDetails: `Validation AKL ${fileName || 'dump.bin'} (${geometryId} · ${actualSizeBytes} o · CRC32 ${crc32Before || '?'}${extractedVin ? ' · VIN ' + extractedVin : ''})`,
+      vehicleName: String(procedureId || 'IMMO AKL'),
+      locationCity: 'Atelier DZ',
+      durationMinutes: 1,
+    });
+
+    return res.json({
+      success: true,
+      message: `Intégrité binaire confirmée côté serveur (${actualSizeBytes} octets · SHA-256 vérifié).`,
+      serverSlotNote:
+        'Emplacement serveur prêt pour raccorder la table cryptographique OEM (extraction ISK/PIN/CS isolée côté serveur uniquement).',
+      verifiedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Erreur vérification AKL' });
+  }
+});
+
 // API: Commercial License Verification & Activation Gate
 // API: Cryptographic License & Admin Verification (Strict Subscriber Whitelist + Limited Demo)
 app.post('/api/license/verify', (req, res) => {

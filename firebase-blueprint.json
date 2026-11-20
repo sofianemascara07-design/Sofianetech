@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "AklProcedureCatalogItem": {
+      "title": "AklProcedureCatalogItem",
+      "description": "Référentiel véhicule vérifié pour procédures Add Key / All Keys Lost (sans secrets cryptographiques).",
+      "type": "object",
+      "properties": {
+        "catalogId": { "type": "string", "minLength": 2, "maxLength": 80, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "brand": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "model": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "yearRange": { "type": "string", "minLength": 4, "maxLength": 20 },
+        "immoSystem": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "recommendedChip": { "type": "string", "minLength": 2, "maxLength": 60 },
+        "precodingMode": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "mechanicalBlade": { "type": "string", "minLength": 2, "maxLength": 30 },
+        "remoteFrequency": { "type": "string", "minLength": 2, "maxLength": 30 },
+        "riskLevel": { "type": "string", "enum": ["Faible", "Moyen", "Élevé (SGW)", "Critique (Anti-Brick)"] },
+        "sgwRequired": { "type": "boolean" },
+        "minBatteryVoltage": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["catalogId", "brand", "model", "yearRange", "immoSystem", "recommendedChip", "riskLevel", "sgwRequired", "minBatteryVoltage"]
+    },
+    "AklDumpAuditSession": {
+      "title": "AklDumpAuditSession",
+      "description": "Journal immuable d'analyse de dump EEPROM/Flash (métadonnées et empreintes uniquement, aucun binaire brut stocké en clair).",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "minLength": 4, "maxLength": 100, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "vehicleBrand": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "vehicleModel": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "operationMode": { "type": "string", "enum": ["ADD_KEY_CLONE", "ALL_KEYS_LOST"] },
+        "geometryId": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "exactSizeBytes": { "type": "integer" },
+        "sha256Before": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[A-F0-9]{64}$" },
+        "crc32Before": { "type": "string", "minLength": 8, "maxLength": 8, "pattern": "^[A-F0-9]{8}$" },
+        "sha256After": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[A-F0-9]{64}$" },
+        "crc32After": { "type": "string", "minLength": 8, "maxLength": 8, "pattern": "^[A-F0-9]{8}$" },
+        "backupConfirmed": { "type": "boolean" },
+        "safetyChecklistConfirmed": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["analyzed", "backup_created", "exported_akl_ready"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sessionId", "ownerUid", "vehicleBrand", "vehicleModel", "operationMode", "geometryId", "exactSizeBytes", "sha256Before", "crc32Before", "backupConfirmed", "safetyChecklistConfirmed", "status", "createdAt"]
+    },
+    "WorkshopBackupRecord": {
+      "title": "WorkshopBackupRecord",
+      "description": "Preuve horodatée de sauvegarde du dump original avant toute écriture AKL.",
+      "type": "object",
+      "properties": {
+        "backupId": { "type": "string", "minLength": 4, "maxLength": 100, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "sessionId": { "type": "string", "minLength": 4, "maxLength": 100, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "originalFileName": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "backupFileName": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "sha256Original": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[A-F0-9]{64}$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["backupId", "sessionId", "ownerUid", "originalFileName", "backupFileName", "sha256Original", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/immo_akl_catalog/{catalogId}": {
+      "schema": { "$ref": "#/entities/AklProcedureCatalogItem" },
+      "description": "Catalogue public authentifié (lecture seule technicien, écriture admin vérifié) des compatibilités AKL."
+    },
+    "/users/{userId}/akl_sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/AklDumpAuditSession" },
+      "description": "Sessions d'analyse et d'export AKL strictement isolées par technicien authentifié."
+    },
+    "/users/{userId}/akl_sessions/{sessionId}/backups/{backupId}": {
+      "schema": { "$ref": "#/entities/WorkshopBackupRecord" },
+      "description": "Sous-collection immuable attestant la création du backup original horodaté avant export AKL."
+    }
+  }
+}

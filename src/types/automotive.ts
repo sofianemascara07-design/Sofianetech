@@ -534,6 +534,94 @@ export interface LocalAgentStatus {
   lastPingAt: string;
 }
 
+// =========================================================
+// MODULE 6: IMMO CLONAGE & ALL KEYS LOST (AKL) SÉCURISÉ
+// =========================================================
+export type AklKeyOperationMode = 'ADD_KEY_CLONE' | 'ALL_KEYS_LOST';
+
+export type AklRiskLevel = 'Faible' | 'Moyen' | 'Élevé (SGW)' | 'Critique (Anti-Brick)';
+
+export type AklProcedureMethod =
+  | 'OBD'
+  | 'OBD + Bypass SGW'
+  | 'EEPROM Banc'
+  | 'Bench MCU (D-Flash/P-Flash)';
+
+export interface EepromGeometryProfile {
+  id: string;
+  label: string;
+  category: 'EEPROM' | 'MCU_DFLASH' | 'FLASH_TRICORE';
+  exactSizeBytes: number;
+  familyHint: string;
+  notes: string;
+}
+
+export interface AklTransponderSpec {
+  chipName: string;
+  chipTechnology: string;
+  transponderOnly: boolean;
+  supportsRemoteCentralLocking: boolean;
+  warningNote: string;
+  precodingMode: string;
+}
+
+export interface AklVehicleProcedure {
+  id: string;
+  brand: string;
+  model: string;
+  yearRange: string;
+  immoSystem: string;
+  mcuOrEeprom: string;
+  defaultGeometryId: string;
+  transponder: AklTransponderSpec;
+  mechanicalBlade: string;
+  remoteFrequency: string;
+  riskLevel: AklRiskLevel;
+  sgwRequired: boolean;
+  minBatteryVoltage: number;
+  sensitiveEcuWarning: string | null;
+  blockingConfirmations: string[];
+  procedureMethod: AklProcedureMethod;
+  steps: string[];
+  cryptoTablePlugSlot: string;
+}
+
+export interface AklHexPreviewRow {
+  offsetHex: string;
+  hexBytes: string[];
+  asciiText: string;
+}
+
+export interface AklDumpChecksums {
+  crc32Hex: string;
+  sum16Hex: string;
+  sum8Hex: string;
+  sha256Hex: string;
+}
+
+export interface AklDumpAnalysisResult {
+  success: boolean;
+  blockedReason: string | null;
+  fileName: string;
+  fileFormat: 'BIN' | 'EEP' | 'HEX';
+  geometryId: string;
+  geometryLabel: string;
+  expectedSizeBytes: number;
+  actualSizeBytes: number;
+  sizeMatchesGeometry: boolean;
+  checksumBefore: AklDumpChecksums;
+  checksumAfter: AklDumpChecksums | null;
+  entropyBits: number;
+  extractedVin: string | null;
+  extractedHardwareRefs: string[];
+  keySlotObservation: string;
+  cryptoTableStatus: string;
+  hexPreviewRows: AklHexPreviewRow[];
+  backupFileName: string;
+  readyFileName: string;
+  analyzedAt: string;
+}
+
 export type TransmissionSimScenario =
   | 'optimal_hot'
   | 'slip_overheat'

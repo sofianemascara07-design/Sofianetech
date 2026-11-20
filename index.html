@@ -20,8 +20,8 @@
         <div id="autopro-boot-fallback" style="display:none;max-width:420px;margin-top:8px;padding:14px;border-radius:12px;background:#0f172a;border:1px solid #334155;color:#cbd5e1;font-size:12px;line-height:1.5;">
           <div style="font-weight:700;color:#fbbf24;margin-bottom:6px;">Chargement bloqué (cache navigateur ou réseau lent)</div>
           <div style="margin-bottom:10px;">Si une ancienne version est restée en cache après la mise à jour, cliquez ci-dessous pour actualiser sans cache :</div>
-          <button type="button" onclick="window.location.replace(window.location.pathname + '?v=' + Date.now())" style="padding:8px 14px;border-radius:8px;border:none;background:#06b6d4;color:#020617;font-weight:700;font-size:12px;cursor:pointer;">
-            Recharger la dernière version
+          <button type="button" onclick="(async function(){try{if('serviceWorker' in navigator){var regs=await navigator.serviceWorker.getRegistrations();await Promise.all(regs.map(function(r){return r.unregister();}));}if('caches' in window){var keys=await window.caches.keys();await Promise.all(keys.map(function(k){return window.caches.delete(k);}));}}catch(e){}window.location.replace(window.location.pathname+'?v='+Date.now());})()" style="padding:8px 14px;border-radius:8px;border:none;background:#06b6d4;color:#020617;font-weight:700;font-size:12px;cursor:pointer;">
+            Purger le Cache &amp; Recharger
           </button>
         </div>
       </div>
@@ -30,7 +30,7 @@
       setTimeout(function () {
         var el = document.getElementById('autopro-boot-fallback');
         if (el) el.style.display = 'block';
-      }, 9000);
+      }, 7000);
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

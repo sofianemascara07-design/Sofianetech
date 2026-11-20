@@ -1,0 +1,171 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default Deny Catch-All (Filet de sécurité global)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitives de sécurité réutilisables ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedEmail() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedEmail() && (
+        request.auth.token.email == 'sofianemascara07@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(userId) {
+      return isVerifiedEmail() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 2 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Blueprint : Catalogue AKL ---
+    function isValidAklCatalogItem(data) {
+      return data.keys().hasAll([
+          'catalogId', 'brand', 'model', 'yearRange', 'immoSystem',
+          'recommendedChip', 'riskLevel', 'sgwRequired', 'minBatteryVoltage'
+        ]) &&
+        data.keys().hasOnly([
+          'catalogId', 'brand', 'model', 'yearRange', 'immoSystem',
+          'recommendedChip', 'precodingMode', 'mechanicalBlade', 'remoteFrequency',
+          'riskLevel', 'sgwRequired', 'minBatteryVoltage', 'updatedAt'
+        ]) &&
+        isValidId(data.catalogId) &&
+        data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 40 &&
+        data.model is string && data.model.size() >= 1 && data.model.size() <= 60 &&
+        data.yearRange is string && data.yearRange.size() >= 4 && data.yearRange.size() <= 20 &&
+        data.immoSystem is string && data.immoSystem.size() >= 2 && data.immoSystem.size() <= 80 &&
+        data.recommendedChip is string && data.recommendedChip.size() >= 2 && data.recommendedChip.size() <= 60 &&
+        data.riskLevel in ['Faible', 'Moyen', 'Élevé (SGW)', 'Critique (Anti-Brick)'] &&
+        data.sgwRequired is bool &&
+        data.minBatteryVoltage is number && data.minBatteryVoltage >= 12.0 && data.minBatteryVoltage <= 15.0;
+    }
+
+    // --- Validation Blueprint : Session AKL ---
+    function isValidAklSession(data, userId) {
+      return data.keys().hasAll([
+          'sessionId', 'ownerUid', 'vehicleBrand', 'vehicleModel', 'operationMode',
+          'geometryId', 'exactSizeBytes', 'sha256Before', 'crc32Before',
+          'backupConfirmed', 'safetyChecklistConfirmed', 'status', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'sessionId', 'ownerUid', 'vehicleBrand', 'vehicleModel', 'operationMode',
+          'geometryId', 'exactSizeBytes', 'sha256Before', 'crc32Before',
+          'sha256After', 'crc32After', 'backupConfirmed', 'safetyChecklistConfirmed',
+          'status', 'createdAt'
+        ]) &&
+        isValidId(data.sessionId) &&
+        data.ownerUid == userId &&
+        data.ownerUid == request.auth.uid &&
+        data.vehicleBrand is string && data.vehicleBrand.size() >= 1 && data.vehicleBrand.size() <= 40 &&
+        data.vehicleModel is string && data.vehicleModel.size() >= 1 && data.vehicleModel.size() <= 60 &&
+        data.operationMode in ['ADD_KEY_CLONE', 'ALL_KEYS_LOST'] &&
+        data.geometryId is string && data.geometryId.size() >= 2 && data.geometryId.size() <= 40 &&
+        data.exactSizeBytes is int && data.exactSizeBytes >= 128 && data.exactSizeBytes <= 16777216 &&
+        data.sha256Before is string && data.sha256Before.matches('^[A-F0-9]{64}$') &&
+        data.crc32Before is string && data.crc32Before.matches('^[A-F0-9]{8}$') &&
+        data.backupConfirmed is bool &&
+        data.safetyChecklistConfirmed is bool &&
+        data.status in ['analyzed', 'backup_created', 'exported_akl_ready'] &&
+        data.createdAt is timestamp;
+    }
+
+    // --- Validation Blueprint : Backup Horodaté ---
+    function isValidBackupRecord(data, userId, sessionId) {
+      return data.keys().hasAll([
+          'backupId', 'sessionId', 'ownerUid', 'originalFileName',
+          'backupFileName', 'sha256Original', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'backupId', 'sessionId', 'ownerUid', 'originalFileName',
+          'backupFileName', 'sha256Original', 'createdAt'
+        ]) &&
+        isValidId(data.backupId) &&
+        data.sessionId == sessionId &&
+        data.ownerUid == userId &&
+        data.ownerUid == request.auth.uid &&
+        data.originalFileName is string && data.originalFileName.size() >= 1 && data.originalFileName.size() <= 140 &&
+        data.backupFileName is string && data.backupFileName.size() >= 1 && data.backupFileName.size() <= 180 &&
+        data.sha256Original is string && data.sha256Original.matches('^[A-F0-9]{64}$') &&
+        data.createdAt is timestamp;
+    }
+
+    // 1. Catalogue AKL : lecture pour techniciens authentifiés, écriture Admin vérifié uniquement
+    match /immo_akl_catalog/{catalogId} {
+      allow get: if isVerifiedEmail() && isValidId(catalogId);
+      allow list: if isVerifiedEmail();
+      allow create, update: if isAdmin() && isValidId(catalogId) && isValidAklCatalogItem(incoming());
+      allow delete: if isAdmin() && isValidId(catalogId);
+    }
+
+    // 2. Sessions AKL : strictement isolées au technicien propriétaire
+    match /users/{userId}/akl_sessions/{sessionId} {
+      allow get: if isOwner(userId) && isValidId(sessionId);
+      allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+
+      allow create: if isOwner(userId) &&
+        isValidId(sessionId) &&
+        isValidAklSession(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().status == 'analyzed';
+
+      allow update: if isOwner(userId) &&
+        isValidId(sessionId) &&
+        isValidAklSession(incoming(), userId) &&
+        // Verrouillage état terminal : une session exportée est immuable
+        existing().status != 'exported_akl_ready' &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().sha256Before == existing().sha256Before &&
+        (
+          (
+            incoming().status == 'backup_created' &&
+            incoming().backupConfirmed == true &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['backupConfirmed', 'status'])
+          ) ||
+          (
+            incoming().status == 'exported_akl_ready' &&
+            existing().backupConfirmed == true &&
+            incoming().safetyChecklistConfirmed == true &&
+            exists(/databases/$(database)/documents/users/$(userId)/akl_sessions/$(sessionId)/backups/$(sessionId)) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['sha256After', 'crc32After', 'safetyChecklistConfirmed', 'status'])
+          )
+        );
+
+      allow delete: if false;
+
+      // 3. Sous-collection Backups (Création seule, immuable anti-effacement)
+      match /backups/{backupId} {
+        allow get: if isOwner(userId) && isValidId(sessionId) && isValidId(backupId);
+        allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+        allow create: if isOwner(userId) &&
+          isValidId(sessionId) &&
+          isValidId(backupId) &&
+          exists(/databases/$(database)/documents/users/$(userId)/akl_sessions/$(sessionId)) &&
+          isValidBackupRecord(incoming(), userId, sessionId) &&
+          incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+  }
+}

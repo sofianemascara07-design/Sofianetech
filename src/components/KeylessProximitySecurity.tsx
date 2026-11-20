@@ -34,11 +34,13 @@ import {
 } from 'lucide-react';
 import { Vehicle, ConnectionMode, DigitalKey } from '../types/automotive';
 import { apiFetch } from '../utils/apiBridge';
+import { AllKeysLostModule } from './AllKeysLostModule';
 
 interface KeylessProximitySecurityProps {
   selectedVehicle: Vehicle;
   connectionMode: ConnectionMode;
   isConnected: boolean;
+  batteryVoltage?: number;
   onOpenConnectModal: () => void;
   onSelectTab?: (tab: any) => void;
 }
@@ -47,6 +49,7 @@ export const KeylessProximitySecurity: React.FC<KeylessProximitySecurityProps> =
   selectedVehicle,
   connectionMode,
   isConnected,
+  batteryVoltage = 12.6,
   onOpenConnectModal,
   onSelectTab,
 }) => {
@@ -1049,6 +1052,9 @@ au véhicule, ni à distance, ni via l'application mobile.
           </div>
         )}
       </div>
+
+      {/* SOUS-MODULE ALL KEYS LOST (AKL) INTÉGRÉ AU MODULE CLONAGE */}
+      <AllKeysLostModule selectedVehicle={selectedVehicle} batteryVoltage={batteryVoltage} />
 
       {/* MATÉRIEL EXIGÉ & COMPATIBILITÉ FIAT DOBLÒ CAMÉRA 360° */}
       <div className="p-5 rounded-2xl bg-slate-900/80 border border-cyan-500/30 space-y-4">

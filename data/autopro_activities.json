@@ -1,5 +1,27 @@
 [
   {
+    "clientName": "Module AKL Clonage",
+    "hwid": "fiat_doblo_bsi_marelli_sgw",
+    "actionType": "scan_started",
+    "actionDetails": "Validation AKL bsi_95640.bin (95640_8192 · 8192 o · CRC32 11223344 · VIN ZFA26300001234567)",
+    "vehicleName": "fiat_doblo_bsi_marelli_sgw",
+    "locationCity": "Atelier DZ",
+    "durationMinutes": 1,
+    "id": "ACT-DZ-3395",
+    "timestamp": "2026-11-20T11:51:48.014Z"
+  },
+  {
+    "clientName": "Module AKL Clonage",
+    "hwid": "renault_dacia_gen1_id46",
+    "actionType": "scan_started",
+    "actionDetails": "Validation AKL uch_93c66.bin (93C66_512 · 512 o · CRC32 ABCDEF01 · VIN VF1RJB00123456789)",
+    "vehicleName": "renault_dacia_gen1_id46",
+    "locationCity": "Atelier DZ",
+    "durationMinutes": 1,
+    "id": "ACT-DZ-3115",
+    "timestamp": "2026-11-20T11:51:48.006Z"
+  },
+  {
     "clientName": "Poste Client Agent PC",
     "hwid": "LOCAL-PC-AGENT-38450",
     "actionType": "flash_executed",
