@@ -840,15 +840,46 @@ export const FLASH_STAGES: FlashStage[] = [
 ];
 
 export const TABLET_APPS_CATALOG: TabletApp[] = [
+  // --- CommunityPack Market (Geely / Flyme Auto / IHU Head Unit Store) ---
+  {
+    id: 'communitypack_market',
+    name: 'CommunityPack Market (Head Unit Store)',
+    category: 'Utilitaire',
+    version: '2.4.0 Update',
+    installedVersion: '2.1.0',
+    hasUpdate: true,
+    sizeMb: 18.4,
+    badge: 'Market Update',
+    description:
+      'Boutique embarquée pour autoradios Android (Geely IHU / Flyme Auto / FYT / Topway) : mise à jour catalogue en direct, fiche détaillée au clic et téléchargements simultanés avec barre de progression globale.',
+    releaseNotes: [
+      'Bouton « Update / Mettre à jour » affiché directement dans le catalogue si Market est déjà installé sur l’autoradio.',
+      'Appuyez sur n’importe quelle tuile pour ouvrir la fiche détaillée (Details Card).',
+      'Téléchargement simultané de plusieurs applications avec barre de progression globale sous l’en-tête.',
+      'Support d’installation indirecte 1-Clic via pont ADB Wi-Fi / USB ou relais navigateur autoradio.',
+    ],
+    headUnitCompatibility: 'Geely IHU624G / IHU715P / Flyme Auto · Jetour · Chery · FYT / Topway',
+    packageName: 'org.communitypack.market',
+    installed: true,
+    icon: 'ShoppingBag',
+    minAndroidVersion: 'Android 8.0+',
+  },
   // --- CarPlay / Android Auto & Google Play Store ---
   {
     id: 'zlink_carplay_wireless',
     name: 'ZLink5 / Carlinkit CarPlay & Android Auto Pro',
     category: 'CarPlay & Google',
     version: '5.4.18 Wireless',
+    installedVersion: '5.3.10',
+    hasUpdate: true,
     sizeMb: 46.5,
     badge: 'CarPlay Sans Fil',
     description: 'Transforme la tablette Android (FYT, Topway TS10/TS18, Geely, Chery, Jetour) en Apple CarPlay & Android Auto sans fil 5 GHz avec commande vocale Siri / Google.',
+    releaseNotes: [
+      'Latence réduite sur connexion Wi-Fi 5 GHz (Geely Coolray / Cityray).',
+      'Correction micro Bluetooth pendant les appels WhatsApp Car.',
+    ],
+    headUnitCompatibility: 'FYT UIS7862 · Topway TS10/TS18 · Geely IHU · Chery Lion OS',
     packageName: 'com.zjinnova.zlink',
     installed: true,
     icon: 'Smartphone',

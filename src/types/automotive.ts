@@ -54,8 +54,12 @@ export interface TabletApp {
     | 'Personnalisation'
     | 'Utilitaire';
   version: string;
+  installedVersion?: string;
+  hasUpdate?: boolean;
   sizeMb: number;
   description: string;
+  releaseNotes?: string[];
+  headUnitCompatibility?: string;
   packageName: string;
   installed: boolean;
   icon: string;

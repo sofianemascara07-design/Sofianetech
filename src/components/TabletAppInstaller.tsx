@@ -34,8 +34,19 @@ import {
   Terminal,
   Zap,
   Gauge,
+  X,
+  ArrowUpCircle,
+  ExternalLink,
+  Layers,
+  Info,
+  Wifi,
 } from 'lucide-react';
 import { apiFetch } from '../utils/apiBridge';
+import {
+  getOrCreateAgentPairToken,
+  probeLocalPcAgent,
+  submitWriteRequestToLocalAgent,
+} from '../utils/localPcAgent';
 
 interface TabletAppInstallerProps {
   connectionMode: ConnectionMode;
@@ -62,7 +73,12 @@ export const TabletAppInstaller: React.FC<TabletAppInstallerProps> = ({
   onOpenConnectModal,
 }) => {
   const [apps, setApps] = useState<TabletApp[]>(TABLET_APPS_CATALOG);
-  const [installingId, setInstallingId] = useState<string | null>(null);
+  // File d'attente simultanée : plusieurs apps peuvent télécharger/installer en parallèle
+  const [downloadQueue, setDownloadQueue] = useState<
+    Record<string, { name: string; progress: number; phase: string; isUpdate: boolean }>
+  >({});
+  const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
+  const [detailsApp, setDetailsApp] = useState<TabletApp | null>(null);
   const [isPackInstalling, setIsPackInstalling] = useState(false);
   const [installProgress, setInstallProgress] = useState<number>(0);
   const [installLogs, setInstallLogs] = useState<string[]>([]);
@@ -70,6 +86,20 @@ export const TabletAppInstaller: React.FC<TabletAppInstallerProps> = ({
   const [activeCategory, setActiveCategory] = useState<string>('Tous');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [connectionWarning, setConnectionWarning] = useState<boolean>(false);
+
+  // Installation indirecte 1-Clic (CommunityPack Market / APK vers Autoradio)
+  const [indirectMethod, setIndirectMethod] = useState<'adb_wifi' | 'adb_usb_agent' | 'browser_apk_relay'>('adb_wifi');
+  const [headUnitIp, setHeadUnitIp] = useState<string>('192.168.1.50:5555');
+  const [indirectApkUrl, setIndirectApkUrl] = useState<string>('');
+  const [indirectTargetApp, setIndirectTargetApp] = useState<TabletApp>(
+    () => TABLET_APPS_CATALOG.find((a) => a.id === 'communitypack_market') || TABLET_APPS_CATALOG[0]
+  );
+  const [indirectBusy, setIndirectBusy] = useState<boolean>(false);
+  const [indirectFeedback, setIndirectFeedback] = useState<{
+    ok: boolean;
+    message: string;
+    commands?: string[];
+  } | null>(null);
 
   // Smart Premium Booster toggles (Multi-Screen, HDMI Chip, 120Hz Anim x0.5)
   const [splitScreenEnabled, setSplitScreenEnabled] = useState<boolean>(true);
@@ -80,6 +110,17 @@ export const TabletAppInstaller: React.FC<TabletAppInstallerProps> = ({
   // Custom APK upload state
   const [uploadedApkName, setUploadedApkName] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(false);
+
+  const activeQueueList = useMemo(() => Object.entries(downloadQueue), [downloadQueue]);
+  const overallProgress = useMemo(() => {
+    if (activeQueueList.length === 0) return 0;
+    const sum = activeQueueList.reduce((acc, [, item]) => acc + item.progress, 0);
+    return Math.round(sum / activeQueueList.length);
+  }, [activeQueueList]);
+  const updatesAvailableCount = useMemo(
+    () => apps.filter((a) => a.installed && a.hasUpdate).length,
+    [apps]
+  );
 
   const categories = [
     'Tous',
@@ -150,16 +191,25 @@ export const TabletAppInstaller: React.FC<TabletAppInstallerProps> = ({
     }
   };
 
-  // Handle single app installation via active connection link
-  const handleInstallApp = async (app: TabletApp) => {
-    if (!isConnected) {
-      setConnectionWarning(true);
-      return;
-    }
+  // Handle concurrent single/multi app install OR update via active link (non-blocking)
+  const startConcurrentInstallOrUpdate = async (app: TabletApp) => {
+    if (downloadQueue[app.id]) return;
+
+    const isUpdate = Boolean(app.installed && app.hasUpdate);
     setConnectionWarning(false);
-    setInstallingId(app.id);
-    setInstallProgress(10);
-    setInstallLogs([`[0.0s] Initialisation du transfert du paquet ${app.packageName}...`]);
+    setDownloadQueue((prev) => ({
+      ...prev,
+      [app.id]: {
+        name: app.name,
+        progress: 12,
+        phase: isUpdate ? 'Téléchargement mise à jour...' : 'Téléchargement paquet...',
+        isUpdate,
+      },
+    }));
+    setInstallLogs((prev) => [
+      ...prev,
+      `[${new Date().toLocaleTimeString('fr-FR')}] ${isUpdate ? 'UPDATE' : 'INSTALL'} lancé en parallèle : ${app.name} (${app.packageName})`,
+    ]);
 
     try {
       const res = await apiFetch('/api/tablet/install', {
@@ -169,37 +219,191 @@ export const TabletAppInstaller: React.FC<TabletAppInstallerProps> = ({
           appId: app.id,
           appName: app.name,
           packageName: app.packageName,
-          connectionMode,
+          connectionMode: isConnected ? connectionMode : 'wifi',
           enableMultiWindow: app.id === 'multiscreen_split_pro' || splitScreenEnabled,
         }),
       });
       const data = await res.json().catch(() => null);
-      if (Array.isArray(data?.logs)) {
-        setInstallLogs((prev) => [...prev, ...data.logs]);
+      if (Array.isArray(data?.logs) && data.logs[0]) {
+        setInstallLogs((prev) => [...prev, data.logs[0]]);
       }
     } catch {
       // Fallback logs handled below
     }
 
     const steps = [
-      { p: 35, log: `[Canal ${connectionMode.toUpperCase()}] Transfert APK (${app.sizeMb} Mo) — Partition /data/app uniquement...` },
-      { p: 70, log: `Exécution ADB non destructive : adb install -r -g ${app.packageName}...` },
-      { p: 100, log: `✅ Succès : ${app.name} installé et épinglé sur le lanceur Smart Premium.` },
+      { p: 38, phase: `Récupération (${app.sizeMb} Mo)...`, log: `[${app.name}] Téléchargement flux APK (${app.sizeMb} Mo)...` },
+      { p: 72, phase: isUpdate ? 'Mise à jour adb install -r...' : 'Déploiement /data/app...', log: `[${app.name}] adb install -r -g ${app.packageName}` },
+      { p: 100, phase: 'Terminé', log: `✅ ${app.name} ${isUpdate ? `mis à jour vers v${app.version}` : 'installé'} avec succès.` },
     ];
 
     let current = 0;
     const interval = setInterval(() => {
       if (current < steps.length) {
-        setInstallProgress(steps[current].p);
-        setInstallLogs((prev) => [...prev, steps[current].log]);
+        const step = steps[current];
+        setDownloadQueue((prev) =>
+          prev[app.id]
+            ? { ...prev, [app.id]: { ...prev[app.id], progress: step.p, phase: step.phase } }
+            : prev
+        );
+        setInstallLogs((prev) => [...prev, step.log]);
         current++;
       } else {
         clearInterval(interval);
-        setApps((prev) => prev.map((a) => (a.id === app.id ? { ...a, installed: true } : a)));
-        setInstallingId(null);
+        setApps((prev) =>
+          prev.map((a) =>
+            a.id === app.id
+              ? { ...a, installed: true, hasUpdate: false, installedVersion: a.version }
+              : a
+          )
+        );
+        setDetailsApp((prev) =>
+          prev && prev.id === app.id
+            ? { ...prev, installed: true, hasUpdate: false, installedVersion: prev.version }
+            : prev
+        );
+        setSelectedBatchIds((prev) => prev.filter((id) => id !== app.id));
+        setTimeout(() => {
+          setDownloadQueue((prev) => {
+            const next = { ...prev };
+            delete next[app.id];
+            return next;
+          });
+        }, 700);
         setActiveTabletScreenApp(app.id);
       }
     }, 450);
+  };
+
+  const handleDownloadBatch = () => {
+    const targets =
+      selectedBatchIds.length > 0
+        ? apps.filter((a) => selectedBatchIds.includes(a.id))
+        : apps.filter((a) => a.hasUpdate || a.id === 'communitypack_market' || a.id === 'google_play_store_pack');
+    targets.forEach((app) => {
+      void startConcurrentInstallOrUpdate(app);
+    });
+  };
+
+  const toggleBatchSelect = (appId: string) => {
+    setSelectedBatchIds((prev) =>
+      prev.includes(appId) ? prev.filter((id) => id !== appId) : [...prev, appId]
+    );
+  };
+
+  // Bouton d'installation indirecte sur autoradio (Pont ADB Wi-Fi / Agent PC USB / Relais Navigateur)
+  const handleIndirectInstall = async (targetApp: TabletApp = indirectTargetApp) => {
+    setIndirectBusy(true);
+    setIndirectFeedback(null);
+    const operation = targetApp.installed && targetApp.hasUpdate ? 'update' : 'install';
+
+    try {
+      const res = await apiFetch('/api/tablet/indirect-install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appId: targetApp.id,
+          appName: targetApp.name,
+          packageName: targetApp.packageName,
+          operation,
+          bridgeMethod: indirectMethod,
+          headUnitIp,
+          apkSourceUrl: indirectApkUrl.trim(),
+          apkFileName: uploadedApkName || `${targetApp.id}.apk`,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setIndirectFeedback({
+          ok: false,
+          message: data.error || 'Paramètres du pont indirect invalides.',
+        });
+        return;
+      }
+
+      if (Array.isArray(data.logs)) {
+        setInstallLogs((prev) => [...prev, ...data.logs]);
+      }
+
+      // Si le pont Agent PC USB/Wi-Fi est choisi, vérifie aussi si l'Agent Micro Client (127.0.0.1:38450) répond
+      let agentNote = '';
+      if (indirectMethod === 'adb_usb_agent' || indirectMethod === 'adb_wifi') {
+        const pairToken = getOrCreateAgentPairToken();
+        const agentStatus = await probeLocalPcAgent(pairToken);
+        if (agentStatus) {
+          const queueRes = await submitWriteRequestToLocalAgent(pairToken, {
+            targetModule: `HEADUNIT_ANDROID (${targetApp.packageName})`,
+            operationType: 'ROUTINE_UDS',
+            title: `${operation === 'update' ? 'Mise à jour' : 'Installation'} indirecte ${targetApp.name}`,
+            txId: 'ADB_HEADUNIT',
+            serviceHex: 'ADB_INSTALL_R',
+            payloadHex: Array.isArray(data.commands) ? data.commands.join(' && ') : targetApp.packageName,
+            fileName: uploadedApkName || `${targetApp.id}.apk`,
+            batteryVoltage: 13.5,
+          });
+          agentNote = queueRes.ok
+            ? ` ${queueRes.message}`
+            : '';
+        } else {
+          agentNote =
+            ' Lancez l’Agent Micro PC (onglet Connexion) ou téléchargez le script .bat ci-dessous pour exécuter ces commandes ADB sur votre PC relié à l’autoradio.';
+        }
+      } else if (indirectMethod === 'browser_apk_relay' && indirectApkUrl.trim()) {
+        // Sur le navigateur même de l'autoradio : ouverture directe du lien APK pour déclencher Android PackageInstaller
+        const a = document.createElement('a');
+        a.href = indirectApkUrl.trim();
+        a.download = uploadedApkName || `${targetApp.id}.apk`;
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        agentNote =
+          ' Téléchargement APK déclenché : validez ensuite « Installer / Mettre à jour » sur la fenêtre Android de l’autoradio.';
+      }
+
+      setIndirectFeedback({
+        ok: true,
+        message: `Pont indirect (${indirectMethod}) prêt pour ${targetApp.name}.${agentNote}`,
+        commands: data.commands,
+      });
+
+      // Déclenche aussi la file visuelle locale si mode connecté
+      if (isConnected) {
+        void startConcurrentInstallOrUpdate(targetApp);
+      }
+    } catch {
+      setIndirectFeedback({
+        ok: false,
+        message: 'Serveur hors ligne : copiez ou téléchargez le script ADB indirect généré ci-dessous.',
+      });
+    } finally {
+      setIndirectBusy(false);
+    }
+  };
+
+  const handleDownloadIndirectScript = (commands: string[], appName: string) => {
+    const cleanName = appName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const bat = `@echo off
+title AutoPro - Installation Indirecte ${cleanName}
+color 0B
+echo =======================================================================
+echo   AUTOPRO INSTALLATION INDIRECTE HEAD UNIT (${cleanName})
+echo =======================================================================
+${commands.join('\r\n')}
+echo.
+echo Operation terminee. Verifiez l'ecran de l'autoradio !
+pause
+`;
+    const blob = new Blob([bat], { type: 'application/x-bat;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Install_Indirect_${cleanName}.bat`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   // 1-Click Smart Premium Pack Installer
@@ -385,6 +589,181 @@ pause
         </div>
       </div>
 
+      {/* BARRE DE PROGRESSION GLOBALE SOUS L'EN-TÊTE (Téléchargements simultanés) */}
+      {(activeQueueList.length > 0 || isPackInstalling) && (
+        <div className="p-3.5 rounded-xl bg-slate-900/95 border border-cyan-500/45 space-y-2 shadow-lg shadow-cyan-500/10">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 font-bold text-white">
+              <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin" />
+              <span>
+                Progression Globale ({activeQueueList.length || 1} téléchargement{activeQueueList.length > 1 ? 's' : ''} simultané{activeQueueList.length > 1 ? 's' : ''})
+              </span>
+            </div>
+            <span className="font-mono font-bold text-cyan-300">
+              {isPackInstalling ? installProgress : overallProgress}%
+            </span>
+          </div>
+          <div className="w-full h-2.5 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
+            <div
+              className="h-full bg-gradient-to-r from-cyan-400 via-indigo-400 to-emerald-400 transition-all duration-300"
+              style={{ width: `${isPackInstalling ? installProgress : overallProgress}%` }}
+            />
+          </div>
+          {activeQueueList.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-0.5">
+              {activeQueueList.map(([id, item]) => (
+                <span
+                  key={id}
+                  className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-[10px] font-mono text-slate-300"
+                >
+                  {item.name.split(' ')[0]} · <strong className="text-cyan-400">{item.progress}%</strong> ({item.phase})
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PANNEAU COMMUNITYPACK MARKET & INSTALLATION INDIRECTE (1 CLIC SUR AUTORADIO) */}
+      <div className="p-4 rounded-xl bg-slate-900/85 border border-cyan-500/35 space-y-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                CommunityPack Market · Mise à jour &amp; Pont Indirect
+              </span>
+              {updatesAvailableCount > 0 && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  {updatesAvailableCount} mise{updatesAvailableCount > 1 ? 's' : ''} à jour disponible{updatesAvailableCount > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+            <h2 className="text-sm font-bold text-white flex items-center gap-2">
+              <ArrowUpCircle className="w-4 h-4 text-cyan-400" />
+              <span>Installation Indirecte sur Autoradio (1 Bouton) — Sans modification système</span>
+            </h2>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Un navigateur web ne peut pas installer un APK silencieusement tout seul par sécurité Android, mais il déclenche l’installation <strong>indirectement en 1 bouton</strong> via <strong>Pont ADB Wi-Fi</strong>, <strong>Agent Micro PC USB</strong> ou <strong>Relais Navigateur de l’autoradio</strong> (<code>PackageInstaller</code>).
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleDownloadBatch}
+              className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>
+                {selectedBatchIds.length > 0
+                  ? `Télécharger Sélection (${selectedBatchIds.length})`
+                  : 'Tout Mettre à Jour en Parallèle'}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Sélecteur de Pont Indirect + Bouton 1-Clic */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 text-xs items-end bg-slate-950 p-3 rounded-xl border border-slate-800">
+          <div className="md:col-span-3">
+            <label className="block text-[11px] text-slate-400 font-semibold mb-1">Méthode Indirecte</label>
+            <select
+              value={indirectMethod}
+              onChange={(e) => setIndirectMethod(e.target.value as any)}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-white text-xs"
+            >
+              <option value="adb_wifi">1. Pont ADB Wi-Fi (Autoradio 5555)</option>
+              <option value="adb_usb_agent">2. Pont Agent Micro PC (USB OTG)</option>
+              <option value="browser_apk_relay">3. Relais Navigateur Autoradio (.apk)</option>
+            </select>
+          </div>
+
+          <div className="md:col-span-3">
+            <label className="block text-[11px] text-slate-400 font-semibold mb-1">
+              {indirectMethod === 'adb_wifi' ? 'IP Autoradio (ADB TCP/IP)' : 'Application Cible'}
+            </label>
+            {indirectMethod === 'adb_wifi' ? (
+              <input
+                type="text"
+                value={headUnitIp}
+                onChange={(e) => setHeadUnitIp(e.target.value)}
+                placeholder="192.168.1.50:5555"
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-cyan-300 font-mono text-xs"
+              />
+            ) : (
+              <select
+                value={indirectTargetApp.id}
+                onChange={(e) => {
+                  const found = apps.find((a) => a.id === e.target.value);
+                  if (found) setIndirectTargetApp(found);
+                }}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-white text-xs"
+              >
+                {apps.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div className="md:col-span-3">
+            <label className="block text-[11px] text-slate-400 font-semibold mb-1">
+              URL APK ou Nom Fichier (.apk optionnel)
+            </label>
+            <input
+              type="text"
+              value={indirectApkUrl}
+              onChange={(e) => setIndirectApkUrl(e.target.value)}
+              placeholder="https://.../CommunityPack_Market.apk"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-slate-200 font-mono text-xs"
+            />
+          </div>
+
+          <div className="md:col-span-3">
+            <button
+              type="button"
+              disabled={indirectBusy}
+              onClick={() => void handleIndirectInstall(indirectTargetApp)}
+              className="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 disabled:opacity-50 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-cyan-500/20"
+            >
+              {indirectBusy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+              <span>Installer Indirectement (1 Clic)</span>
+            </button>
+          </div>
+        </div>
+
+        {indirectFeedback && (
+          <div
+            className={`p-3 rounded-xl border text-xs space-y-2 ${
+              indirectFeedback.ok
+                ? 'bg-emerald-950/35 border-emerald-600/50 text-emerald-200'
+                : 'bg-rose-950/40 border-rose-600/50 text-rose-200'
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold">{indirectFeedback.message}</span>
+              {indirectFeedback.commands && indirectFeedback.commands.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleDownloadIndirectScript(indirectFeedback.commands!, indirectTargetApp.name)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-cyan-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                >
+                  <Terminal className="w-3 h-3" />
+                  <span>Télécharger Lanceur 1-Clic (.bat)</span>
+                </button>
+              )}
+            </div>
+            {indirectFeedback.commands && (
+              <pre className="p-2 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-mono text-cyan-300 overflow-x-auto">
+                {indirectFeedback.commands.join('\n')}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+
       {connectionWarning && !isConnected && (
         <div className="p-3.5 rounded-xl bg-amber-950/50 border border-amber-600/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-200">
           <div className="flex items-center gap-2">
@@ -420,7 +799,7 @@ pause
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Rechercher : CarPlay, Google Store, Drama Live, Radio Algérienne, Coran, Multi-écran, HDMI, WhatsApp, TikTok..."
+                placeholder="Rechercher : CommunityPack Market, CarPlay, Google Store, Drama Live, Radio Algérienne, Coran..."
                 className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
               />
             </div>
@@ -443,16 +822,40 @@ pause
             </div>
           </div>
 
-          {/* Apps List */}
+          {/* Apps List (Cliquer une tuile ouvre la Fiche Détails / Details Card) */}
           <div className="space-y-2.5 max-h-[680px] overflow-y-auto pr-1">
             {filteredApps.map((app) => {
-              const isBusy = installingId === app.id;
+              const queueItem = downloadQueue[app.id];
+              const isBusy = Boolean(queueItem);
+              const isSelectedBatch = selectedBatchIds.includes(app.id);
+              const hasUpdate = Boolean(app.installed && app.hasUpdate);
               return (
                 <div
                   key={app.id}
-                  className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  onClick={() => setDetailsApp(app)}
+                  className={`p-3.5 rounded-xl bg-slate-900/60 border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer ${
+                    hasUpdate
+                      ? 'border-amber-500/45 hover:border-amber-400'
+                      : 'border-slate-800 hover:border-cyan-500/50'
+                  }`}
                 >
                   <div className="flex items-start gap-3">
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBatchSelect(app.id);
+                      }}
+                      className="pt-1 shrink-0"
+                      title="Sélectionner pour téléchargement groupé"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelectedBatch}
+                        onChange={() => {}}
+                        className="accent-cyan-500 cursor-pointer"
+                      />
+                    </div>
+
                     <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center shrink-0">
                       {getIcon(app.icon)}
                     </div>
@@ -470,7 +873,12 @@ pause
                         </span>
                         {app.installed && (
                           <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/40">
-                            Installé
+                            Installé {app.installedVersion ? `(v${app.installedVersion})` : ''}
+                          </span>
+                        )}
+                        {hasUpdate && (
+                          <span className="text-[10px] font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-600/50">
+                            Mise à jour prête
                           </span>
                         )}
                       </div>
@@ -481,12 +889,43 @@ pause
                         <span>{app.sizeMb} Mo</span>
                         <span>·</span>
                         <span>{app.minAndroidVersion}</span>
+                        <span>·</span>
+                        <span className="text-cyan-400 inline-flex items-center gap-1">
+                          <Info className="w-3 h-3" /> Toucher pour fiche détails
+                        </span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0 sm:self-center">
-                    {app.installed ? (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex items-center gap-2 shrink-0 sm:self-center"
+                  >
+                    {isBusy ? (
+                      <div className="px-3 py-1.5 bg-cyan-950/70 border border-cyan-600/50 text-cyan-200 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+                        <span>{queueItem.progress}%</span>
+                      </div>
+                    ) : hasUpdate ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void startConcurrentInstallOrUpdate(app)}
+                          className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <ArrowUpCircle className="w-3.5 h-3.5" />
+                          <span>Update</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTabletScreenApp(app.id)}
+                          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer border border-slate-700"
+                        >
+                          <Play className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Ouvrir</span>
+                        </button>
+                      </>
+                    ) : app.installed ? (
                       <button
                         type="button"
                         onClick={() => setActiveTabletScreenApp(app.id)}
@@ -498,21 +937,12 @@ pause
                     ) : (
                       <button
                         type="button"
-                        onClick={() => void handleInstallApp(app)}
-                        disabled={isBusy || isPackInstalling}
+                        onClick={() => void startConcurrentInstallOrUpdate(app)}
+                        disabled={isPackInstalling}
                         className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                       >
-                        {isBusy ? (
-                          <>
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>{installProgress}%</span>
-                          </>
-                        ) : (
-                          <>
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Installer</span>
-                          </>
-                        )}
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Installer</span>
                       </button>
                     )}
                   </div>
@@ -828,6 +1258,115 @@ pause
           </div>
         </div>
       </div>
+
+      {/* FICHE DÉTAILLÉE (DETAILS CARD MODAL AU CLIC SUR UNE TUILE) */}
+      {detailsApp && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setDetailsApp(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl bg-slate-900 border border-cyan-500/40 p-5 space-y-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center shrink-0">
+                  {getIcon(detailsApp.icon)}
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">{detailsApp.name}</h3>
+                  <div className="text-[11px] font-mono text-cyan-400">{detailsApp.packageName}</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailsApp(null)}
+                className="p-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center text-xs bg-slate-950 p-3 rounded-xl border border-slate-800">
+              <div>
+                <span className="text-[10px] text-slate-400 block">Version</span>
+                <strong className="text-white font-mono">v{detailsApp.version}</strong>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block">Taille</span>
+                <strong className="text-cyan-300 font-mono">{detailsApp.sizeMb} Mo</strong>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block">Requis</span>
+                <strong className="text-emerald-400 font-mono">{detailsApp.minAndroidVersion}</strong>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-200 leading-relaxed">{detailsApp.description}</p>
+
+            {detailsApp.headUnitCompatibility && (
+              <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300">
+                <strong className="text-cyan-300">Compatibilité autoradios :</strong>{' '}
+                {detailsApp.headUnitCompatibility}
+              </div>
+            )}
+
+            {detailsApp.releaseNotes && detailsApp.releaseNotes.length > 0 && (
+              <div className="p-3 rounded-xl bg-slate-950 border border-amber-500/30 space-y-1.5 text-xs">
+                <span className="font-bold text-amber-300 block">
+                  Nouveautés de cette version :
+                </span>
+                <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-300">
+                  {detailsApp.releaseNotes.map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setIndirectTargetApp(detailsApp);
+                  void handleIndirectInstall(detailsApp);
+                  setDetailsApp(null);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Installer Indirectement (Pont)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  void startConcurrentInstallOrUpdate(detailsApp);
+                  setDetailsApp(null);
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 cursor-pointer ${
+                  detailsApp.installed && detailsApp.hasUpdate
+                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                    : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                }`}
+              >
+                {detailsApp.installed && detailsApp.hasUpdate ? (
+                  <>
+                    <ArrowUpCircle className="w-4 h-4" />
+                    <span>Mettre à jour (Update)</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    <span>{detailsApp.installed ? 'Réinstaller' : 'Télécharger & Installer'}</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

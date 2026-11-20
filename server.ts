@@ -1339,6 +1339,75 @@ app.post('/api/tablet/install', (req, res) => {
   });
 });
 
+// API: Indirect 1-Button Head-Unit APK Install / Update (ADB Wi-Fi, PC Agent USB, or Browser Relay)
+app.post('/api/tablet/indirect-install', (req, res) => {
+  const {
+    appId = 'communitypack_market',
+    appName = 'CommunityPack Market',
+    packageName = 'org.communitypack.market',
+    operation = 'update',
+    bridgeMethod = 'adb_wifi',
+    headUnitIp = '192.168.1.50:5555',
+    apkSourceUrl = '',
+    apkFileName = 'CommunityPack_Market.apk',
+  } = req.body || {};
+
+  const safePkg = String(packageName).replace(/[^a-zA-Z0-9._-]/g, '');
+  const safeFile = String(apkFileName || 'CommunityPack_Market.apk').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safeTarget = String(headUnitIp).trim();
+
+  if (bridgeMethod === 'adb_wifi' && !/^\d{1,3}(\.\d{1,3}){3}(:\d{2,5})?$/.test(safeTarget)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Adresse IP autoradio invalide (format attendu : 192.168.x.x:5555).',
+    });
+  }
+
+  const adbConnectTarget = safeTarget.includes(':') ? safeTarget : `${safeTarget}:5555`;
+  const commands =
+    bridgeMethod === 'adb_wifi'
+      ? [
+          `adb connect ${adbConnectTarget}`,
+          'adb shell getprop ro.product.model',
+          ...(apkSourceUrl
+            ? [`curl -L "${String(apkSourceUrl).trim()}" -o "${safeFile}"`]
+            : [`# Placer ${safeFile} dans le dossier du script`]),
+          `adb -s ${adbConnectTarget} install -r -d -g "${safeFile}"`,
+          `adb -s ${adbConnectTarget} shell monkey -p ${safePkg} -c android.intent.category.LAUNCHER 1`,
+        ]
+      : bridgeMethod === 'adb_usb_agent'
+        ? [
+            'adb devices',
+            `adb install -r -d -g "${safeFile}"`,
+            `adb shell monkey -p ${safePkg} -c android.intent.category.LAUNCHER 1`,
+          ]
+        : [
+            `# Ouvrir l'URL sur le navigateur de l'autoradio pour lancer le PackageInstaller Android`,
+            apkSourceUrl
+              ? String(apkSourceUrl).trim()
+              : `# Sélectionnez d'abord votre fichier .apk local ou URL miroir HTTPS`,
+          ];
+
+  const logs = [
+    `[RELAIS INDIRECT · ${String(bridgeMethod).toUpperCase()}] Préparation ${operation === 'update' ? 'mise à jour (-r -d)' : 'installation'} pour ${appName} (${safePkg})`,
+    `[SÉCURITÉ] Partition cible : /data/app uniquement (0 modification sur /system, /vendor ou MCU)`,
+    ...commands.map((c) => `$ ${c}`),
+  ];
+
+  return res.json({
+    success: true,
+    appId,
+    appName,
+    packageName: safePkg,
+    operation,
+    bridgeMethod,
+    target: adbConnectTarget,
+    commands,
+    logs,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // API: Smartech DZ DiagAuto - Detection & Status Probe
 app.get('/api/smartech-dz/status', (_req, res) => {
   return res.json({
