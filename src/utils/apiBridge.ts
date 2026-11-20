@@ -44,7 +44,8 @@ export function getBackendBaseUrl(): string {
       saved &&
       saved.trim() &&
       !saved.includes('autopro-dz-backend.onrender.com') &&
-      !saved.includes('votre-backend')
+      !saved.includes('votre-backend') &&
+      !saved.includes('.run.app')
     ) {
       return saved.trim().replace(/\/+$/, '');
     }
@@ -103,13 +104,74 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function isHtmlProxyInterception(res: Response): Promise<boolean> {
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  if (ct.includes('text/html')) return true;
+  if (!ct.includes('application/json') && (res.status === 200 || res.status === 404)) {
+    try {
+      const sample = (await res.clone().text()).trim();
+      if (sample.startsWith('<!doctype') || sample.startsWith('<html') || sample.startsWith('<')) {
+        return true;
+      }
+    } catch {
+      // Ignore clone read issues
+    }
+  }
+  return false;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  crossOrigin: boolean,
+  timeoutMs: number,
+  init?: ApiFetchOptions
+): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const onCallerAbort = () => controller.abort();
+  init?.signal?.addEventListener('abort', onCallerAbort, { once: true });
+
+  try {
+    const response = await globalThis.fetch(url, {
+      credentials: crossOrigin ? 'omit' : 'include',
+      ...init,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    init?.signal?.removeEventListener('abort', onCallerAbort);
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    init?.signal?.removeEventListener('abort', onCallerAbort);
+    if (timedOut) {
+      throw new Error(`Délai dépassé (${Math.round(timeoutMs / 1000)}s) vers le serveur distant`);
+    }
+    throw err;
+  }
+}
+
 export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<Response> {
   const target = apiUrl(input);
   const isCrossOrigin = target.startsWith('http://') || target.startsWith('https://');
   const method = (init?.method || 'GET').toUpperCase();
-  const defaultRetries = method === 'GET' || input.includes('/check-session') || input.includes('/activity') || input.includes('/health') ? 2 : 1;
+  const defaultRetries =
+    method === 'GET' ||
+    input.includes('/check-session') ||
+    input.includes('/activity') ||
+    input.includes('/health') ||
+    input.includes('/license/status')
+      ? 2
+      : 1;
   const maxRetries = typeof init?.retries === 'number' ? init.retries : defaultRetries;
   const timeoutMs = typeof init?.timeoutMs === 'number' ? init.timeoutMs : 22000;
+
+  const fallbackTarget = input.startsWith('/api/') ? `${DEFAULT_RENDER_BACKEND_URL}${input}` : null;
+  const canFailoverToRender = Boolean(fallbackTarget && fallbackTarget !== target);
 
   let lastError: unknown = null;
 
@@ -118,39 +180,39 @@ export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<R
       throw new DOMException('Aborted', 'AbortError');
     }
 
-    const controller = new AbortController();
-    let timedOut = false;
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
-
-    const onCallerAbort = () => controller.abort();
-    init?.signal?.addEventListener('abort', onCallerAbort, { once: true });
-
     try {
-      const response = await globalThis.fetch(target, {
-        credentials: isCrossOrigin ? 'omit' : 'include',
-        ...init,
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      init?.signal?.removeEventListener('abort', onCallerAbort);
+      const response = await fetchWithTimeout(target, isCrossOrigin, timeoutMs, init);
 
-      if (RETRYABLE_STATUSES.has(response.status) && attempt < maxRetries) {
-        const retryAfterSec = parseInt(response.headers.get('Retry-After') || '0', 10);
-        const waitMs = retryAfterSec > 0 ? Math.min(retryAfterSec * 1000, 5000) : 700 * (attempt + 1);
-        await sleep(waitMs);
-        continue;
+      // Detect proxy/static HTML interception (e.g. Cloud Run ais-pre or SSO redirect on /api/*)
+      if (canFailoverToRender && (await isHtmlProxyInterception(response))) {
+        return await fetchWithTimeout(fallbackTarget!, true, timeoutMs, init);
+      }
+
+      if (RETRYABLE_STATUSES.has(response.status)) {
+        if (attempt < maxRetries) {
+          const retryAfterSec = parseInt(response.headers.get('Retry-After') || '0', 10);
+          const waitMs =
+            retryAfterSec > 0 ? Math.min(retryAfterSec * 1000, 5000) : 700 * (attempt + 1);
+          await sleep(waitMs);
+          continue;
+        }
+        if (canFailoverToRender) {
+          return await fetchWithTimeout(fallbackTarget!, true, timeoutMs, init);
+        }
       }
 
       return response;
     } catch (err) {
-      clearTimeout(timeoutId);
-      init?.signal?.removeEventListener('abort', onCallerAbort);
-      lastError = timedOut ? new Error(`Délai dépassé (${Math.round(timeoutMs / 1000)}s) vers le serveur distant`) : err;
+      lastError = err;
 
-      if (init?.signal?.aborted || attempt >= maxRetries) {
+      if (init?.signal?.aborted) {
+        throw lastError;
+      }
+
+      if (attempt >= maxRetries) {
+        if (canFailoverToRender) {
+          return await fetchWithTimeout(fallbackTarget!, true, timeoutMs, init);
+        }
         throw lastError;
       }
 
