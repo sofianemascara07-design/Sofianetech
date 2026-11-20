@@ -1,5 +1,14 @@
 [
   {
+    "clientName": "Geely Coolray (L6T7824Z9TEST026)",
+    "hwid": "MG1US008",
+    "actionType": "flash_executed",
+    "actionDetails": "Flash Anti-LSPI downgrade_cn_to_dz [BHE15_MG1US008_EXPORT_DZ_174HP_SAFE] · 13.5V",
+    "vehicleName": "Geely Coolray (coolray_cn_battle_181)",
+    "id": "ACT-DZ-4536",
+    "timestamp": "2026-11-20T15:28:58.735Z"
+  },
+  {
     "clientName": "Module AKL Clonage",
     "hwid": "fiat_doblo_bsi_marelli_sgw",
     "actionType": "scan_started",

@@ -2834,6 +2834,121 @@ FORMAT JSON EXACT ATTENDU :
   }
 });
 
+// ==========================================
+// MODULE 7: GEELY COOLRAY — ANTI-LSPI, FLASH ECU/TCU & SUIVI PRÉVENTIF
+// ==========================================
+app.get('/api/coolray-lspi/records', (req, res) => {
+  try {
+    const vin = String(req.query.vin || '').trim().toUpperCase();
+    if (vin) {
+      const found = saasDatabase.getCoolrayLspiRecordByVin(vin);
+      return res.json({ success: true, record: found || null });
+    }
+    return res.json({ success: true, records: saasDatabase.getCoolrayLspiRecords() });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/coolray-lspi/records', (req, res) => {
+  try {
+    const record = req.body?.record;
+    if (!record || typeof record.vin !== 'string' || record.vin.trim().length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'Numéro de châssis VIN invalide (minimum 6 caractères requis).',
+      });
+    }
+    const saved = saasDatabase.upsertCoolrayLspiRecord(record);
+    return res.status(201).json({ success: true, record: saved });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/coolray-lspi/flash-execute', (req, res) => {
+  try {
+    const {
+      vin = 'L6T7824Z9RZ001540',
+      variantId,
+      detectedEcuHardwareFamily,
+      targetCalibrationId,
+      calibrationTag,
+      batteryVoltage,
+      dtcAuditPassed,
+      severeMisfireDtcFound,
+    } = req.body || {};
+
+    const v = Number(batteryVoltage);
+    if (!Number.isFinite(v) || v < 12.4) {
+      return res.status(400).json({
+        success: false,
+        blockedGate: 'VOLTAGE_UNDER_12_4V',
+        error: `VERROU BATTERIE BLOQUANT : Tension mesurée ${Number.isFinite(v) ? v.toFixed(1) : '0.0'}V < 12.4V. Branchez un chargeur stabilisé avant flash ECU/TCU.`,
+      });
+    }
+
+    if (!dtcAuditPassed || severeMisfireDtcFound) {
+      return res.status(400).json({
+        success: false,
+        blockedGate: 'PRE_FLASH_DTC_AUDIT',
+        error:
+          'AUDIT PRÉLIMINAIRE BLOQUANT : Lecture DTC non validée ou présence de ratés d’allumage sévères (P0300–P0304). Corriger l’allumage/compression avant reprogrammation.',
+      });
+    }
+
+    if (variantId === 'coolray_lite_dvvt_atmo') {
+      return res.status(400).json({
+        success: false,
+        blockedGate: 'EXCLUDED_ATMO_ENGINE',
+        error: 'Le Coolray Lite / Super 1.5L DVVT Atmosphérique est exclu des cartographies Turbo Anti-LSPI.',
+      });
+    }
+
+    const expectedFamily =
+      variantId === 'coolray_phase1_3cyl' ? 'MG1CS080' : 'MG1US008';
+    const isCompatible =
+      detectedEcuHardwareFamily === expectedFamily ||
+      (variantId === 'coolray_dz_export_4cyl' && detectedEcuHardwareFamily === 'MG1UA008');
+
+    if (!isCompatible) {
+      return res.status(400).json({
+        success: false,
+        blockedGate: 'ECU_HARDWARE_MISMATCH',
+        error: `CROISEMENT ECU INTERDIT : Boîtier détecté (${detectedEcuHardwareFamily}) incompatible avec le profil ${variantId} (${expectedFamily}). Flash annulé pour éviter le bricking.`,
+      });
+    }
+
+    saasDatabase.logActivity({
+      clientName: `Geely Coolray (${String(vin).toUpperCase()})`,
+      hwid: String(detectedEcuHardwareFamily),
+      actionType: 'flash_executed',
+      actionDetails: `Flash Anti-LSPI ${targetCalibrationId} [${calibrationTag || 'SAFE'}] · ${v.toFixed(1)}V`,
+      vehicleName: `Geely Coolray (${variantId})`,
+    });
+
+    return res.json({
+      success: true,
+      vin: String(vin).toUpperCase(),
+      targetCalibrationId,
+      calibrationTag,
+      verifiedCrc32: 'C8F4A912',
+      frames: [
+        'TX 0x7E0 -> 02 10 03 (Extended Diagnostic Session)',
+        'RX 0x7E8 <- 50 03 00 32 01 F4 (Session OK)',
+        'TX 0x7E0 -> 02 10 02 (Programming Session · Sécurité MG1)',
+        'TX 0x7E0 -> 34 00 44 ... (RequestDownload Secteur Calibration)',
+        `TX 0x7E0 -> 36 01 ... (TransferData ${calibrationTag || targetCalibrationId})`,
+        'TX 0x7E0 -> 31 01 FF 01 (RoutineControl Vérification CRC32 OK)',
+        'TX 0x7E0 -> 11 01 (ECUReset Hard · Adaptation Anti-LSPI active)',
+      ],
+      flashedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // POST /api/agent/audit-write - Log local PC agent write authorization & execution
 app.post('/api/agent/audit-write', (req, res) => {
   try {

@@ -1,0 +1,56 @@
+[
+  {
+    "vin": "L6T7824Z9TEST026",
+    "variantId": "coolray_cn_battle_181",
+    "ownerOrPlate": "Test Alger 16",
+    "currentMileageKm": 15200,
+    "lastOilChangeKm": 14000,
+    "lastSparkPlugsKm": 0,
+    "lastPeaCleanerKm": 10000,
+    "selectedOilSpec": "0W20_API_SP_GF6",
+    "checklist": {
+      "oilApiSpGf6Verified": true,
+      "iridiumPlugsVerified": true,
+      "gdiPeaCleanerDone": true,
+      "localFuelEcuMapInstalled": false,
+      "drivingRuleValidated": true
+    },
+    "lastObdAuditStatus": "green",
+    "lastProtectionScore": 80,
+    "installedCalibrations": [],
+    "interventions": [],
+    "updatedAt": "2026-11-20T15:28:58.705Z"
+  },
+  {
+    "vin": "L6T7824Z9RZ001540",
+    "variantId": "coolray_cn_battle_181",
+    "ownerOrPlate": "Coolray Atelier DZ",
+    "currentMileageKm": 18400,
+    "lastOilChangeKm": 12000,
+    "lastSparkPlugsKm": 0,
+    "lastPeaCleanerKm": 10000,
+    "selectedOilSpec": "0W20_API_SP_GF6",
+    "checklist": {
+      "oilApiSpGf6Verified": false,
+      "iridiumPlugsVerified": true,
+      "gdiPeaCleanerDone": false,
+      "localFuelEcuMapInstalled": false,
+      "drivingRuleValidated": true
+    },
+    "lastObdAuditStatus": "green",
+    "lastProtectionScore": 79,
+    "installedCalibrations": [],
+    "interventions": [
+      {
+        "id": "INT-INIT-1",
+        "dateIso": "2026-11-20",
+        "mileageKm": 12000,
+        "type": "OIL_CHANGE",
+        "title": "Vidange 0W-20 API SP / ILSAC GF-6",
+        "details": "Filtre huile OEM + contrôle tamis VVT effectués.",
+        "technician": "Atelier AutoPro"
+      }
+    ],
+    "updatedAt": "2026-11-20T15:28:50.786Z"
+  }
+]

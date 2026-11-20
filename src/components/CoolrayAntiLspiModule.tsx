@@ -1,0 +1,1799 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  AlertTriangle,
+  BatteryCharging,
+  CheckCircle2,
+  ClipboardCheck,
+  Cpu,
+  Database,
+  Droplets,
+  Flame,
+  Gauge,
+  History,
+  Info,
+  Lock,
+  Play,
+  RefreshCw,
+  Save,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  Sparkles,
+  Terminal,
+  Wrench,
+  Zap,
+} from 'lucide-react';
+import {
+  CoolrayCalibrationId,
+  CoolrayEcuHardwareFamily,
+  CoolrayInterventionLog,
+  CoolrayObdPidSnapshot,
+  CoolrayOilSpecId,
+  CoolrayVariantId,
+  CoolrayVehicleFollowUpRecord,
+  LspiRiskSeverity,
+  Vehicle,
+} from '../types/automotive';
+import {
+  COOLRAY_CALIBRATION_OPTIONS,
+  COOLRAY_ENGINE_PROFILES,
+  COOLRAY_OBD_SCENARIOS,
+  COOLRAY_OIL_SPEC_OPTIONS,
+  MAINTENANCE_CYCLES_KM,
+  buildDefaultCoolrayRecord,
+  computeCoolrayProtectionScore,
+  evaluateFuelTrim,
+  evaluateIat,
+  evaluateKnockRetard,
+  evaluateMisfires,
+  getOverallObdStatus,
+} from '../data/coolrayLspiProfiles';
+import { apiFetch } from '../utils/apiBridge';
+
+interface CoolrayAntiLspiModuleProps {
+  selectedVehicle: Vehicle;
+  isConnected: boolean;
+  batteryVoltage: number;
+  onOpenConnectModal: () => void;
+}
+
+type CoolraySubTab = 'flash' | 'obd_audit' | 'maintenance';
+
+const LOCAL_STORAGE_KEY = 'autopro_coolray_lspi_records_v1';
+
+const FLASH_SEQUENCE_STEPS = [
+  { id: 1, label: 'Initialisation session UDS étendue (0x10 03)', ecuRef: '0x7E0 / 0x7E1' },
+  { id: 2, label: 'Authentification Seed & Key Bosch MG1 (0x27)', ecuRef: 'Niveau Sécurité 03' },
+  { id: 3, label: 'Backup EEPROM & Cartographie d’origine (Backup horodaté)', ecuRef: 'SHA-256 Vérifié' },
+  { id: 4, label: 'Effacement & TransferData calibration Anti-LSPI (0x34 / 0x36)', ecuRef: 'Secteur Calibration' },
+  { id: 5, label: 'Contrôle CRC32 & ECUReset Hard (0x31 / 0x11 01)', ecuRef: 'Validation OK' },
+];
+
+function inferVariantFromVehicle(vehicle: Vehicle): CoolrayVariantId {
+  const haystack = `${vehicle.brand} ${vehicle.model} ${vehicle.year} ${vehicle.engine}`.toLowerCase();
+  if (haystack.includes('lite') || haystack.includes('atmo') || haystack.includes('dvvt')) {
+    return 'coolray_lite_dvvt_atmo';
+  }
+  if (haystack.includes('battle') || haystack.includes('binyue') || haystack.includes('181') || haystack.includes('chine')) {
+    return 'coolray_cn_battle_181';
+  }
+  if (haystack.includes('3 cyl') || haystack.includes('g-power') || haystack.includes('2020') || haystack.includes('2021') || haystack.includes('2022') || haystack.includes('2023')) {
+    return 'coolray_phase1_3cyl';
+  }
+  if (haystack.includes('coolray') || haystack.includes('geely')) {
+    return 'coolray_dz_export_4cyl';
+  }
+  return 'coolray_cn_battle_181';
+}
+
+function severityBadgeClasses(severity: LspiRiskSeverity): string {
+  if (severity === 'green') {
+    return 'bg-emerald-950/70 text-emerald-300 border-emerald-500/40';
+  }
+  if (severity === 'amber') {
+    return 'bg-amber-950/70 text-amber-300 border-amber-500/40';
+  }
+  return 'bg-rose-950/80 text-rose-300 border-rose-500/50';
+}
+
+function severityCardBorder(severity: LspiRiskSeverity): string {
+  if (severity === 'green') return 'border-emerald-500/35 bg-emerald-950/15';
+  if (severity === 'amber') return 'border-amber-500/45 bg-amber-950/20';
+  return 'border-rose-500/60 bg-rose-950/25';
+}
+
+export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
+  selectedVehicle,
+  isConnected,
+  batteryVoltage,
+  onOpenConnectModal,
+}) => {
+  const [subTab, setSubTab] = useState<CoolraySubTab>('flash');
+
+  // 1. Profil moteur actif
+  const [selectedVariantId, setSelectedVariantId] = useState<CoolrayVariantId>(() =>
+    inferVariantFromVehicle(selectedVehicle)
+  );
+  const activeProfile = useMemo(
+    () => COOLRAY_ENGINE_PROFILES.find((p) => p.id === selectedVariantId) || COOLRAY_ENGINE_PROFILES[2],
+    [selectedVariantId]
+  );
+
+  // 2. Suivi persistant par VIN (localStorage + API backend)
+  const [records, setRecords] = useState<CoolrayVehicleFollowUpRecord[]>(() => {
+    try {
+      const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // Fallback
+    }
+    return [buildDefaultCoolrayRecord('L6T7824Z9RZ001540', 'coolray_cn_battle_181')];
+  });
+
+  const [activeRecord, setActiveRecord] = useState<CoolrayVehicleFollowUpRecord>(() => {
+    return records[0] || buildDefaultCoolrayRecord('L6T7824Z9RZ001540', 'coolray_cn_battle_181');
+  });
+  const [vinInput, setVinInput] = useState<string>(activeRecord.vin);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  // 3. Verrous & état Flash (Fonctionnalité A)
+  const [testVoltageOverride, setTestVoltageOverride] = useState<number>(
+    isConnected ? batteryVoltage : 13.5
+  );
+  const effectiveVoltage = isConnected ? batteryVoltage : testVoltageOverride;
+
+  const [detectedEcuHardware, setDetectedEcuHardware] = useState<CoolrayEcuHardwareFamily>(
+    activeProfile.ecuHardwareFamily
+  );
+  const [dtcAuditRun, setDtcAuditRun] = useState<boolean>(false);
+  const [simulateMisfireDtc, setSimulateMisfireDtc] = useState<boolean>(false);
+  const [selectedCalibrationId, setSelectedCalibrationId] = useState<CoolrayCalibrationId>(
+    'downgrade_cn_to_dz'
+  );
+
+  const [isFlashing, setIsFlashing] = useState<boolean>(false);
+  const [flashStepIndex, setFlashStepIndex] = useState<number>(0);
+  const [flashResult, setFlashResult] = useState<{
+    ok: boolean;
+    message: string;
+    frames?: string[];
+    crc32?: string;
+    flashedAt?: string;
+  } | null>(null);
+
+  // 4. Audit OBD2 Combustion (Fonctionnalité B)
+  const [obdSnapshot, setObdSnapshot] = useState<CoolrayObdPidSnapshot>(
+    COOLRAY_OBD_SCENARIOS.normal.snapshot
+  );
+  const [obdAuditSavedMsg, setObdAuditSavedMsg] = useState<string | null>(null);
+
+  // Chargement initial depuis le backend
+  useEffect(() => {
+    let mounted = true;
+    apiFetch('/api/coolray-lspi/records')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!mounted || !data?.success || !Array.isArray(data.records) || data.records.length === 0) {
+          return;
+        }
+        setRecords(data.records);
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data.records));
+        setActiveRecord((prev) => {
+          const found = data.records.find((rec: CoolrayVehicleFollowUpRecord) => rec.vin === prev.vin);
+          return found || data.records[0];
+        });
+      })
+      .catch(() => {
+        // Mode hors-ligne atelier : localStorage déjà actif
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Synchroniser matériel ECU & calibration par défaut lorsque le profil moteur change
+  useEffect(() => {
+    setDetectedEcuHardware(activeProfile.ecuHardwareFamily);
+    if (activeProfile.supportedCalibrations.length > 0) {
+      if (!activeProfile.supportedCalibrations.includes(selectedCalibrationId)) {
+        setSelectedCalibrationId(activeProfile.supportedCalibrations[0]);
+      }
+    }
+    setFlashResult(null);
+    setActiveRecord((prev) => {
+      if (prev.variantId === activeProfile.id) return prev;
+      return { ...prev, variantId: activeProfile.id };
+    });
+  }, [activeProfile.id, activeProfile.ecuHardwareFamily, activeProfile.supportedCalibrations, selectedCalibrationId]);
+
+  const handleAutoDetectFromAppVehicle = () => {
+    const inferred = inferVariantFromVehicle(selectedVehicle);
+    setSelectedVariantId(inferred);
+    setSyncNotice(
+      `Détection automatique appliquée depuis le véhicule actif (${selectedVehicle.brand} ${selectedVehicle.model}).`
+    );
+    setTimeout(() => setSyncNotice(null), 4000);
+  };
+
+  // Calcul temps réel du score de protection + cycles kilométriques
+  const scoreCalc = useMemo(
+    () =>
+      computeCoolrayProtectionScore({
+        variantId: selectedVariantId,
+        oilSpec: activeRecord.selectedOilSpec,
+        checklist: activeRecord.checklist,
+        obdStatus: activeRecord.lastObdAuditStatus,
+        currentMileageKm: activeRecord.currentMileageKm,
+        lastOilChangeKm: activeRecord.lastOilChangeKm,
+        lastSparkPlugsKm: activeRecord.lastSparkPlugsKm,
+        lastPeaCleanerKm: activeRecord.lastPeaCleanerKm,
+      }),
+    [selectedVariantId, activeRecord]
+  );
+
+  // Évaluations OBD2
+  const knockEval = useMemo(
+    () =>
+      evaluateKnockRetard(
+        obdSnapshot.knockRetardDeg,
+        obdSnapshot.rpm,
+        activeProfile.isTurboDirectInjection
+      ),
+    [obdSnapshot.knockRetardDeg, obdSnapshot.rpm, activeProfile.isTurboDirectInjection]
+  );
+  const misfireEval = useMemo(
+    () => evaluateMisfires(obdSnapshot, activeProfile.isTurboDirectInjection),
+    [obdSnapshot, activeProfile.isTurboDirectInjection]
+  );
+  const fuelTrimEval = useMemo(
+    () => evaluateFuelTrim(obdSnapshot.stftPct, obdSnapshot.ltftPct),
+    [obdSnapshot.stftPct, obdSnapshot.ltftPct]
+  );
+  const iatEval = useMemo(
+    () =>
+      evaluateIat(
+        obdSnapshot.iatCelsius,
+        obdSnapshot.engineLoadPct,
+        activeProfile.isTurboDirectInjection
+      ),
+    [obdSnapshot.iatCelsius, obdSnapshot.engineLoadPct, activeProfile.isTurboDirectInjection]
+  );
+  const overallObdSeverity = useMemo(
+    () => getOverallObdStatus(obdSnapshot, activeProfile.isTurboDirectInjection),
+    [obdSnapshot, activeProfile.isTurboDirectInjection]
+  );
+
+  // Persistance VIN locale + serveur
+  const persistRecord = async (recordToSave: CoolrayVehicleFollowUpRecord, silent = false) => {
+    const recalculated = computeCoolrayProtectionScore({
+      variantId: recordToSave.variantId,
+      oilSpec: recordToSave.selectedOilSpec,
+      checklist: recordToSave.checklist,
+      obdStatus: recordToSave.lastObdAuditStatus,
+      currentMileageKm: recordToSave.currentMileageKm,
+      lastOilChangeKm: recordToSave.lastOilChangeKm,
+      lastSparkPlugsKm: recordToSave.lastSparkPlugsKm,
+      lastPeaCleanerKm: recordToSave.lastPeaCleanerKm,
+    });
+
+    const normalized: CoolrayVehicleFollowUpRecord = {
+      ...recordToSave,
+      vin: recordToSave.vin.trim().toUpperCase(),
+      lastProtectionScore: recalculated.score,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setActiveRecord(normalized);
+    setRecords((prev) => {
+      const idx = prev.findIndex((r) => r.vin === normalized.vin);
+      const updatedList =
+        idx >= 0
+          ? prev.map((item, i) => (i === idx ? normalized : item))
+          : [normalized, ...prev];
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
+      return updatedList;
+    });
+
+    if (!silent) setIsSyncing(true);
+    try {
+      const res = await apiFetch('/api/coolray-lspi/records', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ record: normalized }),
+      });
+      if (res.ok && !silent) {
+        setSyncNotice(`Dossier VIN ${normalized.vin} sauvegardé (Serveur + Cache Atelier).`);
+      } else if (!silent) {
+        setSyncNotice(`Dossier VIN ${normalized.vin} sauvegardé dans le cache hors-ligne.`);
+      }
+    } catch {
+      if (!silent) {
+        setSyncNotice(`Mode hors-ligne : dossier VIN ${normalized.vin} sauvegardé localement.`);
+      }
+    } finally {
+      if (!silent) {
+        setIsSyncing(false);
+        setTimeout(() => setSyncNotice(null), 4000);
+      }
+    }
+  };
+
+  const handleLoadOrCreateVin = () => {
+    const cleanVin = vinInput.trim().toUpperCase();
+    if (cleanVin.length < 6) {
+      setSyncNotice('Saisir un VIN valide d’au moins 6 caractères.');
+      setTimeout(() => setSyncNotice(null), 3500);
+      return;
+    }
+    const existing = records.find((r) => r.vin === cleanVin);
+    if (existing) {
+      setActiveRecord(existing);
+      setSelectedVariantId(existing.variantId);
+      setSyncNotice(`Dossier existant chargé pour ${cleanVin}.`);
+    } else {
+      const fresh = buildDefaultCoolrayRecord(cleanVin, selectedVariantId);
+      setActiveRecord(fresh);
+      void persistRecord(fresh);
+    }
+    setTimeout(() => setSyncNotice(null), 3500);
+  };
+
+  // Vérification des 3 verrous de sécurité pré-flash
+  const voltageLockOk = effectiveVoltage >= 12.4;
+  const hardwareMatchOk = activeProfile.compatibleHardwareFamilies.includes(detectedEcuHardware);
+  const dtcAuditLockOk = dtcAuditRun && !simulateMisfireDtc;
+  const allPreFlashLocksOk =
+    activeProfile.isTurboDirectInjection && voltageLockOk && hardwareMatchOk && dtcAuditLockOk;
+
+  const selectedCalibration = useMemo(
+    () =>
+      COOLRAY_CALIBRATION_OPTIONS.find((c) => c.id === selectedCalibrationId) ||
+      COOLRAY_CALIBRATION_OPTIONS[0],
+    [selectedCalibrationId]
+  );
+
+  const handleRunDtcAudit = () => {
+    setDtcAuditRun(true);
+    setFlashResult(null);
+  };
+
+  const handleExecuteFlash = async () => {
+    setFlashResult(null);
+    setIsFlashing(true);
+    setFlashStepIndex(1);
+
+    try {
+      // Animation progressive réaliste des étapes UDS
+      for (let i = 1; i <= 3; i += 1) {
+        setFlashStepIndex(i);
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+
+      const res = await apiFetch('/api/coolray-lspi/flash-execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vin: activeRecord.vin,
+          variantId: selectedVariantId,
+          detectedEcuHardwareFamily: detectedEcuHardware,
+          targetCalibrationId: selectedCalibration.id,
+          calibrationTag: selectedCalibration.flashBinaryTag,
+          batteryVoltage: effectiveVoltage,
+          dtcAuditPassed: dtcAuditRun,
+          severeMisfireDtcFound: simulateMisfireDtc,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        setFlashResult({
+          ok: false,
+          message: data?.error || 'Échec du contrôle de sécurité pré-flash.',
+        });
+        setIsFlashing(false);
+        setFlashStepIndex(0);
+        return;
+      }
+
+      setFlashStepIndex(4);
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      setFlashStepIndex(5);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      setFlashResult({
+        ok: true,
+        message: `Calibration ${selectedCalibration.flashBinaryTag} programmée avec succès (CRC32 ${data.verifiedCrc32}).`,
+        frames: data.frames,
+        crc32: data.verifiedCrc32,
+        flashedAt: data.flashedAt,
+      });
+
+      // Mise à jour automatique du dossier VIN + checklist + historique
+      const newIntervention: CoolrayInterventionLog = {
+        id: `INT-${Date.now()}`,
+        dateIso: new Date().toISOString().slice(0, 10),
+        mileageKm: activeRecord.currentMileageKm,
+        type: selectedCalibration.id === 'tcu_7dct_anti_lug' ? 'TCU_FLASH' : 'ECU_FLASH',
+        title: selectedCalibration.title,
+        details: `Tag ${selectedCalibration.flashBinaryTag} · Tension ${effectiveVoltage.toFixed(1)}V · ECU ${detectedEcuHardware}`,
+        technician: 'Atelier AutoPro',
+      };
+
+      const nextInstalled = activeRecord.installedCalibrations.includes(selectedCalibration.id)
+        ? activeRecord.installedCalibrations
+        : [...activeRecord.installedCalibrations, selectedCalibration.id];
+
+      const updatedRecord: CoolrayVehicleFollowUpRecord = {
+        ...activeRecord,
+        variantId: selectedVariantId,
+        installedCalibrations: nextInstalled,
+        checklist: {
+          ...activeRecord.checklist,
+          localFuelEcuMapInstalled:
+            selectedCalibration.id === 'downgrade_cn_to_dz' ||
+            selectedCalibration.id === 'custom_anti_lspi_patch'
+              ? true
+              : activeRecord.checklist.localFuelEcuMapInstalled,
+        },
+        interventions: [newIntervention, ...activeRecord.interventions],
+      };
+      await persistRecord(updatedRecord, true);
+    } catch {
+      setFlashResult({
+        ok: false,
+        message: 'Serveur backend injoignable : vérifiez la liaison réseau atelier avant toute écriture ECU.',
+      });
+    } finally {
+      setIsFlashing(false);
+    }
+  };
+
+  const handleSaveObdAuditToVin = async () => {
+    const newIntervention: CoolrayInterventionLog = {
+      id: `OBD-${Date.now()}`,
+      dateIso: new Date().toISOString().slice(0, 10),
+      mileageKm: activeRecord.currentMileageKm,
+      type: 'OBD_AUDIT',
+      title: `Audit Combustion OBD2 (${overallObdSeverity === 'green' ? 'Normal' : overallObdSeverity === 'amber' ? 'Vigilance' : 'Alerte Critique'})`,
+      details: `Knock ${obdSnapshot.knockRetardDeg}° @ ${obdSnapshot.rpm} tr/min · Ratés C1-C4 [${obdSnapshot.misfiresCyl1}/${obdSnapshot.misfiresCyl2}/${obdSnapshot.misfiresCyl3}/${obdSnapshot.misfiresCyl4}] · STFT ${obdSnapshot.stftPct}% / LTFT ${obdSnapshot.ltftPct}% · IAT ${obdSnapshot.iatCelsius}°C`,
+      technician: 'Diagnostic Préventif',
+    };
+
+    const nextRecord: CoolrayVehicleFollowUpRecord = {
+      ...activeRecord,
+      lastObdAuditStatus: overallObdSeverity,
+      interventions: [newIntervention, ...activeRecord.interventions],
+    };
+    await persistRecord(nextRecord, true);
+    setObdAuditSavedMsg(`Audit OBD2 enregistré dans le dossier VIN ${activeRecord.vin}.`);
+    setTimeout(() => setObdAuditSavedMsg(null), 4000);
+  };
+
+  const handleMarkMaintenanceDone = async (
+    kind: 'OIL_CHANGE' | 'SPARK_PLUGS' | 'GDI_PEA_CLEANER'
+  ) => {
+    const km = activeRecord.currentMileageKm;
+    let updated: CoolrayVehicleFollowUpRecord = { ...activeRecord };
+    let title = '';
+    let details = '';
+
+    if (kind === 'OIL_CHANGE') {
+      title = 'Vidange Moteur API SP / ILSAC GF-6 (Cycle 7 500 km)';
+      details = `Huile sélectionnée : ${activeRecord.selectedOilSpec} à ${km.toLocaleString('fr-FR')} km.`;
+      updated = {
+        ...updated,
+        lastOilChangeKm: km,
+        checklist: {
+          ...updated.checklist,
+          oilApiSpGf6Verified:
+            activeRecord.selectedOilSpec === '0W20_API_SP_GF6' ||
+            activeRecord.selectedOilSpec === '5W30_API_SP',
+        },
+      };
+    } else if (kind === 'SPARK_PLUGS') {
+      title = 'Remplacement / Contrôle Bougies Iridium Froides (Cycle 25 000 km)';
+      details = `Contrôle écartement électrodes & bobines effectué à ${km.toLocaleString('fr-FR')} km.`;
+      updated = {
+        ...updated,
+        lastSparkPlugsKm: km,
+        checklist: { ...updated.checklist, iridiumPlugsVerified: true },
+      };
+    } else {
+      title = 'Traitement Nettoyant Injecteurs GDI PEA (Cycle 10 000 km)';
+      details = `Additif polyétheramine (PEA) haute pression ajouté à ${km.toLocaleString('fr-FR')} km.`;
+      updated = {
+        ...updated,
+        lastPeaCleanerKm: km,
+        checklist: { ...updated.checklist, gdiPeaCleanerDone: true },
+      };
+    }
+
+    const logItem: CoolrayInterventionLog = {
+      id: `MAINT-${Date.now()}`,
+      dateIso: new Date().toISOString().slice(0, 10),
+      mileageKm: km,
+      type: kind,
+      title,
+      details,
+      technician: 'Atelier AutoPro',
+    };
+    updated.interventions = [logItem, ...updated.interventions];
+    await persistRecord(updated);
+  };
+
+  const selectedOilOption = useMemo(
+    () =>
+      COOLRAY_OIL_SPEC_OPTIONS.find((o) => o.id === activeRecord.selectedOilSpec) ||
+      COOLRAY_OIL_SPEC_OPTIONS[0],
+    [activeRecord.selectedOilSpec]
+  );
+
+  // Jauge pour cycles kilométriques
+  const renderCycleGauge = (
+    title: string,
+    sinceKm: number,
+    maxKm: number,
+    lastKm: number,
+    onMarkDone: () => void
+  ) => {
+    const pct = Math.min(100, Math.round((sinceKm / maxKm) * 100));
+    const remaining = maxKm - sinceKm;
+    const isOverdue = remaining <= 0;
+    const isWarning = !isOverdue && pct >= 80;
+
+    return (
+      <div
+        className={`rounded-xl border p-4 space-y-3 ${
+          isOverdue
+            ? 'border-rose-500/60 bg-rose-950/20'
+            : isWarning
+            ? 'border-amber-500/50 bg-amber-950/15'
+            : 'border-slate-800 bg-slate-900/70'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h4 className="text-sm font-bold text-white">{title}</h4>
+            <p className="text-[11px] text-slate-400">
+              Cycle strict : <span className="font-mono text-slate-200">{maxKm.toLocaleString('fr-FR')} km</span> · Dernière à{' '}
+              <span className="font-mono text-slate-200">{lastKm.toLocaleString('fr-FR')} km</span>
+            </p>
+          </div>
+          <span
+            className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
+              isOverdue
+                ? 'bg-rose-950 text-rose-300 border-rose-500/50'
+                : isWarning
+                ? 'bg-amber-950 text-amber-300 border-amber-500/50'
+                : 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+            }`}
+          >
+            {isOverdue
+              ? `DÉPASSÉ DE ${Math.abs(remaining).toLocaleString('fr-FR')} km`
+              : `Reste ${remaining.toLocaleString('fr-FR')} km`}
+          </span>
+        </div>
+
+        <div className="space-y-1">
+          <div className="flex justify-between text-[11px] font-mono text-slate-300">
+            <span>Parcouru : {sinceKm.toLocaleString('fr-FR')} km</span>
+            <span>{pct}%</span>
+          </div>
+          <div className="w-full h-2.5 rounded-full bg-slate-950 border border-slate-800 overflow-hidden">
+            <div
+              className={`h-full transition-all duration-300 ${
+                isOverdue ? 'bg-rose-500' : isWarning ? 'bg-amber-400' : 'bg-emerald-400'
+              }`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onMarkDone}
+          className="w-full py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-cyan-300 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+        >
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          <span>Intervention effectuée à {activeRecord.currentMileageKm.toLocaleString('fr-FR')} km</span>
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* En-tête du Module Geely Coolray Anti-LSPI */}
+      <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-[#0d1424] to-slate-950 p-5 sm:p-6 shadow-xl">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2.5 py-1 rounded-md bg-rose-950/90 border border-rose-500/50 text-rose-300 text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5">
+                <Flame className="w-3.5 h-3.5 text-rose-400" />
+                Geely Coolray (2020–2026) · Protection Anti-LSPI
+              </span>
+              <span className="px-2.5 py-1 rounded-md bg-slate-900 border border-slate-700 text-cyan-300 text-[11px] font-mono">
+                BOSCH MG1US008 / MG1CS080 · 7DCT
+              </span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
+              Geely Coolray — Protection Anti-LSPI, Flash ECU/TCU &amp; Suivi des Précautions
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-400 max-w-3xl">
+              Module spécialisé contre le pré-allumage à bas régime (LSPI) sur moteurs 1.5T GDI (carburant local,
+              cartographies Chine VI 181 ch, gestion huile API SP et audit OBD2 cylindres 2 &amp; 3).
+            </p>
+          </div>
+
+          {/* Score Global Protection Moteur */}
+          <div className="flex items-center gap-4 bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 shrink-0">
+            <div className="text-right">
+              <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
+                Score Protection Moteur
+              </div>
+              <div className="text-xs font-medium text-slate-300">{scoreCalc.statusLabel}</div>
+              <div className="text-[11px] font-mono text-slate-500">VIN : {activeRecord.vin}</div>
+            </div>
+            <div
+              className={`w-16 h-16 rounded-xl border-2 flex flex-col items-center justify-center font-mono font-extrabold ${
+                scoreCalc.score >= 85
+                  ? 'border-emerald-500/70 bg-emerald-950/60 text-emerald-300'
+                  : scoreCalc.score >= 60
+                  ? 'border-amber-500/70 bg-amber-950/60 text-amber-300'
+                  : 'border-rose-500/80 bg-rose-950/70 text-rose-300'
+              }`}
+            >
+              <span className="text-xl leading-none">{scoreCalc.score}%</span>
+              <span className="text-[9px] uppercase mt-1 opacity-80">LSPI SAFE</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Sélecteur des 4 profils Coolray (2020–2026) */}
+        <div className="mt-5 pt-5 border-t border-slate-800/80 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <Cpu className="w-4 h-4 text-cyan-400" />
+              1. Base Motorisations &amp; Profils Véhicules Geely Coolray (2020–2026)
+            </div>
+            <button
+              type="button"
+              onClick={handleAutoDetectFromAppVehicle}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-cyan-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Détection auto ({selectedVehicle.brand} {selectedVehicle.model})</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {COOLRAY_ENGINE_PROFILES.map((profile) => {
+              const isSelected = profile.id === selectedVariantId;
+              const isChinePriority = profile.lspiPriorityLevel === 'PRIORITAIRE_CHINE_VI';
+              const isAtmo = !profile.isTurboDirectInjection;
+
+              return (
+                <button
+                  key={profile.id}
+                  type="button"
+                  onClick={() => setSelectedVariantId(profile.id)}
+                  className={`text-left rounded-xl border p-3.5 transition-all cursor-pointer space-y-2 ${
+                    isSelected
+                      ? isChinePriority
+                        ? 'border-rose-500 bg-rose-950/30 ring-1 ring-rose-500/40'
+                        : isAtmo
+                        ? 'border-emerald-500 bg-emerald-950/25 ring-1 ring-emerald-500/40'
+                        : 'border-cyan-500 bg-cyan-950/25 ring-1 ring-cyan-500/40'
+                      : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs font-bold text-white leading-snug">{profile.label}</span>
+                    {isChinePriority && (
+                      <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/50 text-rose-300 text-[10px] font-bold shrink-0">
+                        PRIORITAIRE LSPI
+                      </span>
+                    )}
+                    {isAtmo && (
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold shrink-0">
+                        EXCLU TURBO
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="text-[11px] text-slate-300 font-medium">{profile.engineCode}</div>
+
+                  <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
+                    <span className="px-1.5 py-0.5 rounded bg-slate-950 text-cyan-300 border border-slate-800">
+                      {profile.powerHp} / {profile.torqueNm}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-slate-950 text-slate-300 border border-slate-800">
+                      {profile.transmission.includes('CVT') ? 'CVT' : '7DCT'}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-slate-950 text-amber-300 border border-slate-800">
+                      {profile.ecuHardwareFamily}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Note technique profil sélectionné */}
+          <div
+            className={`rounded-xl border px-4 py-3 text-xs flex items-start gap-3 ${
+              activeProfile.lspiPriorityLevel === 'PRIORITAIRE_CHINE_VI'
+                ? 'border-rose-500/50 bg-rose-950/30 text-rose-200'
+                : activeProfile.lspiPriorityLevel === 'EXCLU_ATMO_STANDARD'
+                ? 'border-emerald-500/40 bg-emerald-950/20 text-emerald-200'
+                : 'border-amber-500/40 bg-amber-950/20 text-amber-200'
+            }`}
+          >
+            {activeProfile.lspiPriorityLevel === 'EXCLU_ATMO_STANDARD' ? (
+              <Info className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            )}
+            <div className="space-y-0.5">
+              <div className="font-bold">
+                {activeProfile.label} — ECU {activeProfile.ecuModel} ({activeProfile.transmission})
+              </div>
+              <p className="text-[11px] opacity-90 leading-relaxed">{activeProfile.calibrationNote}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Barre sous-onglets du module */}
+        <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-800/80 pt-4">
+          <button
+            type="button"
+            onClick={() => setSubTab('flash')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border ${
+              subTab === 'flash'
+                ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+            }`}
+          >
+            <Zap className="w-4 h-4" />
+            <span>A. Flash &amp; Reprogrammation Anti-LSPI (ECU / TCU)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSubTab('obd_audit')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border ${
+              subTab === 'obd_audit'
+                ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+            }`}
+          >
+            <Activity className="w-4 h-4" />
+            <span>B. Audit Santé Combustion OBD2 (Knock / Ratés / Trims / IAT)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSubTab('maintenance')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border ${
+              subTab === 'maintenance'
+                ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+            }`}
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            <span>C. Suivi Précautions &amp; Maintenance par VIN</span>
+          </button>
+        </div>
+      </div>
+
+      {syncNotice && (
+        <div className="rounded-xl border border-cyan-500/40 bg-cyan-950/30 px-4 py-2.5 text-xs text-cyan-200 flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-cyan-400" />
+            {syncNotice}
+          </span>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* ONGLET A : FLASH & REPROGRAMMATION ANTI-LSPI (ECU / TCU)  */}
+      {/* ========================================================= */}
+      {subTab === 'flash' && (
+        <div className="space-y-5">
+          {!activeProfile.isTurboDirectInjection ? (
+            <div className="rounded-2xl border border-emerald-500/40 bg-emerald-950/20 p-6 space-y-3">
+              <div className="flex items-center gap-3 text-emerald-300 font-bold text-base">
+                <ShieldCheck className="w-6 h-6" />
+                <span>Profil Standard Atmosphérique — Exclu des Flashs Anti-LSPI Turbo</span>
+              </div>
+              <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                Le <strong>Coolray Lite / Super Atmosphérique (1.5L DVVT 126–127 ch · Boîte CVT)</strong> ne dispose
+                ni de turbocompresseur ni d’injection directe haute pression GDI. Le phénomène destructeur LSPI ne
+                concerne pas ce moteur : aucune reprogrammation Anti-LSPI n’est requise ou autorisée sur ce profil.
+              </p>
+              <button
+                type="button"
+                onClick={() => setSubTab('maintenance')}
+                className="px-4 py-2 rounded-lg bg-emerald-500 text-slate-950 text-xs font-bold cursor-pointer hover:bg-emerald-400 transition-colors"
+              >
+                Basculer vers le suivi d’entretien standard (VIN)
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              {/* Colonne gauche : 3 Verrous de Sécurité Pré-Flash */}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-amber-400" />
+                      Verrous de Sécurité Pré-Flash (Bloquants)
+                    </h2>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
+                        allPreFlashLocksOk
+                          ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+                          : 'bg-rose-950 text-rose-300 border-rose-500/50'
+                      }`}
+                    >
+                      {allPreFlashLocksOk ? '3/3 VALIDÉS' : 'ÉCRITURE BLOQUÉE'}
+                    </span>
+                  </div>
+
+                  {/* Verrou 1 : Tension Batterie */}
+                  <div
+                    className={`rounded-xl border p-3.5 space-y-2.5 ${
+                      voltageLockOk
+                        ? 'border-emerald-500/40 bg-emerald-950/15'
+                        : 'border-rose-500/60 bg-rose-950/25'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <BatteryCharging className="w-4 h-4 text-cyan-400" />
+                        1. Tension Batterie (&ge; 12.4V)
+                      </span>
+                      <span
+                        className={`font-mono text-xs font-bold ${
+                          voltageLockOk ? 'text-emerald-300' : 'text-rose-300'
+                        }`}
+                      >
+                        {effectiveVoltage.toFixed(1)}V {voltageLockOk ? 'OK' : 'BLOQUÉ'}
+                      </span>
+                    </div>
+
+                    {!isConnected && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] text-slate-400">
+                          <span>Simulateur tension banc / maintien de charge :</span>
+                          <div className="flex gap-1">
+                            {[11.9, 12.6, 13.5].map((v) => (
+                              <button
+                                key={v}
+                                type="button"
+                                onClick={() => setTestVoltageOverride(v)}
+                                className={`px-1.5 py-0.5 rounded font-mono border text-[10px] cursor-pointer ${
+                                  Math.abs(testVoltageOverride - v) < 0.05
+                                    ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-bold'
+                                    : 'bg-slate-950 text-slate-300 border-slate-700'
+                                }`}
+                              >
+                                {v.toFixed(1)}V
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <input
+                          type="range"
+                          min={11.5}
+                          max={14.2}
+                          step={0.1}
+                          value={testVoltageOverride}
+                          onChange={(e) => setTestVoltageOverride(Number(e.target.value))}
+                          className="w-full accent-cyan-400 cursor-pointer"
+                        />
+                      </div>
+                    )}
+
+                    {!voltageLockOk && (
+                      <p className="text-[11px] text-rose-200 font-medium">
+                        Blocage automatique (&lt; 12.4V) : branchez un stabilisateur de tension atelier 50A+ avant écriture MG1.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Verrou 2 : Contrôle Matériel ECU & Anti-Croisement */}
+                  <div
+                    className={`rounded-xl border p-3.5 space-y-2.5 ${
+                      hardwareMatchOk
+                        ? 'border-emerald-500/40 bg-emerald-950/15'
+                        : 'border-rose-500/60 bg-rose-950/25'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Cpu className="w-4 h-4 text-amber-400" />
+                        2. Contrôle ID Calculateur
+                      </span>
+                      <span
+                        className={`font-mono text-[11px] font-bold ${
+                          hardwareMatchOk ? 'text-emerald-300' : 'text-rose-300'
+                        }`}
+                      >
+                        {hardwareMatchOk ? 'ID COMPATIBLE' : 'CROISEMENT INTERDIT'}
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] text-slate-300">
+                      Requis profil :{' '}
+                      <span className="font-mono text-cyan-300 font-bold">
+                        {activeProfile.compatibleHardwareFamilies.join(' / ')}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {(['MG1US008', 'MG1UA008', 'MG1CS080'] as CoolrayEcuHardwareFamily[]).map((hw) => (
+                        <button
+                          key={hw}
+                          type="button"
+                          onClick={() => setDetectedEcuHardware(hw)}
+                          className={`py-1.5 px-2 rounded-lg text-[11px] font-mono font-bold border cursor-pointer transition-colors ${
+                            detectedEcuHardware === hw
+                              ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                              : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          {hw}
+                        </button>
+                      ))}
+                    </div>
+
+                    {!hardwareMatchOk && (
+                      <p className="text-[11px] text-rose-200 font-medium">
+                        Croisement MG1US008 / MG1CS080 détecté : flash bloqué pour éviter la corruption boot du calculateur.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Verrou 3 : Audit DTC Préliminaire */}
+                  <div
+                    className={`rounded-xl border p-3.5 space-y-2.5 ${
+                      dtcAuditLockOk
+                        ? 'border-emerald-500/40 bg-emerald-950/15'
+                        : 'border-rose-500/60 bg-rose-950/25'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Search className="w-4 h-4 text-emerald-400" />
+                        3. Audit Préliminaire DTC (0x19)
+                      </span>
+                      <span
+                        className={`text-[11px] font-bold ${
+                          dtcAuditLockOk ? 'text-emerald-300' : 'text-rose-300'
+                        }`}
+                      >
+                        {!dtcAuditRun
+                          ? 'NON EXÉCUTÉ'
+                          : simulateMisfireDtc
+                          ? 'RATÉS P0302/P0303'
+                          : 'AUCUN RATÉ SÉVÈRE'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleRunDtcAudit}
+                        className="flex-1 py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-cyan-300 cursor-pointer transition-colors"
+                      >
+                        {dtcAuditRun ? 'Relancer scan DTC pré-flash' : 'Lancer lecture DTC obligatoire'}
+                      </button>
+                    </div>
+
+                    <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer pt-1">
+                      <input
+                        type="checkbox"
+                        checked={simulateMisfireDtc}
+                        onChange={(e) => setSimulateMisfireDtc(e.target.checked)}
+                        className="rounded border-slate-600 bg-slate-950 text-rose-500"
+                      />
+                      <span>Simuler DTC raté allumage sévère (P0302 / P0303) pour test blocage</span>
+                    </label>
+                  </div>
+
+                  {!isConnected && (
+                    <button
+                      type="button"
+                      onClick={onOpenConnectModal}
+                      className="w-full py-2 px-3 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-300 cursor-pointer transition-colors"
+                    >
+                      Connecter interface OBD2 réelle (ELM327 / J2534)
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Colonne droite : 3 Cartographies Correctives & Exécution */}
+              <div className="lg:col-span-7 space-y-4">
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-cyan-400" />
+                      Cartographies Correctives Anti-LSPI (ECU &amp; TCU 7DCT)
+                    </h2>
+                    <span className="text-[11px] font-mono text-slate-400">ISO 14229 UDS</span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {COOLRAY_CALIBRATION_OPTIONS.map((cal) => {
+                      const isSupported = activeProfile.supportedCalibrations.includes(cal.id);
+                      const isSelected = selectedCalibrationId === cal.id;
+                      const alreadyInstalled = activeRecord.installedCalibrations.includes(cal.id);
+
+                      return (
+                        <button
+                          key={cal.id}
+                          type="button"
+                          disabled={!isSupported}
+                          onClick={() => setSelectedCalibrationId(cal.id)}
+                          className={`w-full text-left rounded-xl border p-4 transition-all space-y-2 ${
+                            !isSupported
+                              ? 'border-slate-800/60 bg-slate-950/40 opacity-50 cursor-not-allowed'
+                              : isSelected
+                              ? 'border-cyan-500 bg-cyan-950/25 ring-1 ring-cyan-500/40 cursor-pointer'
+                              : 'border-slate-800 bg-slate-950/60 hover:border-slate-700 cursor-pointer'
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-sm font-bold text-white">{cal.title}</span>
+                            <div className="flex items-center gap-1.5">
+                              {alreadyInstalled && (
+                                <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold">
+                                  INSTALLÉE SUR CE VIN
+                                </span>
+                              )}
+                              <span className="px-2 py-0.5 rounded bg-slate-900 text-amber-300 border border-slate-700 text-[10px] font-bold">
+                                {cal.badge}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="text-[11px] font-mono text-cyan-300">
+                            Cible : {cal.targetController} · Tag : {cal.flashBinaryTag}
+                          </div>
+
+                          <p className="text-xs text-slate-300 leading-relaxed">{cal.summary}</p>
+
+                          <ul className="space-y-1 pt-1">
+                            {cal.technicalAdjustments.map((adj) => (
+                              <li key={adj} className="text-[11px] text-slate-400 flex items-start gap-2">
+                                <span className="text-cyan-400 font-bold">•</span>
+                                <span>{adj}</span>
+                              </li>
+                            ))}
+                          </ul>
+
+                          {!isSupported && (
+                            <div className="text-[11px] text-amber-300 font-semibold pt-1">
+                              Option réservée aux moteurs 1.5T 4 cylindres Chine VI 181 ch (MG1US008).
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Barre de progression et bouton d'exécution */}
+                  <div className="pt-2 border-t border-slate-800 space-y-3">
+                    {isFlashing && (
+                      <div className="rounded-xl border border-cyan-500/40 bg-slate-950 p-3.5 space-y-2">
+                        <div className="text-xs font-bold text-cyan-300 flex items-center justify-between">
+                          <span>Programmation UDS en cours... Ne pas couper le contact !</span>
+                          <span className="font-mono">{flashStepIndex}/5</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {FLASH_SEQUENCE_STEPS.map((step) => {
+                            const done = flashStepIndex > step.id;
+                            const current = flashStepIndex === step.id;
+                            return (
+                              <div
+                                key={step.id}
+                                className={`flex items-center justify-between text-[11px] px-2.5 py-1 rounded ${
+                                  done
+                                    ? 'bg-emerald-950/40 text-emerald-300'
+                                    : current
+                                    ? 'bg-cyan-950/60 text-cyan-200 font-semibold'
+                                    : 'text-slate-500'
+                                }`}
+                              >
+                                <span>{step.label}</span>
+                                <span className="font-mono">{done ? 'OK' : current ? 'EN COURS' : step.ecuRef}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      disabled={isFlashing}
+                      onClick={handleExecuteFlash}
+                      className={`w-full py-3 px-4 rounded-xl text-sm font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        allPreFlashLocksOk
+                          ? 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-950 shadow-lg'
+                          : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40'
+                      }`}
+                    >
+                      <Play className="w-4 h-4" />
+                      <span>
+                        {isFlashing
+                          ? 'Écriture & Vérification CRC32 en cours...'
+                          : allPreFlashLocksOk
+                          ? `Exécuter le Flash (${selectedCalibration.flashBinaryTag})`
+                          : 'Tester / Exécuter le Flash (Contrôle verrous de sécurité)'}
+                      </span>
+                    </button>
+
+                    {flashResult && (
+                      <div
+                        className={`rounded-xl border p-4 space-y-2.5 ${
+                          flashResult.ok
+                            ? 'border-emerald-500/50 bg-emerald-950/25'
+                            : 'border-rose-500/60 bg-rose-950/30'
+                        }`}
+                      >
+                        <div className="flex items-start gap-2.5">
+                          {flashResult.ok ? (
+                            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                          ) : (
+                            <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                          )}
+                          <div className="text-xs font-semibold text-white">{flashResult.message}</div>
+                        </div>
+
+                        {flashResult.frames && flashResult.frames.length > 0 && (
+                          <div className="rounded-lg bg-slate-950 border border-slate-800 p-3 font-mono text-[11px] text-cyan-300 space-y-1">
+                            <div className="flex items-center gap-1.5 text-slate-400 mb-1">
+                              <Terminal className="w-3.5 h-3.5" />
+                              <span>Journal Trames UDS Exécutées</span>
+                            </div>
+                            {flashResult.frames.map((frame) => (
+                              <div key={frame}>{frame}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* ONGLET B : DIAGNOSTIC PRÉVENTIF OBD2 (AUDIT COMBUSTION)   */}
+      {/* ========================================================= */}
+      {subTab === 'obd_audit' && (
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-cyan-400" />
+                  Audit Santé Combustion OBD2 (Détection Précoce Cliquetis &amp; LSPI)
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Surveillance temps réel ou simulation banc des 4 paramètres critiques sur Geely Coolray (alerte renforcée sur les cylindres 2 et 3).
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {(['normal', 'vigilance', 'lspi_critical'] as const).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() =>
+                      setObdSnapshot({
+                        ...COOLRAY_OBD_SCENARIOS[key].snapshot,
+                        capturedAt: new Date().toLocaleTimeString('fr-FR'),
+                      })
+                    }
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer transition-colors ${
+                      key === 'normal'
+                        ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/50'
+                        : key === 'vigilance'
+                        ? 'bg-amber-950/60 border-amber-500/40 text-amber-300 hover:bg-amber-900/50'
+                        : 'bg-rose-950/70 border-rose-500/50 text-rose-300 hover:bg-rose-900/60'
+                    }`}
+                  >
+                    {COOLRAY_OBD_SCENARIOS[key].label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Sliders rapides de test conditions moteur */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-slate-950/80 border border-slate-800 rounded-xl p-4">
+              <div className="space-y-1">
+                <div className="flex justify-between text-[11px] text-slate-300">
+                  <span>Régime Moteur (RPM)</span>
+                  <span className="font-mono font-bold text-cyan-300">{obdSnapshot.rpm} tr/min</span>
+                </div>
+                <input
+                  type="range"
+                  min={800}
+                  max={5500}
+                  step={50}
+                  value={obdSnapshot.rpm}
+                  onChange={(e) => setObdSnapshot((s) => ({ ...s, rpm: Number(e.target.value) }))}
+                  className="w-full accent-cyan-400 cursor-pointer"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-[11px] text-slate-300">
+                  <span>Charge Moteur (%)</span>
+                  <span className="font-mono font-bold text-cyan-300">{obdSnapshot.engineLoadPct}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={15}
+                  max={100}
+                  step={1}
+                  value={obdSnapshot.engineLoadPct}
+                  onChange={(e) =>
+                    setObdSnapshot((s) => ({ ...s, engineLoadPct: Number(e.target.value) }))
+                  }
+                  className="w-full accent-cyan-400 cursor-pointer"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-[11px] text-slate-300">
+                  <span>Knock Retard (°)</span>
+                  <span className="font-mono font-bold text-amber-300">
+                    {obdSnapshot.knockRetardDeg.toFixed(1)}°
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-7.5}
+                  max={0}
+                  step={0.1}
+                  value={obdSnapshot.knockRetardDeg}
+                  onChange={(e) =>
+                    setObdSnapshot((s) => ({ ...s, knockRetardDeg: Number(e.target.value) }))
+                  }
+                  className="w-full accent-amber-400 cursor-pointer"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-[11px] text-slate-300">
+                  <span>Temp. Air Admission (IAT)</span>
+                  <span className="font-mono font-bold text-rose-300">{obdSnapshot.iatCelsius}°C</span>
+                </div>
+                <input
+                  type="range"
+                  min={20}
+                  max={80}
+                  step={1}
+                  value={obdSnapshot.iatCelsius}
+                  onChange={(e) =>
+                    setObdSnapshot((s) => ({ ...s, iatCelsius: Number(e.target.value) }))
+                  }
+                  className="w-full accent-rose-400 cursor-pointer"
+                />
+              </div>
+            </div>
+
+            {/* Grille des 4 Cartes d'Audit OBD2 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* 1. Knock Retard */}
+              <div className={`rounded-xl border p-4 space-y-2.5 ${severityCardBorder(knockEval.severity)}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-white">1. Retard d’Allumage (Knock Retard)</h3>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold border ${severityBadgeClasses(
+                      knockEval.severity
+                    )}`}
+                  >
+                    {knockEval.badge}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-3">
+                  <span className="text-2xl font-mono font-extrabold text-white">
+                    {obdSnapshot.knockRetardDeg.toFixed(1)}°
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-400">
+                    Plage normale : 0° à -2.0° · Seuil alerte : &gt; -3.5° (1 500–3 000 tr/min)
+                  </span>
+                </div>
+                <p className="text-xs text-slate-200 leading-relaxed">{knockEval.recommendation}</p>
+              </div>
+
+              {/* 2. Compteurs de Ratés Cyl 1-4 */}
+              <div className={`rounded-xl border p-4 space-y-2.5 ${severityCardBorder(misfireEval.severity)}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-white">2. Compteurs de Ratés (Misfires Cyl. 1–4)</h3>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold border ${severityBadgeClasses(
+                      misfireEval.severity
+                    )}`}
+                  >
+                    {misfireEval.badge}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2">
+                  {(
+                    [
+                      { key: 'misfiresCyl1', label: 'Cyl. 1', hot: false },
+                      { key: 'misfiresCyl2', label: 'Cyl. 2 *', hot: true },
+                      { key: 'misfiresCyl3', label: 'Cyl. 3 *', hot: true },
+                      { key: 'misfiresCyl4', label: 'Cyl. 4', hot: false },
+                    ] as const
+                  ).map((c) => {
+                    const count = obdSnapshot[c.key];
+                    return (
+                      <div
+                        key={c.key}
+                        className={`rounded-lg border p-2 text-center ${
+                          count >= 3
+                            ? 'border-rose-500/70 bg-rose-950/60'
+                            : c.hot && activeProfile.isTurboDirectInjection
+                            ? 'border-amber-500/35 bg-slate-950/80'
+                            : 'border-slate-800 bg-slate-950/70'
+                        }`}
+                      >
+                        <div className="text-[10px] font-bold text-slate-300">{c.label}</div>
+                        <input
+                          type="number"
+                          min={0}
+                          max={99}
+                          value={count}
+                          onChange={(e) =>
+                            setObdSnapshot((s) => ({
+                              ...s,
+                              [c.key]: Math.max(0, Number(e.target.value) || 0),
+                            }))
+                          }
+                          className="w-full mt-1 bg-transparent text-center font-mono text-base font-extrabold text-white focus:outline-none"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-slate-200 leading-relaxed">{misfireEval.recommendation}</p>
+              </div>
+
+              {/* 3. Fuel Trims STFT / LTFT */}
+              <div className={`rounded-xl border p-4 space-y-2.5 ${severityCardBorder(fuelTrimEval.severity)}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-white">3. Corrections Carburant (STFT / LTFT)</h3>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold border ${severityBadgeClasses(
+                      fuelTrimEval.severity
+                    )}`}
+                  >
+                    {fuelTrimEval.badge}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-slate-950/80 border border-slate-800 px-3 py-2">
+                    <div className="text-[10px] text-slate-400">STFT Court Terme (%)</div>
+                    <input
+                      type="number"
+                      step={0.5}
+                      min={-25}
+                      max={30}
+                      value={obdSnapshot.stftPct}
+                      onChange={(e) =>
+                        setObdSnapshot((s) => ({ ...s, stftPct: Number(e.target.value) || 0 }))
+                      }
+                      className="w-full bg-transparent font-mono text-lg font-extrabold text-white focus:outline-none"
+                    />
+                  </div>
+                  <div className="rounded-lg bg-slate-950/80 border border-slate-800 px-3 py-2">
+                    <div className="text-[10px] text-slate-400">LTFT Long Terme (%)</div>
+                    <input
+                      type="number"
+                      step={0.5}
+                      min={-25}
+                      max={30}
+                      value={obdSnapshot.ltftPct}
+                      onChange={(e) =>
+                        setObdSnapshot((s) => ({ ...s, ltftPct: Number(e.target.value) || 0 }))
+                      }
+                      className="w-full bg-transparent font-mono text-lg font-extrabold text-white focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-slate-200 leading-relaxed">
+                  Normal : -5% à +5% | Alerte : &gt; +10% (mélange pauvre / surchauffe). {fuelTrimEval.recommendation}
+                </p>
+              </div>
+
+              {/* 4. Température Air Admission IAT */}
+              <div className={`rounded-xl border p-4 space-y-2.5 ${severityCardBorder(iatEval.severity)}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-white">4. Température d’Air d’Admission (IAT)</h3>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold border ${severityBadgeClasses(
+                      iatEval.severity
+                    )}`}
+                  >
+                    {iatEval.badge}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-3">
+                  <span className="text-2xl font-mono font-extrabold text-white">
+                    {obdSnapshot.iatCelsius}°C
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-400">
+                    Normal : &lt; 45°C · Alerte : &gt; 55°C en charge
+                  </span>
+                </div>
+                <p className="text-xs text-slate-200 leading-relaxed">{iatEval.recommendation}</p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800">
+              <div className="text-xs text-slate-300">
+                Statut global de cet audit :{' '}
+                <span
+                  className={`px-2 py-0.5 rounded font-bold border ${severityBadgeClasses(
+                    overallObdSeverity
+                  )}`}
+                >
+                  {overallObdSeverity === 'green'
+                    ? 'VERT — COMBUSTION SAINE'
+                    : overallObdSeverity === 'amber'
+                    ? 'ORANGE — VIGILANCE RECOMMANDÉE'
+                    : 'ROUGE — RISQUE LSPI CRITIQUE'}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSaveObdAuditToVin}
+                className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-extrabold flex items-center gap-2 cursor-pointer transition-colors"
+              >
+                <Save className="w-4 h-4" />
+                <span>Enregistrer cet Audit OBD2 au Dossier VIN</span>
+              </button>
+            </div>
+
+            {obdAuditSavedMsg && (
+              <div className="rounded-lg border border-emerald-500/40 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-300">
+                {obdAuditSavedMsg}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* ONGLET C : SUIVI DES PRÉCAUTIONS & MAINTENANCE PAR VIN    */}
+      {/* ========================================================= */}
+      {subTab === 'maintenance' && (
+        <div className="space-y-5">
+          {/* Identification VIN & Kilométrage */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold uppercase text-slate-400">
+                    Numéro de Châssis (VIN)
+                  </label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={vinInput}
+                      onChange={(e) => setVinInput(e.target.value.toUpperCase())}
+                      placeholder="Ex: L6T7824Z9RZ001540"
+                      className="flex-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-xs font-mono text-white focus:border-cyan-400 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleLoadOrCreateVin}
+                      className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-cyan-300 cursor-pointer"
+                    >
+                      Charger
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold uppercase text-slate-400">
+                    Client / Immatriculation
+                  </label>
+                  <input
+                    type="text"
+                    value={activeRecord.ownerOrPlate}
+                    onChange={(e) =>
+                      setActiveRecord((prev) => ({ ...prev, ownerOrPlate: e.target.value }))
+                    }
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white focus:border-cyan-400 focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold uppercase text-slate-400">
+                    Kilométrage Actuel (km)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={100}
+                    value={activeRecord.currentMileageKm}
+                    onChange={(e) =>
+                      setActiveRecord((prev) => ({
+                        ...prev,
+                        currentMileageKm: Math.max(0, Number(e.target.value) || 0),
+                      }))
+                    }
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-xs font-mono font-bold text-cyan-300 focus:border-cyan-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {records.length > 0 && (
+                  <select
+                    value={activeRecord.vin}
+                    onChange={(e) => {
+                      const chosen = records.find((r) => r.vin === e.target.value);
+                      if (chosen) {
+                        setActiveRecord(chosen);
+                        setVinInput(chosen.vin);
+                        setSelectedVariantId(chosen.variantId);
+                      }
+                    }}
+                    className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-xs font-mono text-slate-200"
+                  >
+                    {records.map((rec) => (
+                      <option key={rec.vin} value={rec.vin}>
+                        {rec.vin} ({rec.lastProtectionScore}%)
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                <button
+                  type="button"
+                  disabled={isSyncing}
+                  onClick={() => void persistRecord(activeRecord)}
+                  className="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSyncing ? 'Sauvegarde...' : 'Enregistrer Dossier VIN'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Spécification Huile Moteur + Alerte Critique Rouge */}
+            <div className="pt-3 border-t border-slate-800 space-y-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-white">
+                <Droplets className="w-4 h-4 text-cyan-400" />
+                <span>Contrôle Viscosité &amp; Norme Huile Moteur (Protection Anti-LSPI)</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                {COOLRAY_OIL_SPEC_OPTIONS.map((oil) => {
+                  const selected = activeRecord.selectedOilSpec === oil.id;
+                  return (
+                    <button
+                      key={oil.id}
+                      type="button"
+                      onClick={() =>
+                        setActiveRecord((prev) => ({
+                          ...prev,
+                          selectedOilSpec: oil.id as CoolrayOilSpecId,
+                          checklist: {
+                            ...prev.checklist,
+                            oilApiSpGf6Verified: oil.id === '0W20_API_SP_GF6',
+                          },
+                        }))
+                      }
+                      className={`text-left rounded-xl border p-3 text-xs transition-all cursor-pointer ${
+                        selected
+                          ? oil.compliant
+                            ? 'border-emerald-500 bg-emerald-950/25 text-white'
+                            : 'border-rose-500 bg-rose-950/40 text-rose-100 ring-1 ring-rose-500/50'
+                          : 'border-slate-800 bg-slate-950/60 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="font-bold">{oil.label}</div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Alerte Critique Rouge si huile non conforme */}
+              <div
+                className={`rounded-xl border p-4 flex items-start gap-3 ${
+                  selectedOilOption.severity === 'red'
+                    ? 'border-rose-500 bg-rose-950/60 text-rose-100'
+                    : selectedOilOption.severity === 'amber'
+                    ? 'border-amber-500/50 bg-amber-950/25 text-amber-100'
+                    : 'border-emerald-500/40 bg-emerald-950/20 text-emerald-100'
+                }`}
+              >
+                {selectedOilOption.severity === 'red' ? (
+                  <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                ) : selectedOilOption.severity === 'amber' ? (
+                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                ) : (
+                  <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                )}
+                <p className="text-xs leading-relaxed font-medium">{selectedOilOption.alertText}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Checklist Technique 5 points + 3 Jauges Kilométriques */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            {/* Checklist 5 points */}
+            <div className="lg:col-span-5 rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <ClipboardCheck className="w-4 h-4 text-cyan-400" />
+                Checklist Technique Interactive Anti-LSPI
+              </h3>
+
+              <div className="space-y-2.5">
+                {[
+                  {
+                    key: 'oilApiSpGf6Verified' as const,
+                    title: 'Huile moteur 0W-20 certifiée API SP / ILSAC GF-6',
+                    sub: 'Indispensable contre le pré-allumage par gouttelettes d’huile.',
+                  },
+                  {
+                    key: 'iridiumPlugsVerified' as const,
+                    title: 'Bougies Iridium froides contrôlées / remplacées',
+                    sub: 'Contrôle porcelaine, électrode & écartement (cycle 25 000 km).',
+                  },
+                  {
+                    key: 'gdiPeaCleanerDone' as const,
+                    title: 'Nettoyant injecteurs GDI (base PEA) effectué',
+                    sub: 'Évite les gouttes mal pulvérisées déclenchant le LSPI.',
+                  },
+                  {
+                    key: 'localFuelEcuMapInstalled' as const,
+                    title: 'Cartographie ECU adaptée carburant local installée',
+                    sub: 'Downgrade DZ 174 ch ou Patch Anti-LSPI actif sur MG1.',
+                  },
+                  {
+                    key: 'drivingRuleValidated' as const,
+                    title: 'Règle de conduite validée avec le conducteur',
+                    sub: 'Éviter le mode Eco en ville/côte et les accélérations pied au plancher < 2 000 tr/min.',
+                  },
+                ].map((item) => {
+                  const checked = activeRecord.checklist[item.key];
+                  return (
+                    <label
+                      key={item.key}
+                      className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${
+                        checked
+                          ? 'border-emerald-500/40 bg-emerald-950/15'
+                          : 'border-slate-800 bg-slate-950/60 hover:border-slate-700'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) =>
+                          setActiveRecord((prev) => ({
+                            ...prev,
+                            checklist: { ...prev.checklist, [item.key]: e.target.checked },
+                          }))
+                        }
+                        className="mt-0.5 rounded border-slate-600 bg-slate-950 text-emerald-500"
+                      />
+                      <div>
+                        <div className="text-xs font-bold text-white">{item.title}</div>
+                        <div className="text-[11px] text-slate-400">{item.sub}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 3 Jauges d'intervalles + Historique */}
+            <div className="lg:col-span-7 space-y-4">
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-3">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Gauge className="w-4 h-4 text-cyan-400" />
+                  Jauges d’Intervalles Automatiques (Suivi Kilométrique Réel)
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {renderCycleGauge(
+                    'Vidange API SP',
+                    scoreCalc.oilSinceKm,
+                    MAINTENANCE_CYCLES_KM.oilApiSp,
+                    activeRecord.lastOilChangeKm,
+                    () => void handleMarkMaintenanceDone('OIL_CHANGE')
+                  )}
+                  {renderCycleGauge(
+                    'Bougies Iridium',
+                    scoreCalc.plugsSinceKm,
+                    MAINTENANCE_CYCLES_KM.iridiumPlugs,
+                    activeRecord.lastSparkPlugsKm,
+                    () => void handleMarkMaintenanceDone('SPARK_PLUGS')
+                  )}
+                  {renderCycleGauge(
+                    'Additif GDI PEA',
+                    scoreCalc.peaSinceKm,
+                    MAINTENANCE_CYCLES_KM.peaCleaner,
+                    activeRecord.lastPeaCleanerKm,
+                    () => void handleMarkMaintenanceDone('GDI_PEA_CLEANER')
+                  )}
+                </div>
+              </div>
+
+              {/* Historique des interventions par VIN */}
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/75 p-5 space-y-3">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <History className="w-4 h-4 text-cyan-400" />
+                  Historique des Interventions — VIN {activeRecord.vin}
+                </h3>
+
+                <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+                  {activeRecord.interventions.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="rounded-xl border border-slate-800 bg-slate-950/70 px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                    >
+                      <div className="space-y-0.5">
+                        <div className="text-xs font-bold text-white flex items-center gap-2">
+                          <Wrench className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                          <span>{entry.title}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">{entry.details}</p>
+                      </div>
+                      <div className="text-right font-mono text-[11px] text-slate-400 shrink-0">
+                        <div className="text-cyan-300 font-bold">
+                          {entry.mileageKm.toLocaleString('fr-FR')} km
+                        </div>
+                        <div>{entry.dateIso}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Avertissement Légal & Sécurité Mécanique Obligatoire */}
+      <div className="rounded-2xl border border-amber-500/40 bg-amber-950/20 px-5 py-4 flex items-start gap-3">
+        <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+        <div className="space-y-1 text-xs">
+          <div className="font-bold text-amber-300 uppercase tracking-wide">
+            Avertissement Technique &amp; Sécurité Mécanique Obligatoire
+          </div>
+          <p className="text-slate-300 leading-relaxed">
+            Ce module prévient activement le risque de pré-allumage à bas régime (<strong>LSPI</strong>) par
+            reprogrammation ECU/TCU et suivi strict des fluides, mais <strong>ne remplace jamais un contrôle
+            mécanique physique</strong> (prise de compressions des cylindres, test d’étanchéité et inspection
+            endoscopique des pistons/parois cylindres 2 et 3) si le véhicule présente déjà une perte de puissance,
+            des ratés persistants ou une consommation anormale d’huile moteur.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};

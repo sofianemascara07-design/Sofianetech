@@ -167,5 +167,44 @@ service cloud.firestore {
         allow update, delete: if false;
       }
     }
+
+    // --- Validation Blueprint : Suivi Coolray Anti-LSPI ---
+    function isValidCoolrayLspiRecord(data, userId, vin) {
+      return data.keys().hasAll([
+          'vin', 'ownerUid', 'variantId', 'currentMileageKm',
+          'selectedOilSpec', 'lastObdAuditStatus', 'lastProtectionScore', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'vin', 'ownerUid', 'variantId', 'currentMileageKm',
+          'lastOilChangeKm', 'lastSparkPlugsKm', 'lastPeaCleanerKm',
+          'selectedOilSpec', 'lastObdAuditStatus', 'lastProtectionScore',
+          'updatedAt', 'createdAt'
+        ]) &&
+        data.vin == vin &&
+        data.vin is string && data.vin.size() >= 6 && data.vin.size() <= 20 && data.vin.matches('^[A-Z0-9]+$') &&
+        data.ownerUid == userId &&
+        data.ownerUid == request.auth.uid &&
+        data.variantId in ['coolray_phase1_3cyl', 'coolray_dz_export_4cyl', 'coolray_cn_battle_181', 'coolray_lite_dvvt_atmo'] &&
+        data.currentMileageKm is int && data.currentMileageKm >= 0 && data.currentMileageKm <= 1000000 &&
+        data.selectedOilSpec in ['0W20_API_SP_GF6', '5W30_API_SP', '5W40_API_SN', '10W40_API_SL_SN'] &&
+        data.lastObdAuditStatus in ['green', 'amber', 'red'] &&
+        data.lastProtectionScore is int && data.lastProtectionScore >= 0 && data.lastProtectionScore <= 100 &&
+        data.createdAt is timestamp;
+    }
+
+    // 4. Dossiers Suivi Geely Coolray Anti-LSPI (isolés par technicien propriétaire)
+    match /users/{userId}/coolray_lspi_records/{vin} {
+      allow get: if isOwner(userId) && vin.matches('^[A-Z0-9]{6,20}$');
+      allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+      allow create: if isOwner(userId) &&
+        isValidCoolrayLspiRecord(incoming(), userId, vin) &&
+        incoming().createdAt == request.time;
+      allow update: if isOwner(userId) &&
+        isValidCoolrayLspiRecord(incoming(), userId, vin) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().vin == existing().vin;
+      allow delete: if false;
+    }
   }
 }

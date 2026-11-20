@@ -58,6 +58,26 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["backupId", "sessionId", "ownerUid", "originalFileName", "backupFileName", "sha256Original", "createdAt"]
+    },
+    "CoolrayLspiVehicleRecord": {
+      "title": "CoolrayLspiVehicleRecord",
+      "description": "Dossier persistant de suivi Anti-LSPI, maintenance et historique flash ECU/TCU par VIN Geely Coolray.",
+      "type": "object",
+      "properties": {
+        "vin": { "type": "string", "minLength": 6, "maxLength": 20, "pattern": "^[A-Z0-9]+$" },
+        "ownerUid": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "variantId": { "type": "string", "enum": ["coolray_phase1_3cyl", "coolray_dz_export_4cyl", "coolray_cn_battle_181", "coolray_lite_dvvt_atmo"] },
+        "currentMileageKm": { "type": "integer" },
+        "lastOilChangeKm": { "type": "integer" },
+        "lastSparkPlugsKm": { "type": "integer" },
+        "lastPeaCleanerKm": { "type": "integer" },
+        "selectedOilSpec": { "type": "string", "enum": ["0W20_API_SP_GF6", "5W30_API_SP", "5W40_API_SN", "10W40_API_SL_SN"] },
+        "lastObdAuditStatus": { "type": "string", "enum": ["green", "amber", "red"] },
+        "lastProtectionScore": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["vin", "ownerUid", "variantId", "currentMileageKm", "selectedOilSpec", "lastObdAuditStatus", "lastProtectionScore", "createdAt"]
     }
   },
   "firestore": {
@@ -72,6 +92,10 @@
     "/users/{userId}/akl_sessions/{sessionId}/backups/{backupId}": {
       "schema": { "$ref": "#/entities/WorkshopBackupRecord" },
       "description": "Sous-collection immuable attestant la création du backup original horodaté avant export AKL."
+    },
+    "/users/{userId}/coolray_lspi_records/{vin}": {
+      "schema": { "$ref": "#/entities/CoolrayLspiVehicleRecord" },
+      "description": "Suivi persistant Anti-LSPI, vidanges API SP, bougies Iridium et flashes MG1US008/MG1CS080 isolé par technicien."
     }
   }
 }

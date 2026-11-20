@@ -1,6 +1,6 @@
 import React from 'react';
 import { ConnectionMode, LicenseSession } from '../types/automotive';
-import { ShieldCheck, Mic, Sun, Camera, ShieldAlert, Clock, Wrench } from 'lucide-react';
+import { ShieldCheck, Mic, Sun, Camera, ShieldAlert, Clock, Wrench, Flame } from 'lucide-react';
 
 export type NavTab =
   | 'diagnostic'
@@ -17,6 +17,7 @@ export type NavTab =
   | 'cameras'
   | 'workshop_cn'
   | 'transmission'
+  | 'coolray_lspi'
   | 'admin';
 
 interface HeaderProps {
@@ -78,6 +79,14 @@ export const Header: React.FC<HeaderProps> = ({
     }
     if (tab === 'transmission') {
       return mods.includes('transmission') || mods.includes('diagnostic') || mods.includes('flash');
+    }
+    if (tab === 'coolray_lspi') {
+      return (
+        mods.includes('coolray_lspi') ||
+        mods.includes('diagnostic') ||
+        mods.includes('flash') ||
+        mods.includes('workshop_cn')
+      );
     }
     return mods.includes(tab);
   };
@@ -268,6 +277,20 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <span className="w-2 h-2 rounded-full bg-cyan-400" />
               <span>Boîte &amp; TCU UDS</span>
+            </button>
+          )}
+
+          {canAccess('coolray_lspi') && (
+            <button
+              onClick={() => onSelectTab('coolray_lspi')}
+              className={`whitespace-nowrap transition-colors pb-1 border-b-2 cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'coolray_lspi'
+                  ? 'text-rose-300 border-rose-400 font-bold'
+                  : 'border-transparent hover:text-rose-300 text-rose-400/90'
+              }`}
+            >
+              <Flame className="w-3.5 h-3.5 text-rose-400" />
+              <span>Coolray Anti-LSPI</span>
             </button>
           )}
 

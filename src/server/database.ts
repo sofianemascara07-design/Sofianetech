@@ -16,8 +16,10 @@ import {
   RevokedSubscriptionTombstone,
   EcuPinoutEntry,
   PinoutModuleType,
+  CoolrayVehicleFollowUpRecord,
 } from '../types/automotive';
 import { SEEDED_ECU_PINOUTS } from '../data/chinaWorkshopSeed';
+import { buildDefaultCoolrayRecord } from '../data/coolrayLspiProfiles';
 
 const SERVER_HMAC_SECRET = process.env.SESSION_SECRET || process.env.ADMIN_PASSCODE || 'AUTOPRO-DZ-2026-HMAC-ROOT';
 
@@ -39,6 +41,7 @@ const SUBSCRIBERS_FILE = path.resolve(DATA_DIR, 'autopro_subscribers.json');
 const SECURITY_FILE = path.resolve(DATA_DIR, 'autopro_security.json');
 const SDR_PROSPECTS_FILE = path.resolve(DATA_DIR, 'autopro_sdr_prospects.json');
 const PINOUTS_FILE = path.resolve(DATA_DIR, 'autopro_pinouts.json');
+const COOLRAY_LSPI_FILE = path.resolve(DATA_DIR, 'autopro_coolray_lspi.json');
 
 const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || '').trim().replace(/\/+$/, '');
 const UPSTASH_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
@@ -415,6 +418,7 @@ export class AutoProDatabase {
   private subscribers: SubscriberRecord[] = [];
   private sdrProspects: SdrProspect[] = [];
   private pinouts: EcuPinoutEntry[] = [];
+  private coolrayLspiRecords: CoolrayVehicleFollowUpRecord[] = [];
   private securitySettings: SecuritySettings & { adminPasscode: string } = { ...DEFAULT_SECURITY_SETTINGS };
   private vinIndex: Map<string, string[]> = new Map(); // VIN -> array of scan IDs
   private codeIndex: Map<string, string[]> = new Map(); // DTC code -> array of scan IDs
@@ -540,6 +544,24 @@ export class AutoProDatabase {
         this.savePinoutsToFile();
       }
 
+      if (fs.existsSync(COOLRAY_LSPI_FILE)) {
+        try {
+          const rawCoolray = JSON.parse(fs.readFileSync(COOLRAY_LSPI_FILE, 'utf-8'));
+          if (Array.isArray(rawCoolray) && rawCoolray.length > 0) {
+            this.coolrayLspiRecords = rawCoolray;
+          } else {
+            this.coolrayLspiRecords = [buildDefaultCoolrayRecord('L6T7824Z9RZ001540', 'coolray_cn_battle_181')];
+            this.saveCoolrayLspiToFile();
+          }
+        } catch {
+          this.coolrayLspiRecords = [buildDefaultCoolrayRecord('L6T7824Z9RZ001540', 'coolray_cn_battle_181')];
+          this.saveCoolrayLspiToFile();
+        }
+      } else {
+        this.coolrayLspiRecords = [buildDefaultCoolrayRecord('L6T7824Z9RZ001540', 'coolray_cn_battle_181')];
+        this.saveCoolrayLspiToFile();
+      }
+
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed: DiagnosticScanSession[] = JSON.parse(raw);
@@ -657,6 +679,44 @@ export class AutoProDatabase {
     } catch (err) {
       console.error('[AutoProDatabase] Save pinouts error:', err);
     }
+  }
+
+  private saveCoolrayLspiToFile() {
+    try {
+      const tempFile = `${COOLRAY_LSPI_FILE}.tmp`;
+      fs.writeFileSync(tempFile, JSON.stringify(this.coolrayLspiRecords, null, 2), 'utf-8');
+      fs.renameSync(tempFile, COOLRAY_LSPI_FILE);
+    } catch (err) {
+      console.error('[AutoProDatabase] Save Coolray LSPI records error:', err);
+    }
+  }
+
+  public getCoolrayLspiRecords(): CoolrayVehicleFollowUpRecord[] {
+    return [...this.coolrayLspiRecords].sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    );
+  }
+
+  public getCoolrayLspiRecordByVin(vin: string): CoolrayVehicleFollowUpRecord | undefined {
+    const cleanVin = vin.trim().toUpperCase();
+    return this.coolrayLspiRecords.find((r) => r.vin.toUpperCase() === cleanVin);
+  }
+
+  public upsertCoolrayLspiRecord(record: CoolrayVehicleFollowUpRecord): CoolrayVehicleFollowUpRecord {
+    const cleanVin = record.vin.trim().toUpperCase();
+    const updated: CoolrayVehicleFollowUpRecord = {
+      ...record,
+      vin: cleanVin,
+      updatedAt: new Date().toISOString(),
+    };
+    const idx = this.coolrayLspiRecords.findIndex((r) => r.vin.toUpperCase() === cleanVin);
+    if (idx >= 0) {
+      this.coolrayLspiRecords[idx] = updated;
+    } else {
+      this.coolrayLspiRecords.unshift(updated);
+    }
+    this.saveCoolrayLspiToFile();
+    return updated;
   }
 
   // =========================================================

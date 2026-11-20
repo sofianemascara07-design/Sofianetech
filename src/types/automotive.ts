@@ -699,3 +699,108 @@ export interface TransmissionAiDiagnosticResult {
   };
   generatedAt: string;
 }
+
+// =========================================================
+// MODULE 7: GEELY COOLRAY — PROTECTION ANTI-LSPI & FLASH ECU/TCU
+// =========================================================
+export type CoolrayVariantId =
+  | 'coolray_phase1_3cyl'
+  | 'coolray_dz_export_4cyl'
+  | 'coolray_cn_battle_181'
+  | 'coolray_lite_dvvt_atmo';
+
+export type CoolrayCalibrationId =
+  | 'downgrade_cn_to_dz'
+  | 'custom_anti_lspi_patch'
+  | 'tcu_7dct_anti_lug';
+
+export type CoolrayEcuHardwareFamily = 'MG1CS080' | 'MG1US008' | 'MG1UA008' | 'BOSCH_ATMO_ME17';
+
+export type CoolrayOilSpecId =
+  | '0W20_API_SP_GF6'
+  | '5W30_API_SP'
+  | '5W40_API_SN'
+  | '10W40_API_SL_SN';
+
+export type LspiRiskSeverity = 'green' | 'amber' | 'red';
+
+export interface CoolrayEngineProfile {
+  id: CoolrayVariantId;
+  label: string;
+  yearRange: string;
+  engineCode: string;
+  cylinders: string;
+  powerHp: string;
+  torqueNm: string;
+  transmission: string;
+  ecuModel: string;
+  ecuHardwareFamily: CoolrayEcuHardwareFamily;
+  compatibleHardwareFamilies: CoolrayEcuHardwareFamily[];
+  isTurboDirectInjection: boolean;
+  lspiPriorityLevel: 'PRIORITAIRE_CHINE_VI' | 'ELEVE_TURBO_GDI' | 'EXCLU_ATMO_STANDARD';
+  calibrationNote: string;
+  supportedCalibrations: CoolrayCalibrationId[];
+}
+
+export interface CoolrayCalibrationOption {
+  id: CoolrayCalibrationId;
+  title: string;
+  targetController: 'ECU Moteur (0x7E0 -> 0x7E8)' | 'TCU Boîte 7DCT (0x7E1 -> 0x7E9)';
+  badge: string;
+  summary: string;
+  technicalAdjustments: string[];
+  recommendedForVariants: CoolrayVariantId[];
+  allowedHardwareFamilies: CoolrayEcuHardwareFamily[];
+  flashBinaryTag: string;
+}
+
+export interface CoolrayObdPidSnapshot {
+  rpm: number;
+  engineLoadPct: number;
+  knockRetardDeg: number; // Valeurs négatives ex: -1.5°, -4.2°
+  misfiresCyl1: number;
+  misfiresCyl2: number;
+  misfiresCyl3: number;
+  misfiresCyl4: number;
+  stftPct: number;
+  ltftPct: number;
+  iatCelsius: number;
+  boostBar: number;
+  capturedAt: string;
+}
+
+export interface CoolraySafetyChecklist {
+  oilApiSpGf6Verified: boolean;
+  iridiumPlugsVerified: boolean;
+  gdiPeaCleanerDone: boolean;
+  localFuelEcuMapInstalled: boolean;
+  drivingRuleValidated: boolean;
+}
+
+export interface CoolrayInterventionLog {
+  id: string;
+  dateIso: string;
+  mileageKm: number;
+  type: 'OIL_CHANGE' | 'SPARK_PLUGS' | 'GDI_PEA_CLEANER' | 'ECU_FLASH' | 'TCU_FLASH' | 'OBD_AUDIT';
+  title: string;
+  details: string;
+  technician?: string;
+}
+
+export interface CoolrayVehicleFollowUpRecord {
+  vin: string;
+  variantId: CoolrayVariantId;
+  ownerOrPlate: string;
+  currentMileageKm: number;
+  lastOilChangeKm: number;
+  lastSparkPlugsKm: number;
+  lastPeaCleanerKm: number;
+  selectedOilSpec: CoolrayOilSpecId;
+  checklist: CoolraySafetyChecklist;
+  lastObdAuditStatus: LspiRiskSeverity;
+  lastProtectionScore: number;
+  installedCalibrations: CoolrayCalibrationId[];
+  interventions: CoolrayInterventionLog[];
+  updatedAt: string;
+}
+
