@@ -14,7 +14,10 @@ import {
   SdrProspectSpecialty,
   ConnectionPresenceStatus,
   RevokedSubscriptionTombstone,
+  EcuPinoutEntry,
+  PinoutModuleType,
 } from '../types/automotive';
+import { SEEDED_ECU_PINOUTS } from '../data/chinaWorkshopSeed';
 
 const SERVER_HMAC_SECRET = process.env.SESSION_SECRET || process.env.ADMIN_PASSCODE || 'AUTOPRO-DZ-2026-HMAC-ROOT';
 
@@ -35,6 +38,7 @@ const ACTIVITIES_FILE = path.resolve(DATA_DIR, 'autopro_activities.json');
 const SUBSCRIBERS_FILE = path.resolve(DATA_DIR, 'autopro_subscribers.json');
 const SECURITY_FILE = path.resolve(DATA_DIR, 'autopro_security.json');
 const SDR_PROSPECTS_FILE = path.resolve(DATA_DIR, 'autopro_sdr_prospects.json');
+const PINOUTS_FILE = path.resolve(DATA_DIR, 'autopro_pinouts.json');
 
 const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || '').trim().replace(/\/+$/, '');
 const UPSTASH_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
@@ -410,6 +414,7 @@ export class AutoProDatabase {
   private activities: ClientActivityRecord[] = [];
   private subscribers: SubscriberRecord[] = [];
   private sdrProspects: SdrProspect[] = [];
+  private pinouts: EcuPinoutEntry[] = [];
   private securitySettings: SecuritySettings & { adminPasscode: string } = { ...DEFAULT_SECURITY_SETTINGS };
   private vinIndex: Map<string, string[]> = new Map(); // VIN -> array of scan IDs
   private codeIndex: Map<string, string[]> = new Map(); // DTC code -> array of scan IDs
@@ -515,6 +520,24 @@ export class AutoProDatabase {
       } else {
         this.sdrProspects = [...INITIAL_SEEDED_SDR_PROSPECTS];
         this.saveSdrProspectsToFile();
+      }
+
+      if (fs.existsSync(PINOUTS_FILE)) {
+        try {
+          const rawPinouts = JSON.parse(fs.readFileSync(PINOUTS_FILE, 'utf-8'));
+          if (Array.isArray(rawPinouts) && rawPinouts.length > 0) {
+            this.pinouts = rawPinouts;
+          } else {
+            this.pinouts = [...SEEDED_ECU_PINOUTS];
+            this.savePinoutsToFile();
+          }
+        } catch {
+          this.pinouts = [...SEEDED_ECU_PINOUTS];
+          this.savePinoutsToFile();
+        }
+      } else {
+        this.pinouts = [...SEEDED_ECU_PINOUTS];
+        this.savePinoutsToFile();
       }
 
       if (fs.existsSync(DB_FILE)) {
@@ -623,6 +646,19 @@ export class AutoProDatabase {
     }
   }
 
+  private savePinoutsToFile(skipKv = false) {
+    try {
+      const tempFile = `${PINOUTS_FILE}.tmp`;
+      fs.writeFileSync(tempFile, JSON.stringify(this.pinouts, null, 2), 'utf-8');
+      fs.renameSync(tempFile, PINOUTS_FILE);
+      if (!skipKv) {
+        void kvSetJson('autopro_pinouts_v1', this.pinouts);
+      }
+    } catch (err) {
+      console.error('[AutoProDatabase] Save pinouts error:', err);
+    }
+  }
+
   // =========================================================
   // SUIVI SDR PROSPECTS (CRM TERRAIN MARCHÉ ALGÉRIEN)
   // =========================================================
@@ -691,6 +727,81 @@ export class AutoProDatabase {
       return true;
     }
     return false;
+  }
+
+  // =========================================================
+  // MODULE 1: CÂBLAGE & PINOUTS CROWDSOURCING (ECU/BCM/ABS/FUSEBOX)
+  // =========================================================
+  public getPinouts(): EcuPinoutEntry[] {
+    return [...this.pinouts].sort((a, b) => b.verifiedVotes - a.verifiedVotes);
+  }
+
+  public addPinout(input: {
+    brand: EcuPinoutEntry['brand'];
+    model: string;
+    yearRange: string;
+    engineOrVersion: string;
+    moduleType: PinoutModuleType;
+    ecuSupplier: string;
+    title: string;
+    contributorName: string;
+    contributorWilaya: string;
+    pins?: EcuPinoutEntry['pins'];
+    fuses?: EcuPinoutEntry['fuses'];
+  }): EcuPinoutEntry {
+    const now = new Date().toISOString();
+    const entry: EcuPinoutEntry = {
+      id: `PIN-${input.brand.toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
+      brand: input.brand,
+      model: input.model.trim(),
+      yearRange: input.yearRange.trim() || '2020–2026',
+      engineOrVersion: input.engineOrVersion.trim() || 'Standard',
+      moduleType: input.moduleType,
+      ecuSupplier: input.ecuSupplier.trim() || 'Bosch / UAES',
+      title: input.title.trim(),
+      contributorName: input.contributorName.trim() || 'Électricien Atelier DZ',
+      contributorWilaya: input.contributorWilaya.trim() || 'Algérie',
+      verifiedVotes: 1,
+      reportFlags: 0,
+      votedByIds: [],
+      pins: Array.isArray(input.pins) ? input.pins : [],
+      fuses: Array.isArray(input.fuses) ? input.fuses : undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.pinouts.unshift(entry);
+    this.savePinoutsToFile();
+    return entry;
+  }
+
+  public votePinout(
+    id: string,
+    voterId: string,
+    action: 'verify' | 'flag'
+  ): { entry: EcuPinoutEntry | null; alreadyVoted?: boolean } {
+    const idx = this.pinouts.findIndex((p) => p.id === id);
+    if (idx === -1) return { entry: null };
+
+    const target = this.pinouts[idx];
+    const cleanVoter = (voterId || 'tech').trim();
+    const votedList = Array.isArray(target.votedByIds) ? [...target.votedByIds] : [];
+    const voteToken = `${action}:${cleanVoter}`;
+
+    if (votedList.includes(voteToken)) {
+      return { entry: target, alreadyVoted: true };
+    }
+
+    votedList.push(voteToken);
+    const updated: EcuPinoutEntry = {
+      ...target,
+      verifiedVotes: action === 'verify' ? target.verifiedVotes + 1 : target.verifiedVotes,
+      reportFlags: action === 'flag' ? target.reportFlags + 1 : target.reportFlags,
+      votedByIds: votedList,
+      updatedAt: new Date().toISOString(),
+    };
+    this.pinouts[idx] = updated;
+    this.savePinoutsToFile();
+    return { entry: updated, alreadyVoted: false };
   }
 
   // =========================================================

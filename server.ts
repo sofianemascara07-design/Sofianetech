@@ -416,6 +416,274 @@ app.post('/api/diagnose/quick-scan-summary', async (req, res) => {
   }
 });
 
+// API: Traducteur & Dépanneur DTC Brut IA (Valises Launch / Autel : chinois / mauvais anglais -> Français technique)
+app.post('/api/dtc/translate-raw', async (req, res) => {
+  try {
+    const {
+      rawInput = '',
+      rawText = '',
+      brand: rawBrand,
+      vehicleBrand,
+      scannerSource = 'Launch / Autel',
+    } = req.body || {};
+
+    const cleanRaw = String(rawInput || rawText || '').trim();
+    const brand = String(rawBrand || vehicleBrand || 'Véhicule Chinois').trim();
+    if (!cleanRaw) {
+      return res.status(400).json({ success: false, message: 'Code défaut ou libellé brut requis.' });
+    }
+
+    const codeMatch = cleanRaw.toUpperCase().match(/\b[PCBU][0-9A-F]{4}\b/);
+    const detectedCode = codeMatch ? codeMatch[0] : null;
+    const upper = cleanRaw.toUpperCase();
+
+    // Déterministe hors-ligne pour les libellés mal traduits courants Launch / Autel
+    const buildDeterministicResult = () => {
+      let cleanFrenchTitle = `Défaut ${detectedCode || 'calculateur'} (${brand}) — Traduction technique atelier`;
+      let affectedSystem = 'Calculateur Moteur / Bus CAN';
+      let urgency: 'Critique' | 'Élevée' | 'Modérée' | 'Faible' = 'Modérée';
+      let knownCausesDz = [
+        'Chute de tension batterie 12V (< 12.2V au démarrage) générant des défauts fugitifs sur les véhicules chinois (Chery, Geely, MG, BYD, DFSK).',
+        'Faux contact ou oxydation sur connecteur faisceau moteur / masse châssis.',
+      ];
+      let multimeterTests = [
+        {
+          point: 'Tension Batterie 12V (au repos & sous démarreur)',
+          expectedValue: '12.5V–12.7V (repos) · ≥ 10.5V (sous démarreur) · 13.8V–14.4V (moteur tournant)',
+          condition: 'Multimètre DC aux bornes batterie',
+        },
+        {
+          point: 'Résistance Bus CAN OBD2 (Broches 6 & 14)',
+          expectedValue: '58 Ω – 62 Ω',
+          condition: 'Contact coupé depuis 3 minutes',
+        },
+      ];
+      let repairSteps = [
+        'Contrôler et recharger la batterie 12V avant d’effacer les codes défauts.',
+        'Inspecter le connecteur concerné (verrouillage, broches tordues, humidité) et effacer le DTC après essai.',
+      ];
+
+      if (/(VOLTAGE|BATTER|12V|P0562|LOW\s*SYSTEM|TOO\s*LOW|TENSION\s*FAIBLE|供电|电压)/i.test(upper)) {
+        cleanFrenchTitle = `${detectedCode ? `${detectedCode} : ` : ''}Sous-tension d’alimentation calculateur / chute batterie 12V`;
+        affectedSystem = 'Alimentation & Alternateur / Gateway 12V';
+        urgency = 'Élevée';
+        knownCausesDz = [
+          'Batterie 12V affaiblie ou cosses desserrées provoquant une cascade de faux défauts ABS, DCT et Direction (EPS).',
+          'Chute de tension sur le relais principal ECM ou oxydation tresse de masse moteur.',
+          'Régulateur d’alternateur (ou convertisseur DC-DC sur BYD EV/DM-i) défaillant.',
+        ];
+        multimeterTests = [
+          {
+            point: 'Chute de tension masse (Borne - batterie ↔ Bloc moteur)',
+            expectedValue: '< 0.15 V',
+            condition: 'Moteur au ralenti phares allumés',
+          },
+          {
+            point: 'Alimentation Calculateur (+30 / +15 APC)',
+            expectedValue: '12.5V – 14.3V',
+            condition: 'Contact ON puis moteur tournant',
+          },
+        ];
+        repairSteps = [
+          'Tester la batterie sous charge et resserrer les bornes + tresse de masse.',
+          'Contrôler les fusibles principaux (30A/40A) et la charge alternateur/DC-DC à 14.0V.',
+        ];
+      } else if (/(CLUTCH|VALVE|DCT|SOLENOID|TCU|GEARBOX|TRANSMISSION|离合器|变速箱)/i.test(upper)) {
+        cleanFrenchTitle = `${detectedCode ? `${detectedCode} : ` : ''}Défaut électrovanne / actionneur de commande boîte DCT ou CVT`;
+        affectedSystem = 'Boîte de Vitesses Automatique (TCU 7DCT / CVT)';
+        urgency = 'Critique';
+        knownCausesDz = [
+          'Huile DCT/CVT dégradée ou niveau insuffisant entraînant un blocage d’électrovanne.',
+          'Chute de tension 12V pendant les passages de rapports.',
+          'Capteur de vitesse d’entrée/sortie mécatronique encrassé par limaille.',
+        ];
+        multimeterTests = [
+          {
+            point: 'Résistance bobine électrovanne de pression DCT',
+            expectedValue: '4.5 Ω – 6.5 Ω à 20°C',
+            condition: 'Connecteur mécatronique débranché',
+          },
+          {
+            point: 'Alimentation puissance TCU (+30)',
+            expectedValue: '12.4V – 14.2V',
+            condition: 'Contact ON',
+          },
+        ];
+        repairSteps = [
+          'Vérifier la tension batterie puis contrôler l’huile et la température TCU en données réelles.',
+          'Effectuer un apprentissage point de patinage (Kiss-Point) sur Launch/Autel après réparation.',
+        ];
+      } else if (/(CRANK|CAMSHAFT|SPEED\s*SENSOR|UNREASONABLE|PLAUSIBILITY|P0335|P0340|P0500|轮速|曲轴)/i.test(upper)) {
+        cleanFrenchTitle = `${detectedCode ? `${detectedCode} : ` : ''}Incohérence ou perte signal capteur de régime / vitesse (PMH, AAC ou Roue ABS)`;
+        affectedSystem = 'Synchronisation Moteur / Capteur Vitesse';
+        urgency = 'Élevée';
+        knownCausesDz = [
+          'Capteur PMH (vilebrequin) ou capteur ABS encrassé / entrefer excessif.',
+          'Faisceau coupé ou court-circuité près du collecteur d’échappement ou passage de roue.',
+          'Décalage chaîne de distribution (si P0340 + P0016 simultanés).',
+        ];
+        multimeterTests = [
+          {
+            point: 'Capteur PMH Inductif (2 fils)',
+            expectedValue: '750 Ω – 950 Ω (statique) · 0.8V–3V AC (sous démarreur)',
+            condition: 'Capteur débranché / démarreur actionné',
+          },
+          {
+            point: 'Capteur Hall (3 fils : Alim / Signal / Masse)',
+            expectedValue: '5.0 V (réf) ou 12.0 V alim · Masse < 0.1 V',
+            condition: 'Contact ON',
+          },
+        ];
+        repairSteps = [
+          'Mesurer l’alimentation 5V/12V et la continuité jusqu’au calculateur avant de remplacer le capteur.',
+          'Contrôler visuellement la cible magnétique / roue dentée.',
+        ];
+      } else if (/(HVIL|INTERLOCK|INSULATION|ISOLEMENT|HIGH\s*VOLTAGE|高压|互锁|绝缘)/i.test(upper)) {
+        cleanFrenchTitle = `${detectedCode ? `${detectedCode} : ` : ''}Défaut boucle de verrouillage Haute Tension (HVIL) ou isolement EV/Hybride`;
+        affectedSystem = 'Gestion Haute Tension (BYD VCU / BMS / Onduleur)';
+        urgency = 'Critique';
+        knownCausesDz = [
+          'Connecteur orange HV (compresseur clim électrique, PTC, chargeur OBC) mal encliqueté après intervention.',
+          'Infiltration d’humidité dans une prise haute tension sous châssis.',
+          'Batterie auxiliaire 12V faible empêchant la fermeture des contacteurs.',
+        ];
+        multimeterTests = [
+          {
+            point: 'Batterie auxiliaire 12V (avant test HV)',
+            expectedValue: '≥ 12.4 V',
+            condition: 'Contact OFF (obligatoire avant toute intervention orange)',
+          },
+          {
+            point: 'Continuité boucle basse tension HVIL (fils pilote uniquement)',
+            expectedValue: '< 2.0 Ω (après mise hors tension HV & attente 10 min)',
+            condition: 'Gants isolants 1000V + Service Plug retiré',
+          },
+        ];
+        repairSteps = [
+          '⚠️ Sécurité : Couper le contact, retirer le sectionneur HV et attendre 10 min avant tout contrôle.',
+          'Vérifier le clic de verrouillage des fiches orange (Compresseur AC, OBC, Onduleur).',
+        ];
+      } else if (/(LOST\s*COMM|U01|TIMEOUT|CAN\s*BUS|通信丢失|总线)/i.test(upper)) {
+        cleanFrenchTitle = `${detectedCode ? `${detectedCode} : ` : ''}Perte de communication réseau Bus CAN avec calculateur distant`;
+        affectedSystem = 'Passerelle Gateway / Bus CAN';
+        urgency = 'Élevée';
+        knownCausesDz = [
+          'Chute de tension batterie 12V lors du démarrage provoquant un code U0xxx en cascade.',
+          'Fusible alimentation du module cible (ABS/TCU/BCM) grillé.',
+          'Faisceau CAN High / CAN Low coupé ou en court-circuit (résistance ≠ 60 Ω).',
+        ];
+        multimeterTests = [
+          {
+            point: 'Résistance terminale Bus CAN (DLC Pins 6 & 14)',
+            expectedValue: '60 Ω (± 2 Ω)',
+            condition: 'Batterie débranchée / veille bus',
+          },
+          {
+            point: 'Tensions Bus CAN (Pin 6 CAN-H / Pin 14 CAN-L vers masse)',
+            expectedValue: 'CAN-H : 2.6V–3.2V · CAN-L : 1.8V–2.4V (somme = ~5V)',
+            condition: 'Contact ON',
+          },
+        ];
+        repairSteps = [
+          'Vérifier tous les fusibles du module muet puis mesurer 60 Ω sur les broches 6 et 14 OBD2.',
+          'Contrôler l’absence d’écran Android aftermarket mal câblé qui pollue le CAN confort/infotainment.',
+        ];
+      }
+
+      return {
+        rawInput: cleanRaw,
+        detectedCode,
+        scannerSource,
+        cleanFrenchTitle,
+        affectedSystem,
+        urgency,
+        knownCausesDz,
+        multimeterTests,
+        repairSteps,
+        translatedAt: new Date().toISOString(),
+      };
+    };
+
+    const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
+    if (!hasAi) {
+      const deterministic = buildDeterministicResult();
+      const checked = verifyDiagnosticAiOutput(
+        deterministic.cleanFrenchTitle,
+        detectedCode ? [detectedCode] : [],
+        'offline-verified-rules'
+      );
+      return res.json({
+        success: true,
+        result: deterministic,
+        aiVerification: checked.aiVerification,
+      });
+    }
+
+    const systemPrompt = `Tu es le Traducteur Technique & Dépanneur DTC AutoPro pour les garagistes en Algérie (flotte chinoise : Chery, Geely, MG, BYD, DFSK).
+Tu reçois un code défaut brut ou un libellé mal traduit du chinois/anglais issu d'une valise (Launch X431, Autel, ThinkCar).
+Réponds STRICTEMENT en JSON valide avec cette structure exacte :
+{
+  "cleanFrenchTitle": "Traduction technique exacte et claire en français",
+  "affectedSystem": "Système / Calculateur concerné",
+  "urgency": "Critique" | "Élevée" | "Modérée" | "Faible",
+  "knownCausesDz": ["Cause terrain 1 (inclure impact tension batterie 12V si pertinent)", "Cause 2"],
+  "multimeterTests": [
+    { "point": "Point de mesure exact", "expectedValue": "Valeur V / Ohm attendue", "condition": "Condition test" }
+  ],
+  "repairSteps": ["Étape atelier 1", "Étape atelier 2"]
+}
+RÈGLES : Zéro blabla théorique. N'invente aucun nouveau code DTC, aucun code PIN, ni aucune URL.
+
+ENTRÉE VALISE (${scannerSource}) — VÉHICULE (${brand}) :
+"${cleanRaw}"`;
+
+    try {
+      const aiRes = await generateUnifiedAI(systemPrompt, { jsonMode: true, timeoutMs: 8000 });
+      const parsed = aiRes.text ? JSON.parse(aiRes.text) : null;
+      if (parsed && parsed.cleanFrenchTitle) {
+        const checked = verifyDiagnosticAiOutput(
+          `${parsed.cleanFrenchTitle}\n${(parsed.knownCausesDz || []).join('\n')}`,
+          detectedCode ? [detectedCode] : [],
+          aiRes.provider
+        );
+        return res.json({
+          success: true,
+          result: {
+            rawInput: cleanRaw,
+            detectedCode,
+            scannerSource,
+            cleanFrenchTitle: String(parsed.cleanFrenchTitle),
+            affectedSystem: String(parsed.affectedSystem || 'Calculateur / CAN'),
+            urgency: ['Critique', 'Élevée', 'Modérée', 'Faible'].includes(parsed.urgency) ? parsed.urgency : 'Modérée',
+            knownCausesDz: Array.isArray(parsed.knownCausesDz) ? parsed.knownCausesDz.map(String) : [],
+            multimeterTests: Array.isArray(parsed.multimeterTests) ? parsed.multimeterTests : [],
+            repairSteps: Array.isArray(parsed.repairSteps) ? parsed.repairSteps.map(String) : [],
+            translatedAt: new Date().toISOString(),
+          },
+          aiVerification: checked.aiVerification,
+        });
+      }
+    } catch {
+      // Fall back to deterministic rule engine cleanly
+    }
+
+    const fallback = buildDeterministicResult();
+    const checked = verifyDiagnosticAiOutput(
+      fallback.cleanFrenchTitle,
+      detectedCode ? [detectedCode] : [],
+      'offline-verified-rules'
+    );
+    return res.json({
+      success: true,
+      result: fallback,
+      aiVerification: checked.aiVerification,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/dtc/translate-raw:', error);
+    return res.status(500).json({ success: false, message: 'Erreur traduction DTC brut.' });
+  }
+});
+
 // API: AI App & Automotive UI Translator (with 1:1 key & placeholder integrity verification)
 app.post('/api/translate/ai', async (req, res) => {
   try {
@@ -1698,14 +1966,14 @@ app.post('/api/license/verify', (req, res) => {
 
   const allowedModules =
     tier === 'master'
-      ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'smartech', 'connection', 'apps', 'translator']
+      ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'smartech', 'connection', 'apps', 'translator', 'workshop_cn']
       : tier === 'reprog'
-      ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'connection', 'translator']
+      ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'connection', 'translator', 'workshop_cn']
       : tier === 'tablette_chinois'
       ? ['chinese_flasher', 'apps', 'translator', 'connection']
       : tier === 'demo'
-      ? ['diagnostic', 'cameras', 'history']
-      : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'translator'];
+      ? ['diagnostic', 'cameras', 'history', 'workshop_cn']
+      : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'translator', 'workshop_cn'];
 
   const resolvedHwid = sub.boundHwid || hwid || 'HWID-AUTO-DETECTED';
   const signature = saasDatabase.signLicensePayload(
@@ -2001,6 +2269,127 @@ app.delete('/api/sdr/prospects/:id', requireAdmin, (req, res) => {
     return res.status(404).json({ success: false, error: 'Prospect introuvable.' });
   }
   return res.json({ success: true });
+});
+
+// ==========================================
+// MODULE 1: CÂBLAGE & PINOUTS CROWDSOURCING
+// ==========================================
+app.get('/api/pinouts', (req, res) => {
+  try {
+    const brand = String(req.query.brand || '').trim().toLowerCase();
+    const moduleType = String(req.query.moduleType || '').trim().toUpperCase();
+    const q = String(req.query.q || '').trim().toLowerCase();
+    const verifiedOnly = String(req.query.verifiedOnly || '') === 'true';
+
+    let entries = saasDatabase.getPinouts();
+
+    if (brand && brand !== 'tous' && brand !== 'all') {
+      entries = entries.filter((e) => e.brand.toLowerCase() === brand);
+    }
+    if (moduleType && moduleType !== 'TOUS' && moduleType !== 'ALL') {
+      entries = entries.filter((e) => e.moduleType === moduleType);
+    }
+    if (verifiedOnly) {
+      entries = entries.filter((e) => e.verifiedVotes >= 3 && e.reportFlags < 3);
+    }
+    if (q) {
+      entries = entries.filter(
+        (e) =>
+          e.title.toLowerCase().includes(q) ||
+          e.model.toLowerCase().includes(q) ||
+          e.ecuSupplier.toLowerCase().includes(q) ||
+          e.pins.some(
+            (p) =>
+              p.signalName.toLowerCase().includes(q) ||
+              p.pinNumber.toLowerCase().includes(q) ||
+              p.wireColor.toLowerCase().includes(q)
+          ) ||
+          (e.fuses || []).some(
+            (f) =>
+              f.slotCode.toLowerCase().includes(q) ||
+              f.circuit.toLowerCase().includes(q)
+          )
+      );
+    }
+
+    return res.json({ success: true, count: entries.length, pinouts: entries });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/pinouts', (req, res) => {
+  try {
+    const {
+      brand,
+      model,
+      yearRange,
+      engineOrVersion,
+      moduleType,
+      ecuSupplier,
+      title,
+      contributorName,
+      contributorWilaya,
+      pins,
+      fuses,
+    } = req.body || {};
+
+    if (!brand || !model || !moduleType || !title) {
+      return res.status(400).json({
+        success: false,
+        error: 'Champs requis : marque, modèle, type de module (ECU/BCM/ABS/FUSEBOX) et titre.',
+      });
+    }
+
+    const validPins = Array.isArray(pins) ? pins.filter((p: any) => p?.pinNumber && p?.signalName) : [];
+    const validFuses = Array.isArray(fuses) ? fuses.filter((f: any) => f?.slotCode && f?.circuit) : undefined;
+
+    if (validPins.length === 0 && (!validFuses || validFuses.length === 0)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Ajoutez au moins une broche (pin) ou un fusible renseigné.',
+      });
+    }
+
+    const created = saasDatabase.addPinout({
+      brand,
+      model,
+      yearRange: yearRange || '2020–2026',
+      engineOrVersion: engineOrVersion || 'Standard',
+      moduleType,
+      ecuSupplier: ecuSupplier || 'Non spécifié',
+      title,
+      contributorName: contributorName || 'Électricien Atelier DZ',
+      contributorWilaya: contributorWilaya || 'Algérie',
+      pins: validPins,
+      fuses: validFuses,
+    });
+
+    return res.status(201).json({ success: true, pinout: created });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/pinouts/:id/vote', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { voterId, action } = req.body || {};
+    const voteAction: 'verify' | 'flag' = action === 'flag' ? 'flag' : 'verify';
+
+    const result = saasDatabase.votePinout(id, String(voterId || 'tech'), voteAction);
+    if (!result.entry) {
+      return res.status(404).json({ success: false, error: 'Schéma de câblage introuvable.' });
+    }
+
+    return res.json({
+      success: true,
+      alreadyVoted: Boolean(result.alreadyVoted),
+      pinout: result.entry,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // ==========================================

@@ -14,6 +14,7 @@ import { ChineseTabletFlasher } from './components/ChineseTabletFlasher';
 import { BodyComfortControl } from './components/BodyComfortControl';
 import { KeylessProximitySecurity } from './components/KeylessProximitySecurity';
 import { CameraIntegration } from './components/CameraIntegration';
+import { ChinaWorkshopToolsHub } from './components/ChinaWorkshopToolsHub';
 import { AdminSubscribersPanel } from './components/AdminSubscribersPanel';
 import { ConnectModal } from './components/ConnectModal';
 import { LicenseGate } from './components/LicenseGate';
@@ -116,7 +117,11 @@ export default function App() {
     if (!licenseSession?.isValid) return;
     if (licenseSession.isAdmin) return;
     const allowed = licenseSession.allowedModules || [];
-    if (allowed.length > 0 && !allowed.includes(activeTab)) {
+    const isPermitted =
+      allowed.includes(activeTab) ||
+      (activeTab === 'workshop_cn' &&
+        (allowed.includes('diagnostic') || allowed.includes('cameras')));
+    if (allowed.length > 0 && !isPermitted) {
       setActiveTab((allowed[0] as NavTab) || 'diagnostic');
     }
   }, [licenseSession, activeTab]);
@@ -276,7 +281,12 @@ export default function App() {
   const canRenderTab = (tab: NavTab) => {
     if (isAdmin) return true;
     if (tab === 'admin' || tab === 'packaging') return false;
-    return !licenseSession.allowedModules || licenseSession.allowedModules.includes(tab);
+    const allowed = licenseSession.allowedModules;
+    if (!allowed) return true;
+    if (tab === 'workshop_cn') {
+      return allowed.includes('workshop_cn') || allowed.includes('diagnostic') || allowed.includes('cameras');
+    }
+    return allowed.includes(tab);
   };
 
   return (
@@ -418,6 +428,10 @@ export default function App() {
             onSelectTab={setActiveTab}
             clientName={licenseSession.clientName}
           />
+        )}
+
+        {activeTab === 'workshop_cn' && canRenderTab('workshop_cn') && (
+          <ChinaWorkshopToolsHub selectedVehicle={selectedVehicle} />
         )}
       </main>
 

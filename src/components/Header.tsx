@@ -1,6 +1,6 @@
 import React from 'react';
 import { ConnectionMode, LicenseSession } from '../types/automotive';
-import { ShieldCheck, Mic, Sun, Camera, ShieldAlert, Clock } from 'lucide-react';
+import { ShieldCheck, Mic, Sun, Camera, ShieldAlert, Clock, Wrench } from 'lucide-react';
 
 export type NavTab =
   | 'diagnostic'
@@ -15,6 +15,7 @@ export type NavTab =
   | 'comfort'
   | 'keyless'
   | 'cameras'
+  | 'workshop_cn'
   | 'admin';
 
 interface HeaderProps {
@@ -67,10 +68,14 @@ export const Header: React.FC<HeaderProps> = ({
   const canAccess = (tab: NavTab) => {
     if (isAdmin) return true;
     if (tab === 'admin') return false;
-    if (!licenseSession?.allowedModules || licenseSession.allowedModules.length === 0) {
+    const mods = licenseSession?.allowedModules;
+    if (!mods || mods.length === 0) {
       return tab !== 'packaging';
     }
-    return licenseSession.allowedModules.includes(tab);
+    if (tab === 'workshop_cn') {
+      return mods.includes('workshop_cn') || mods.includes('diagnostic') || mods.includes('cameras');
+    }
+    return mods.includes(tab);
   };
 
   return (
@@ -231,6 +236,20 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Camera className="w-3.5 h-3.5 text-cyan-400" />
               <span>Caméras &amp; ADAS</span>
+            </button>
+          )}
+
+          {canAccess('workshop_cn') && (
+            <button
+              onClick={() => onSelectTab('workshop_cn')}
+              className={`whitespace-nowrap transition-colors pb-1 border-b-2 cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'workshop_cn'
+                  ? 'text-cyan-300 border-cyan-400 font-bold'
+                  : 'border-transparent hover:text-cyan-300 text-cyan-400/90'
+              }`}
+            >
+              <Wrench className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Atelier CN (Pinouts · ADAS · VIN)</span>
             </button>
           )}
 

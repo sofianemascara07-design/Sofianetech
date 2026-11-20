@@ -360,3 +360,124 @@ export interface QuickScanReport {
   summaryText?: string;
 }
 
+// =========================================================
+// MODULE 1: CÂBLAGE & PINOUTS (CROWDSOURCING ATELIER DZ)
+// =========================================================
+export type PinoutModuleType = 'ECU' | 'BCM' | 'ABS' | 'FUSEBOX';
+
+export interface EcuPinRow {
+  connector: string; // Ex: "C1 (Noir 60 broches)", "Pin A12"
+  pinNumber: string;
+  wireColor: string;
+  signalName: string;
+  expectedTestValue: string; // Ex: "+12V après contact (APC) | 0V contact coupé"
+  notes?: string;
+}
+
+export interface FuseSlotRow {
+  slotCode: string; // Ex: "F08", "R2"
+  amps: string;     // Ex: "15A", "30A", "Relais 40A"
+  circuit: string;  // Ex: "Calculateur Moteur ECM + Bobines"
+  powerType: 'BAT (+30)' | 'APC (+15)' | 'ACCESSOIRE' | 'MASSE';
+}
+
+export interface EcuPinoutEntry {
+  id: string;
+  brand: 'Chery' | 'Geely' | 'MG' | 'BYD' | 'DFSK' | 'Changan' | 'Autre';
+  model: string;
+  yearRange: string;
+  engineOrVersion: string;
+  moduleType: PinoutModuleType;
+  ecuSupplier: string; // Ex: "Bosch / UAES MED17.8.10", "Delphi MT62.1", "SAIC BCM"
+  title: string;
+  contributorName: string;
+  contributorWilaya: string;
+  verifiedVotes: number;
+  reportFlags: number;
+  votedByIds?: string[];
+  pins: EcuPinRow[];
+  fuses?: FuseSlotRow[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+// =========================================================
+// MODULE 2: CALIBRATION ADAS (CIBLES PDF 1:1 & COTES)
+// =========================================================
+export type AdasTargetPattern =
+  | 'dual_circle_checker'
+  | 'mg_lane_checker'
+  | 'byd_radar_corner'
+  | 'avm_360_mat';
+
+export interface AdasModelSpec {
+  id: string;
+  brand: 'Chery' | 'Geely' | 'MG' | 'BYD' | 'DFSK';
+  model: string;
+  years: string;
+  systemName: string;
+  pattern: AdasTargetPattern;
+  targetName: string;
+  distanceFromFrontAxleMm: number;
+  cameraOrTargetHeightMm: number;
+  lateralOffsetMm: number;
+  targetWidthMm: number;
+  targetHeightMm: number;
+  checkerSquareMm?: number;
+  circleDiameterMm?: number;
+  circleSpacingMm?: number;
+  obdProcedure: string;
+  calibrationNotes: string;
+}
+
+// =========================================================
+// MODULE 3: DÉCODEUR VIN CALCULATEUR CHINE
+// =========================================================
+export interface VinEcuCandidate {
+  system: 'Moteur (ECM)' | 'Boîte (TCU)' | 'Freinage (ABS/ESP)' | 'Habitacle (BCM)';
+  supplier: string;
+  ecuModel: string;
+  confidence: 'Élevée' | 'Moyenne (Série mixte CN)';
+  protocol: string;
+  visualCheckTip: string;
+}
+
+export interface VinEcuDecodeResult {
+  vin: string;
+  isValidFormat: boolean;
+  checkDigitValid: boolean | null;
+  wmi: string;
+  manufacturer: string;
+  brand: string;
+  estimatedModelRange: string;
+  modelYear: number | null;
+  plantCode: string;
+  vdsCode: string;
+  seriesSwitchWarning: string | null;
+  candidates: VinEcuCandidate[];
+}
+
+// =========================================================
+// MODULE 4: TRADUCTEUR & DÉPANNEUR DTC BRUT IA
+// =========================================================
+export interface DtcRawMultimeterTest {
+  point: string;
+  expectedValue: string;
+  condition: string;
+}
+
+export interface DtcRawTranslateResult {
+  rawInput: string;
+  detectedCode: string | null;
+  scannerSource: string;
+  cleanFrenchTitle: string;
+  affectedSystem: string;
+  urgency: 'Critique' | 'Élevée' | 'Modérée' | 'Faible';
+  knownCausesDz: string[];
+  multimeterTests: DtcRawMultimeterTest[];
+  repairSteps: string[];
+  cachedOffline?: boolean;
+  translatedAt: string;
+}
+
+
