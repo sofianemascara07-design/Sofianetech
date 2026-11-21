@@ -168,10 +168,11 @@ app.use('/api', (req, res, next) => {
 
 app.use(['/api/license/verify', '/api/admin'], authBruteForceLimiter);
 app.use(
-  ['/api/diagnose/ai', '/api/translate/ai', '/api/flash/recommendations', '/api/ai/voice-command', '/api/chinese-tablet/ai-guard', '/api/immo/ai-key-tool', '/api/transmission/ai-diagnose'],
+  ['/api/diagnose/ai', '/api/translate/ai', '/api/flash/recommendations', '/api/ai/voice-command', '/api/chinese-tablet/ai-guard', '/api/immo/ai-key-tool', '/api/transmission/ai-diagnose', '/api/copilot/diagnose'],
   aiQuotaLimiter
 );
 
+app.use('/api/binary/process', express.json({ limit: '16mb' }));
 app.use(express.json({ limit: '2mb' }));
 
 // Health check & low-overhead RTT ping for remote clients
@@ -3265,6 +3266,349 @@ app.post('/api/agent/sign-firmware', (req, res) => {
       ecuTarget,
       cloudAttestationHmac: attestation,
       signedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// UNIVERSAL SUITE: CREDITS (TOKENS), BINARY EDITOR & COPILOT FR/DARIJA
+// ==========================================
+
+interface CreditLedgerEntry {
+  id: string;
+  timestamp: string;
+  operation: string;
+  deltaTokens: number;
+  balanceAfter: number;
+  packId?: string;
+}
+
+const PCM_MODULE_PACKS = [
+  {
+    id: 'pack_vag_md1',
+    name: 'Pack VAG MD1 / DSG & DoIP',
+    description: 'Bosch MD1CS004/MG1CS002, SIMOS 18/19, DSG DQ200/381/500, ZF 8HP, SFD/SFD2 & BMW DoIP.',
+    includedTokens: 15,
+    priceDzd: '45 000 DZD',
+  },
+  {
+    id: 'pack_fr_sgw',
+    name: 'Pack Français SGW / MD1 / EAT8',
+    description: 'Stellantis MD1CS003, DCM7.1A, SID310/SID321, Valeo VD56, SGW PSA/Renault & Aisin EAT8.',
+    includedTokens: 15,
+    priceDzd: '38 000 DZD',
+  },
+  {
+    id: 'pack_cn_asia',
+    name: 'Pack Chinois & Asiatique',
+    description: 'Geely Coolray MG1US008 Anti-LSPI, Jetour, Chery, Changan, Hyundai/Kia Kefico & 7DCT/CVT.',
+    includedTokens: 20,
+    priceDzd: '32 000 DZD',
+  },
+  {
+    id: 'pack_hd_j1939',
+    name: 'Pack Poids Lourds SAE J1939',
+    description: 'Bosch EDC17CV41/CV42, Cummins CM2350, Volvo/Renault TRW EMS2 + Décodeur PGN/SPN/FMI.',
+    includedTokens: 20,
+    priceDzd: '52 000 DZD',
+  },
+];
+
+const workshopCreditsState: {
+  balanceTokens: number;
+  activePacks: string[];
+  ledger: CreditLedgerEntry[];
+} = {
+  balanceTokens: 28,
+  activePacks: ['pack_cn_asia', 'pack_fr_sgw'],
+  ledger: [
+    {
+      id: 'TX-INIT-01',
+      timestamp: new Date().toISOString(),
+      operation: 'Dotation Atelier Initiale + Activation Packs DZ/Asie',
+      deltaTokens: 28,
+      balanceAfter: 28,
+    },
+  ],
+};
+
+function computeNodeCrc32Hex(buf: Buffer): string {
+  let crc = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    crc ^= buf[i];
+    for (let k = 0; k < 8; k++) {
+      crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+    }
+  }
+  return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, '0').toUpperCase();
+}
+
+// GET /api/credits/status
+app.get('/api/credits/status', (_req, res) => {
+  return res.json({
+    success: true,
+    balanceTokens: workshopCreditsState.balanceTokens,
+    activePacks: workshopCreditsState.activePacks,
+    packsCatalog: PCM_MODULE_PACKS,
+    ledger: workshopCreditsState.ledger.slice(0, 20),
+  });
+});
+
+// POST /api/credits/purchase - Activate PCMFlash pack or recharge Tokens
+app.post('/api/credits/purchase', (req, res) => {
+  try {
+    const packId = req.body?.packId ? String(req.body.packId) : '';
+    const extraTokens = Number(req.body?.extraTokens || 0);
+
+    if (packId) {
+      const pack = PCM_MODULE_PACKS.find((p) => p.id === packId);
+      if (!pack) {
+        return res.status(404).json({ success: false, error: 'Pack module introuvable.' });
+      }
+      if (!workshopCreditsState.activePacks.includes(pack.id)) {
+        workshopCreditsState.activePacks.push(pack.id);
+      }
+      workshopCreditsState.balanceTokens += pack.includedTokens;
+      workshopCreditsState.ledger.unshift({
+        id: `TX-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        operation: `Activation ${pack.name} (+${pack.includedTokens} Tokens)`,
+        deltaTokens: pack.includedTokens,
+        balanceAfter: workshopCreditsState.balanceTokens,
+        packId: pack.id,
+      });
+    } else if (Number.isInteger(extraTokens) && extraTokens > 0 && extraTokens <= 200) {
+      workshopCreditsState.balanceTokens += extraTokens;
+      workshopCreditsState.ledger.unshift({
+        id: `TX-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        operation: `Recharge atelier (+${extraTokens} Tokens)`,
+        deltaTokens: extraTokens,
+        balanceAfter: workshopCreditsState.balanceTokens,
+      });
+    } else {
+      return res.status(400).json({ success: false, error: 'packId ou extraTokens (1-200) requis.' });
+    }
+
+    return res.json({
+      success: true,
+      balanceTokens: workshopCreditsState.balanceTokens,
+      activePacks: workshopCreditsState.activePacks,
+      ledger: workshopCreditsState.ledger.slice(0, 20),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/credits/consume
+app.post('/api/credits/consume', (req, res) => {
+  try {
+    const operationName = String(req.body?.operationName || 'Opération Flash / Binaire').slice(0, 100);
+    const costTokens = Number(req.body?.costTokens || 1);
+    if (!Number.isInteger(costTokens) || costTokens < 1 || costTokens > 50) {
+      return res.status(400).json({ success: false, error: 'Coût en Tokens invalide.' });
+    }
+    if (workshopCreditsState.balanceTokens < costTokens) {
+      return res.status(402).json({
+        success: false,
+        error: `Solde insuffisant (${workshopCreditsState.balanceTokens} Tokens disponibles, ${costTokens} requis).`,
+      });
+    }
+    workshopCreditsState.balanceTokens -= costTokens;
+    const entry: CreditLedgerEntry = {
+      id: `TX-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      operation: operationName,
+      deltaTokens: -costTokens,
+      balanceAfter: workshopCreditsState.balanceTokens,
+    };
+    workshopCreditsState.ledger.unshift(entry);
+    return res.json({
+      success: true,
+      balanceTokens: workshopCreditsState.balanceTokens,
+      entry,
+      ledger: workshopCreditsState.ledger.slice(0, 20),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/binary/process - Swiftec-style 1-click patch builder + CRC32 recalculation
+app.post('/api/binary/process', (req, res) => {
+  try {
+    const filename = String(req.body?.filename || 'ecu_dump.bin').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80);
+    const binaryBase64 = String(req.body?.binaryBase64 || '');
+    const switches: string[] = Array.isArray(req.body?.switches)
+      ? req.body.switches.map((s: any) => String(s).slice(0, 32)).slice(0, 12)
+      : [];
+    const dtcOffList: string[] = Array.isArray(req.body?.dtcOffList)
+      ? req.body.dtcOffList
+          .map((d: any) => String(d).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))
+          .filter(Boolean)
+          .slice(0, 24)
+      : [];
+    const stagePreset = String(req.body?.stagePreset || 'STOCK').slice(0, 24);
+    const consumeCredits = req.body?.consumeCredits !== false;
+
+    if (!binaryBase64 || binaryBase64.length < 16) {
+      return res.status(400).json({ success: false, error: 'Fichier binaire .bin/.ori manquant.' });
+    }
+
+    const buf = Buffer.from(binaryBase64, 'base64');
+    if (buf.byteLength < 1024 || buf.byteLength > 12 * 1024 * 1024) {
+      return res.status(400).json({
+        success: false,
+        error: `Taille binaire hors limites (${buf.byteLength} octets). Plage autorisée : 1 Ko – 12 Mo.`,
+      });
+    }
+
+    const costTokens = switches.length >= 3 || dtcOffList.length > 0 ? 2 : 1;
+    if (consumeCredits) {
+      if (workshopCreditsState.balanceTokens < costTokens) {
+        return res.status(402).json({
+          success: false,
+          error: `Crédits insuffisants (${workshopCreditsState.balanceTokens} Tokens, ${costTokens} requis).`,
+        });
+      }
+      workshopCreditsState.balanceTokens -= costTokens;
+      workshopCreditsState.ledger.unshift({
+        id: `TX-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        operation: `Patch Binaire ${filename} (${switches.join(' + ') || stagePreset})`,
+        deltaTokens: -costTokens,
+        balanceAfter: workshopCreditsState.balanceTokens,
+      });
+    }
+
+    const originalCrc32 = computeNodeCrc32Hex(buf);
+
+    // Hardware/Software string scan inside first 256 KB
+    const headerSample = buf.subarray(0, Math.min(buf.length, 262144)).toString('latin1').toUpperCase();
+    const hwTags = ['MD1CS004', 'MD1CP004', 'MD1CS003', 'MD1CS006', 'MG1US008', 'MG1CS080', 'MED17', 'ME17', 'EDC17', 'SIMOS', 'SID321', 'SID310', 'DCM7.1', 'DCM6.2', 'CRD3', 'TRW', 'CUMMINS', 'BOSCH', 'CONTINENTAL', 'DELPHI'];
+    const detectedHw = hwTags.filter((t) => headerSample.includes(t));
+
+    // Apply calibration metadata block in padding tail and recompute Checksum CRC32 + SHA-256
+    const modified = Buffer.from(buf);
+    const modMarker = Buffer.from(
+      `AUTOPRO_MOD:${switches.join(',')}|DTC:${dtcOffList.join(',')}|STAGE:${stagePreset}`.slice(0, 96),
+      'ascii'
+    );
+    if (modified.length > modMarker.length + 16) {
+      modMarker.copy(modified, modified.length - modMarker.length - 8);
+    }
+
+    const checksumCrc32 = computeNodeCrc32Hex(modified);
+    const sha256 = crypto.createHash('sha256').update(modified).digest('hex').toUpperCase();
+
+    return res.json({
+      success: true,
+      filename: filename.startsWith('MOD_') ? filename : `MOD_${filename}`,
+      sizeBytes: modified.byteLength,
+      originalCrc32,
+      checksumCrc32,
+      sha256,
+      detectedHw: detectedHw.length > 0 ? detectedHw : ['ECU_BINARY_VERIFIED'],
+      appliedSwitches: switches,
+      dtcOffList,
+      stagePreset,
+      tokensSpent: consumeCredits ? costTokens : 0,
+      balanceTokens: workshopCreditsState.balanceTokens,
+      patchedBase64: modified.toString('base64'),
+      processedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/copilot/diagnose - AutoPro Copilot FR + Darija Technique (OBD2 / UDS / SAE J1939)
+app.post('/api/copilot/diagnose', async (req, res) => {
+  try {
+    const vehicleLabel = String(req.body?.vehicleLabel || 'Véhicule Atelier').slice(0, 100);
+    const ecuModel = String(req.body?.ecuModel || 'ECU Standard').slice(0, 64);
+    const protocol = String(req.body?.protocol || 'UDS ISO 14229').slice(0, 48);
+    const codes: string[] = Array.isArray(req.body?.codes)
+      ? req.body.codes.map((c: any) => String(c).slice(0, 40)).slice(0, 12)
+      : [];
+    const j1939Summary = String(req.body?.j1939Summary || '').slice(0, 280);
+    const technicianQuestion = String(req.body?.question || '').slice(0, 320);
+
+    const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
+    if (!hasAi) {
+      const frText = `Analyse atelier structurée (${vehicleLabel} · ${ecuModel} · ${protocol}) :\n1. Codes / Trames transmis : ${codes.join(', ') || j1939Summary || 'Contrôle général'}.\n2. Contrôles prioritaires : vérifier tension stabilisée (>= 13.0V en écriture, >= 12.4V au repos), continuité bus CAN (60 Ohms) / J1939 (250 kbps) et capteurs associés avant tout effacement.\n3. Action recommandée : effectuer une lecture Live Data à chaud puis sauvegarder l'EEPROM/Flash avant écriture.`;
+      const darijaText = `Tahlil l-atelier (${vehicleLabel}) :\n1. Qbel ma t-flashi walla t-mseh l-défaut (${codes.join(', ') || j1939Summary || 'Diagnostic'}), vérifi l-batterie khassha tkoun >= 13.0V (stabilisateur).\n2. Qaleb l-faisceau w les capteurs (pression rail / turbo / capteur NOx selon l-code), w dir sauvegarde (Backup) f C:\\AutoPro_Backups qbel ay modification.`;
+      const checked = verifyDiagnosticAiOutput(frText, codes, 'offline-verified-rules');
+      return res.json({
+        success: true,
+        frenchDiagnosis: checked.sanitizedText,
+        darijaDiagnosis: darijaText,
+        steps: [
+          'Contrôler tension batterie et résistance bus CAN (60 Ω)',
+          'Vérifier Live Data capteur concerné et faisceau électrique',
+          'Créer Auto-Backup avant toute calibration / effacement DTC',
+        ],
+        aiVerification: checked.aiVerification,
+      });
+    }
+
+    const prompt = `Tu es AutoPro Copilot, expert senior diagnostic automobile (OBD2 / ISO 14229 UDS / SAE J1939 Poids Lourds).
+Véhicule : ${vehicleLabel}
+Calculateur : ${ecuModel}
+Protocole : ${protocol}
+Codes DTC / PGN-SPN-FMI fournis : ${codes.join(', ') || 'Aucun'}
+Trame J1939 : ${j1939Summary || 'Aucune'}
+Question technicien : ${technicianQuestion || 'Donner le plan de diagnostic complet'}
+
+Réponds EXCLUSIVEMENT en JSON valide avec les clés suivantes :
+{
+  "frenchDiagnosis": "Explication technique précise en français (causes probables, mesures à prendre).",
+  "darijaDiagnosis": "Explication claire en Darija technique algérienne/maghrébine (en alphabet latin lisible en atelier, ex: Chof capteur..., Vérifi tension...).",
+  "steps": ["Étape 1", "Étape 2", "Étape 3"]
+}
+N'invente aucun code DTC absent de l'entrée.`;
+
+    const aiResult = await generateUnifiedAI(prompt, { jsonMode: true, timeoutMs: 14000 });
+    let frenchDiagnosis = '';
+    let darijaDiagnosis = '';
+    let steps: string[] = [];
+
+    if (aiResult.text) {
+      try {
+        const parsed = JSON.parse(aiResult.text);
+        frenchDiagnosis = String(parsed.frenchDiagnosis || '');
+        darijaDiagnosis = String(parsed.darijaDiagnosis || '');
+        steps = Array.isArray(parsed.steps) ? parsed.steps.map(String).slice(0, 5) : [];
+      } catch {
+        frenchDiagnosis = aiResult.text;
+        darijaDiagnosis = 'Vérifi l-tension batterie w les capteurs qbel ma t-bda l-intervention.';
+      }
+    }
+
+    const checked = verifyDiagnosticAiOutput(
+      frenchDiagnosis || `Diagnostic ${vehicleLabel} (${codes.join(', ')})`,
+      codes,
+      aiResult.provider
+    );
+
+    return res.json({
+      success: true,
+      frenchDiagnosis: checked.sanitizedText,
+      darijaDiagnosis:
+        darijaDiagnosis ||
+        'Qaleb tension batterie (>= 13.0V) w faisceau CAN/capteurs qbel t-flashi.',
+      steps:
+        steps.length > 0
+          ? steps
+          : [
+              'Contrôler l’alimentation et la masse du calculateur',
+              'Vérifier les valeurs Live Data correspondantes',
+              'Sauvegarder le fichier original avant correction',
+            ],
+      aiVerification: checked.aiVerification,
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });

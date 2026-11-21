@@ -17,6 +17,7 @@ import { CameraIntegration } from './components/CameraIntegration';
 import { ChinaWorkshopToolsHub } from './components/ChinaWorkshopToolsHub';
 import { TransmissionTcuSuite } from './components/TransmissionTcuSuite';
 import { CoolrayAntiLspiModule } from './components/CoolrayAntiLspiModule';
+import { UniversalMasterSuite } from './components/UniversalMasterSuite';
 import { AdminSubscribersPanel } from './components/AdminSubscribersPanel';
 import { ConnectModal } from './components/ConnectModal';
 import { LicenseGate } from './components/LicenseGate';
@@ -153,7 +154,9 @@ export default function App() {
       (activeTab === 'transmission' &&
         (allowed.includes('diagnostic') || allowed.includes('flash'))) ||
       (activeTab === 'coolray_lspi' &&
-        (allowed.includes('diagnostic') || allowed.includes('flash') || allowed.includes('workshop_cn')));
+        (allowed.includes('diagnostic') || allowed.includes('flash') || allowed.includes('workshop_cn'))) ||
+      (activeTab === 'universal_master' &&
+        (allowed.includes('universal_master') || allowed.includes('diagnostic') || allowed.includes('flash')));
     if (allowed.length > 0 && !isPermitted) {
       setActiveTab((allowed[0] as NavTab) || 'diagnostic');
     }
@@ -330,6 +333,13 @@ export default function App() {
         allowed.includes('workshop_cn')
       );
     }
+    if (tab === 'universal_master') {
+      return (
+        allowed.includes('universal_master') ||
+        allowed.includes('diagnostic') ||
+        allowed.includes('flash')
+      );
+    }
     return allowed.includes(tab);
   };
 
@@ -498,6 +508,10 @@ export default function App() {
             batteryVoltage={batteryVoltage}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
           />
+        )}
+
+        {activeTab === 'universal_master' && canRenderTab('universal_master') && (
+          <UniversalMasterSuite batteryVoltage={batteryVoltage} />
         )}
       </main>
 

@@ -18,6 +18,7 @@ export type NavTab =
   | 'workshop_cn'
   | 'transmission'
   | 'coolray_lspi'
+  | 'universal_master'
   | 'admin';
 
 interface HeaderProps {
@@ -88,6 +89,13 @@ export const Header: React.FC<HeaderProps> = ({
         mods.includes('diagnostic') ||
         mods.includes('flash') ||
         mods.includes('workshop_cn')
+      );
+    }
+    if (tab === 'universal_master') {
+      return (
+        mods.includes('universal_master') ||
+        mods.includes('diagnostic') ||
+        mods.includes('flash')
       );
     }
     return mods.includes(tab);
@@ -305,6 +313,20 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Flame className="w-3.5 h-3.5 text-rose-400" />
               <span>Coolray DZ &amp; Unité Centrale</span>
+            </button>
+          )}
+
+          {canAccess('universal_master') && (
+            <button
+              onClick={() => onSelectTab('universal_master')}
+              className={`whitespace-nowrap transition-colors pb-1 border-b-2 cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'universal_master'
+                  ? 'text-cyan-300 border-cyan-400 font-extrabold'
+                  : 'border-transparent hover:text-cyan-300 text-emerald-300'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span>Master Suite (FLEX · Swiftec · J1939)</span>
             </button>
           )}
 
