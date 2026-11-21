@@ -4,6 +4,7 @@ import {
   LocalAgentWriteRequest,
 } from '../types/automotive';
 import { apiFetch } from './apiBridge';
+import agentServerPySource from '../agent/agent_server.py?raw';
 
 export const LOCAL_PC_AGENT_URL = 'http://127.0.0.1:38450';
 const TOKEN_STORAGE_KEY = 'autopro_pc_agent_token';
@@ -813,9 +814,7 @@ export async function computeHmacSha256Hex(
 }
 
 export async function downloadAgentServerPy(): Promise<string> {
-  const resp = await fetch('/agent/agent_server.py');
-  const code = await resp.text();
-  return triggerTextDownload('agent_server.py', code, 'text/x-python;charset=utf-8');
+  return triggerTextDownload('agent_server.py', agentServerPySource, 'text/x-python;charset=utf-8');
 }
 
 export function downloadPairedInstallAgentBat(
@@ -824,6 +823,12 @@ export function downloadPairedInstallAgentBat(
   cloudApiUrl = typeof window !== 'undefined' ? window.location.origin : 'https://autoprodz-a7071.web.app'
 ): string {
   const safeUrl = cloudApiUrl.replace(/["'&|<>^]/g, '');
+  const pyB64 = uint8ToBase64(new TextEncoder().encode(agentServerPySource));
+  const b64Lines: string[] = [];
+  for (let i = 0; i < pyB64.length; i += 76) {
+    b64Lines.push(`echo ${pyB64.slice(i, i + 76)}`);
+  }
+
   const bat = `@echo off
 setlocal EnableExtensions
 title AutoPro Flash Hub - Installateur Agent PC Python J2534
@@ -855,7 +860,12 @@ set "AUTOPRO_HMAC_SECRET=${hmacSecret}"
 set "AUTOPRO_CLOUD_API_URL=${safeUrl}"
 
 if not exist "%~dp0agent_server.py" (
-    powershell -NoProfile -Command "Invoke-WebRequest -Uri '%AUTOPRO_CLOUD_API_URL%/agent/agent_server.py' -OutFile '%~dp0agent_server.py'"
+    echo [AutoPro] Extraction automatique de agent_server.py...
+    (
+${b64Lines.join('\n')}
+    ) > "%~dp0agent_server.b64"
+    certutil -decode -f "%~dp0agent_server.b64" "%~dp0agent_server.py" >nul
+    del "%~dp0agent_server.b64" >nul 2>&1
 )
 
 echo [OK] Demarrage AutoPro J2534 Agent sur 127.0.0.1:38450 (Pare-feu actif)...
