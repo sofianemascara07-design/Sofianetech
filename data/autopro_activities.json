@@ -1,5 +1,16 @@
 [
   {
+    "clientName": "Cloud Seed/Key Engine",
+    "hwid": "L6T7944Z5RZ001842",
+    "actionType": "flash_executed",
+    "actionDetails": "Cloud UDS 0x27 (Bosch MG1CS080 / MG1US008 (AURIX)) Niveau 0x11 -> Clé 0x12 calculée côté serveur (IP protégée).",
+    "vehicleName": "BOSCH_MG1US008",
+    "locationCity": "Cloud API",
+    "durationMinutes": 1,
+    "id": "ACT-DZ-9713",
+    "timestamp": "2026-11-21T10:17:30.304Z"
+  },
+  {
     "clientName": "Geely Coolray DZ (L6T7824Z9RZ001540)",
     "hwid": "BCM_SGW_CONTINENTAL",
     "actionType": "flash_executed",

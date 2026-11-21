@@ -7,6 +7,20 @@ import { apiFetch } from './apiBridge';
 
 export const LOCAL_PC_AGENT_URL = 'http://127.0.0.1:38450';
 const TOKEN_STORAGE_KEY = 'autopro_pc_agent_token';
+const HMAC_STORAGE_KEY = 'autopro_pc_agent_hmac_secret';
+
+function generateRandomHex(byteCount: number): string {
+  const buf = new Uint8Array(byteCount);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(buf);
+  } else {
+    for (let i = 0; i < byteCount; i++) buf[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(buf)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase();
+}
 
 export function getOrCreateAgentPairToken(): string {
   try {
@@ -14,24 +28,46 @@ export function getOrCreateAgentPairToken(): string {
     if (existing && existing.startsWith('AP-PC-') && existing.length >= 12) {
       return existing;
     }
-    const randomPart = Math.random().toString(36).substring(2, 10).toUpperCase();
-    const token = `AP-PC-${randomPart}`;
+    const token = `AP-PC-${generateRandomHex(6)}`;
     localStorage.setItem(TOKEN_STORAGE_KEY, token);
     return token;
   } catch {
-    return 'AP-PC-WORKSHOP26';
+    return `AP-PC-${generateRandomHex(6)}`;
   }
 }
 
 export function regenerateAgentPairToken(): string {
-  const randomPart = Math.random().toString(36).substring(2, 10).toUpperCase();
-  const token = `AP-PC-${randomPart}`;
+  const token = `AP-PC-${generateRandomHex(6)}`;
   try {
     localStorage.setItem(TOKEN_STORAGE_KEY, token);
   } catch {
-    // Ignore storage error in restricted mode
+    // Ignore storage error
   }
   return token;
+}
+
+export function getOrCreateAgentHmacSecret(): string {
+  try {
+    const existing = localStorage.getItem(HMAC_STORAGE_KEY);
+    if (existing && existing.length >= 32) {
+      return existing;
+    }
+    const secret = generateRandomHex(32);
+    localStorage.setItem(HMAC_STORAGE_KEY, secret);
+    return secret;
+  } catch {
+    return generateRandomHex(32);
+  }
+}
+
+export function regenerateAgentHmacSecret(): string {
+  const secret = generateRandomHex(32);
+  try {
+    localStorage.setItem(HMAC_STORAGE_KEY, secret);
+  } catch {
+    // Ignore storage error
+  }
+  return secret;
 }
 
 /**
@@ -512,16 +548,18 @@ export function downloadStandaloneAgentMjs(
 async function fetchLocalAgent(
   path: string,
   token: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  timeoutMs = 3500
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3500);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(`${LOCAL_PC_AGENT_URL}${path}`, {
       ...init,
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
+        'X-AutoPro-Token': token,
         'x-agent-token': token,
         ...(init.headers || {}),
       },
@@ -533,23 +571,43 @@ async function fetchLocalAgent(
 
 export async function probeLocalPcAgent(token: string): Promise<LocalAgentStatus | null> {
   try {
-    const res = await fetchLocalAgent('/api/agent/status', token, { method: 'GET' });
+    let res = await fetchLocalAgent('/status', token, { method: 'GET' });
+    if (res.status === 404) {
+      res = await fetchLocalAgent('/api/agent/status', token, { method: 'GET' });
+    }
     if (!res.ok) return null;
     const data = await res.json();
+    const voltage = typeof data.batteryVoltage === 'number' ? data.batteryVoltage : 13.8;
+    const derivedVoltageStatus: LocalAgentStatus['voltageStatus'] =
+      data.voltageStatus === 'VOLTAGE_LOW' || data.voltageStatus === 'VOLTAGE_HIGH' || data.voltageStatus === 'OK'
+        ? data.voltageStatus
+        : voltage < 13.0
+        ? 'VOLTAGE_LOW'
+        : voltage > 15.5
+        ? 'VOLTAGE_HIGH'
+        : 'OK';
+
     return {
       connected: Boolean(data.connected),
       version: String(data.version || '2.6.0'),
+      agentEngine:
+        data.agentEngine === 'PYTHON_FASTAPI_J2534' ? 'PYTHON_FASTAPI_J2534' : 'NODE_BRIDGE',
+      hardwareMode:
+        data.hardwareMode === 'J2534_REAL' ? 'J2534_REAL' : 'NO_HARDWARE_BENCH',
       hostname: String(data.hostname || 'PC-Client'),
       osPlatform: String(data.osPlatform || 'win32'),
       nodeVersion: String(data.nodeVersion || ''),
       agentUrl: String(data.agentUrl || LOCAL_PC_AGENT_URL),
       writePolicy: data.writePolicy === 'AUTO_ON_REQUEST' ? 'AUTO_ON_REQUEST' : 'ASK_EACH_WRITE',
-      batteryVoltage: typeof data.batteryVoltage === 'number' ? data.batteryVoltage : 13.8,
+      batteryVoltage: voltage,
+      voltageStatus: derivedVoltageStatus,
+      vbattSource: data.vbattSource ? String(data.vbattSource) : undefined,
       drivers: Array.isArray(data.drivers) ? data.drivers : [],
       pendingRequests: Array.isArray(data.pendingRequests) ? data.pendingRequests : [],
       recentRequests: Array.isArray(data.recentRequests) ? data.recentRequests : [],
       executedCount: Number(data.executedCount || 0),
       lastPingAt: String(data.lastPingAt || new Date().toLocaleTimeString('fr-FR')),
+      flashProgress: data.flashProgress || undefined,
     };
   } catch {
     return null;
@@ -561,10 +619,17 @@ export async function setLocalAgentPolicy(
   writePolicy: LocalAgentWritePolicy,
   batteryVoltage?: number
 ): Promise<boolean> {
-  const res = await fetchLocalAgent('/api/agent/config', token, {
+  const res = await fetchLocalAgent('/api/agent/policy', token, {
     method: 'POST',
     body: JSON.stringify({ writePolicy, batteryVoltage }),
   });
+  if (res.status === 404) {
+    const legacy = await fetchLocalAgent('/api/agent/config', token, {
+      method: 'POST',
+      body: JSON.stringify({ writePolicy, batteryVoltage }),
+    });
+    return legacy.ok;
+  }
   return res.ok;
 }
 
@@ -620,7 +685,7 @@ export async function submitWriteRequestToLocalAgent(
     });
   }
   return {
-    ok: res.ok && Boolean(data.success),
+    ok: res.ok && Boolean(data.success || data.ok),
     autoExecuted: Boolean(data.autoExecuted),
     request: data.request,
     message: String(data.message || data.request?.resultMessage || data.error || 'Demande transmise.'),
@@ -631,10 +696,16 @@ export async function approveLocalWriteRequest(
   token: string,
   requestId: string
 ): Promise<{ ok: boolean; request?: LocalAgentWriteRequest; message: string }> {
-  const res = await fetchLocalAgent(`/api/agent/approve/${encodeURIComponent(requestId)}`, token, {
+  let res = await fetchLocalAgent('/api/agent/approve', token, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify({ id: requestId }),
   });
+  if (res.status === 404) {
+    res = await fetchLocalAgent(`/api/agent/approve/${encodeURIComponent(requestId)}`, token, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  }
   const data = await res.json();
   if (data.request) {
     void auditAgentActionBackend({
@@ -646,17 +717,23 @@ export async function approveLocalWriteRequest(
     });
   }
   return {
-    ok: res.ok && Boolean(data.success),
+    ok: res.ok && Boolean(data.success || data.ok),
     request: data.request,
-    message: String(data.request?.resultMessage || data.error || 'Écriture exécutée.'),
+    message: String(data.request?.resultMessage || data.message || data.error || 'Écriture exécutée.'),
   };
 }
 
 export async function rejectLocalWriteRequest(token: string, requestId: string): Promise<boolean> {
-  const res = await fetchLocalAgent(`/api/agent/reject/${encodeURIComponent(requestId)}`, token, {
+  let res = await fetchLocalAgent('/api/agent/reject', token, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify({ id: requestId }),
   });
+  if (res.status === 404) {
+    res = await fetchLocalAgent(`/api/agent/reject/${encodeURIComponent(requestId)}`, token, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  }
   return res.ok;
 }
 
@@ -677,3 +754,230 @@ export async function auditAgentActionBackend(payload: {
     // Non-blocking audit telemetry
   }
 }
+
+// ============================================================================
+// CRYPTOGRAPHIE BINAIRE (CRC32 + SHA-256 + HMAC-SHA256) & PIPELINE J2534
+// ============================================================================
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+export function computeCrc32Hex(bytes: Uint8Array): string {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, '0').toUpperCase();
+}
+
+export async function computeBinaryIntegrity(bytes: Uint8Array): Promise<{
+  sizeBytes: number;
+  crc32Hex: string;
+  sha256Hex: string;
+}> {
+  const crc32Hex = computeCrc32Hex(bytes);
+  const digest = await crypto.subtle.digest('SHA-256', bytes.slice().buffer);
+  const sha256Hex = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase();
+  return { sizeBytes: bytes.byteLength, crc32Hex, sha256Hex };
+}
+
+export async function computeHmacSha256Hex(
+  secretUtf8: string,
+  rawBytes: Uint8Array
+): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secretUtf8),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, rawBytes.slice().buffer);
+  return Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase();
+}
+
+export async function downloadAgentServerPy(): Promise<string> {
+  const resp = await fetch('/agent/agent_server.py');
+  const code = await resp.text();
+  return triggerTextDownload('agent_server.py', code, 'text/x-python;charset=utf-8');
+}
+
+export function downloadPairedInstallAgentBat(
+  pairToken: string,
+  hmacSecret: string,
+  cloudApiUrl = typeof window !== 'undefined' ? window.location.origin : 'https://autoprodz-a7071.web.app'
+): string {
+  const safeUrl = cloudApiUrl.replace(/["'&|<>^]/g, '');
+  const bat = `@echo off
+setlocal EnableExtensions
+title AutoPro Flash Hub - Installateur Agent PC Python J2534
+
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b 0
+)
+
+cd /d "%~dp0"
+where python >nul 2>&1
+if %errorLevel% neq 0 (
+    echo [ERREUR] Python 3 requis : https://www.python.org/downloads/
+    pause
+    exit /b 1
+)
+
+python -m pip install --upgrade fastapi uvicorn pywin32 requests
+if not exist "C:\\AutoPro_Backups" mkdir "C:\\AutoPro_Backups"
+
+netsh advfirewall firewall delete rule name="AutoPro Agent 38450 Block Public" >nul 2>&1
+netsh advfirewall firewall delete rule name="AutoPro Agent 38450 Allow Loopback" >nul 2>&1
+netsh advfirewall firewall add rule name="AutoPro Agent 38450 Block Public" dir=in action=block protocol=TCP localport=38450 remoteip=any profile=public,private,domain enable=yes >nul
+netsh advfirewall firewall add rule name="AutoPro Agent 38450 Allow Loopback" dir=in action=allow protocol=TCP localip=127.0.0.1 localport=38450 remoteip=127.0.0.1 enable=yes >nul
+
+set "AUTOPRO_TOKEN=${pairToken}"
+set "AUTOPRO_HMAC_SECRET=${hmacSecret}"
+set "AUTOPRO_CLOUD_API_URL=${safeUrl}"
+
+if not exist "%~dp0agent_server.py" (
+    powershell -NoProfile -Command "Invoke-WebRequest -Uri '%AUTOPRO_CLOUD_API_URL%/agent/agent_server.py' -OutFile '%~dp0agent_server.py'"
+)
+
+echo [OK] Demarrage AutoPro J2534 Agent sur 127.0.0.1:38450 (Pare-feu actif)...
+start "AutoPro J2534 Agent" /MIN cmd /c "python "%~dp0agent_server.py""
+pause
+`;
+  return triggerTextDownload('install_agent.bat', bat);
+}
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+export async function executeJ2534WriteEcu(params: {
+  token: string;
+  hmacSecret: string;
+  ecuModel: string;
+  txIdHex: string;
+  vin: string;
+  securityLevel: '01' | '11';
+  filename: string;
+  rawBytes: Uint8Array;
+  dryRun?: boolean;
+}): Promise<{
+  ok: boolean;
+  status: string;
+  message: string;
+  crc32?: string;
+  backupPath?: string;
+  batteryVoltage?: number;
+  cloudAttestationHmac?: string;
+}> {
+  const integrity = await computeBinaryIntegrity(params.rawBytes);
+  const hmacHex = await computeHmacSha256Hex(params.hmacSecret, params.rawBytes);
+
+  // Attestation Cloud SaaS non-bloquante
+  let cloudAttestationHmac: string | undefined;
+  try {
+    const signRes = await apiFetch('/api/agent/sign-firmware', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sha256Hex: integrity.sha256Hex,
+        crc32Hex: integrity.crc32Hex,
+        fileSize: integrity.sizeBytes,
+        ecuTarget: params.ecuModel,
+      }),
+    });
+    if (signRes.ok) {
+      const signData = await signRes.json();
+      cloudAttestationHmac = signData.cloudAttestationHmac;
+    }
+  } catch {
+    // Attestation cloud optionnelle si réseau offline
+  }
+
+  const res = await fetchLocalAgent(
+    '/write_ecu',
+    params.token,
+    {
+      method: 'POST',
+      headers: {
+        'X-AutoPro-HMAC': hmacHex,
+      },
+      body: JSON.stringify({
+        ecu_model: params.ecuModel,
+        tx_id_hex: params.txIdHex,
+        vin: params.vin,
+        security_level: params.securityLevel,
+        filename: params.filename,
+        binary_base64: uint8ToBase64(params.rawBytes),
+        expected_crc32: integrity.crc32Hex,
+        expected_size_bytes: integrity.sizeBytes,
+        hmac_sha256: hmacHex,
+        dry_run: Boolean(params.dryRun),
+      }),
+    },
+    30000
+  );
+
+  const data = await res.json();
+  void auditAgentActionBackend({
+    actionTitle: `J2534 Flash ${params.ecuModel} (${params.filename})`,
+    targetModule: params.ecuModel,
+    autoExecuted: true,
+    status: String(data.status || (res.ok ? 'FLASH_COMPLETE' : 'FAILED')),
+    batteryVoltage: Number(data.batteryVoltage || data.battery_voltage || 13.6),
+  });
+
+  return {
+    ok: res.ok && Boolean(data.success),
+    status: String(data.status || (res.ok ? 'FLASH_COMPLETE' : 'ERROR')),
+    message: String(data.message || data.error || data.detail || 'Opération terminée.'),
+    crc32: data.crc32 || integrity.crc32Hex,
+    backupPath: data.backupPath,
+    batteryVoltage: data.batteryVoltage ?? data.battery_voltage,
+    cloudAttestationHmac,
+  };
+}
+
+export async function testCloudSeedKey(params: {
+  seedHex: string;
+  ecuModel: string;
+  securityLevel: '01' | '11';
+  vin?: string;
+}): Promise<{
+  success: boolean;
+  keyHex?: string;
+  udsSendKeyFrameHex?: string;
+  ecuFamily?: string;
+  error?: string;
+}> {
+  const res = await apiFetch('/api/calculate-key', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+

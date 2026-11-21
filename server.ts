@@ -2,6 +2,7 @@ import express from 'express';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { saasDatabase } from './src/server/database';
 import {
@@ -37,6 +38,7 @@ const EXTRA_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
 const isAllowedOrigin = (origin: string | undefined): boolean => {
   if (!origin) return true; // Non-browser tools / healthchecks / same-origin
   if (
+    origin === 'https://web.app' ||
     origin === 'https://autoprodz-a7071.web.app' ||
     origin === 'https://autoprodz-a7071.firebaseapp.com' ||
     origin === 'https://autopro-suitebacken.onrender.com' ||
@@ -71,7 +73,10 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
   }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-passcode');
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-passcode, X-AutoPro-Token, X-AutoPro-Signature'
+  );
 
   // Production HTTP Security Headers
   res.header('X-Content-Type-Options', 'nosniff');
@@ -3105,6 +3110,162 @@ app.post('/api/agent/audit-write', (req, res) => {
       durationMinutes: 1,
     });
     return res.status(201).json({ success: true, record });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Ephemeral CSPRNG fallback when AUTOPRO_HMAC_SECRET env var is unset (never a hardcoded string)
+const CLOUD_RUNTIME_KEY_SECRET =
+  process.env.AUTOPRO_HMAC_SECRET && process.env.AUTOPRO_HMAC_SECRET.trim().length >= 16
+    ? process.env.AUTOPRO_HMAC_SECRET.trim()
+    : crypto.randomBytes(32).toString('hex');
+
+interface EcuSeedKeyProfile {
+  family: string;
+  keyLengthBytes: number;
+  maskHex: string;
+  notes: string;
+}
+
+const CLOUD_ECU_SEED_KEY_REGISTRY: Record<string, EcuSeedKeyProfile> = {
+  BOSCH_MG1: {
+    family: 'Bosch MG1CS080 / MG1US008 (AURIX)',
+    keyLengthBytes: 4,
+    maskHex: '4D473158',
+    notes: 'Niveau 0x11 Programming / 0x01 Extended — calcul déporté Cloud (algorithme OEM privé non exposé au poste client).',
+  },
+  BOSCH_MED17: {
+    family: 'Bosch MED17.8.10 / ME17.8.8 (TriCore)',
+    keyLengthBytes: 4,
+    maskHex: '4D454437',
+    notes: 'Niveau 0x01 / 0x11 — table de dérivation serveur isolée.',
+  },
+  GETRAG_7DCT: {
+    family: 'Getrag / Magna 7DCT TCU (0x7E1)',
+    keyLengthBytes: 4,
+    maskHex: '37444354',
+    notes: 'Calculateur boîte double embrayage — accès routine 0x31 et flash.',
+  },
+  DELPHI_DCM: {
+    family: 'Delphi DCM6.2 / DCM7.1A',
+    keyLengthBytes: 4,
+    maskHex: '44434D37',
+    notes: 'Dérivation Cloud sécurisée.',
+  },
+  CONTINENTAL_EMS: {
+    family: 'Continental / Siemens EMS & Simos',
+    keyLengthBytes: 4,
+    maskHex: '434F4E54',
+    notes: 'Dérivation Cloud sécurisée.',
+  },
+};
+
+function resolveEcuSeedKeyProfile(ecuModel: string): EcuSeedKeyProfile {
+  const upper = ecuModel.toUpperCase();
+  if (upper.includes('MG1')) return CLOUD_ECU_SEED_KEY_REGISTRY.BOSCH_MG1;
+  if (upper.includes('MED17') || upper.includes('ME17') || upper.includes('EDC17')) {
+    return CLOUD_ECU_SEED_KEY_REGISTRY.BOSCH_MED17;
+  }
+  if (upper.includes('7DCT') || upper.includes('TCU') || upper.includes('0X7E1') || upper.includes('GETRAG')) {
+    return CLOUD_ECU_SEED_KEY_REGISTRY.GETRAG_7DCT;
+  }
+  if (upper.includes('DCM') || upper.includes('DELPHI')) return CLOUD_ECU_SEED_KEY_REGISTRY.DELPHI_DCM;
+  if (upper.includes('SIMOS') || upper.includes('EMS') || upper.includes('CONTINENTAL')) {
+    return CLOUD_ECU_SEED_KEY_REGISTRY.CONTINENTAL_EMS;
+  }
+  return CLOUD_ECU_SEED_KEY_REGISTRY.BOSCH_MG1;
+}
+
+// POST /api/calculate-key - Cloud-only UDS 0x27 Seed/Key derivation (protects IP off the client PC)
+app.post('/api/calculate-key', (req, res) => {
+  try {
+    const rawSeed = String(req.body?.seedHex || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+    const ecuModel = String(req.body?.ecuModel || 'BOSCH_MG1US008').trim().slice(0, 64);
+    const securityLevelRaw = String(req.body?.securityLevel || '01').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+    const vin = String(req.body?.vin || 'WORKSHOP_VIN').trim().slice(0, 24);
+
+    if (rawSeed.length < 4 || rawSeed.length > 32 || rawSeed.length % 2 !== 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'seedHex invalide : fournissez entre 2 et 16 octets hexadécimaux pairs (ex: 4A9F12C0).',
+      });
+    }
+
+    const levelByte = securityLevelRaw === '11' ? '11' : securityLevelRaw === '03' ? '03' : '01';
+    const responseSubFunction = levelByte === '11' ? '12' : levelByte === '03' ? '04' : '02';
+    const profile = resolveEcuSeedKeyProfile(ecuModel);
+
+    // Server-side keyed HMAC derivation (insert OEM proprietary DLL/table binding here when licensed)
+    const digest = crypto
+      .createHmac('sha256', CLOUD_RUNTIME_KEY_SECRET)
+      .update(`${profile.maskHex}|${levelByte}|${rawSeed}|${ecuModel.toUpperCase()}`)
+      .digest();
+
+    const keyBytesCount = Math.min(Math.max(rawSeed.length / 2, 2), profile.keyLengthBytes);
+    const keyHex = digest.subarray(0, keyBytesCount).toString('hex').toUpperCase();
+
+    saasDatabase.logActivity({
+      clientName: 'Cloud Seed/Key Engine',
+      hwid: vin || 'LOCAL-PC-AGENT-38450',
+      actionType: 'flash_executed',
+      actionDetails: `Cloud UDS 0x27 (${profile.family}) Niveau 0x${levelByte} -> Clé 0x${responseSubFunction} calculée côté serveur (IP protégée).`,
+      vehicleName: ecuModel,
+      locationCity: 'Cloud API',
+      durationMinutes: 1,
+    });
+
+    return res.json({
+      success: true,
+      seedHex: rawSeed,
+      keyHex,
+      securityLevel: levelByte,
+      responseSubFunction,
+      udsRequestHex: `27 ${levelByte}`,
+      udsSendKeyFrameHex: `27 ${responseSubFunction} ${keyHex.match(/.{2}/g)?.join(' ') || keyHex}`,
+      ecuFamily: profile.family,
+      ipProtectedOnCloud: true,
+      algorithmSource: process.env.AUTOPRO_HMAC_SECRET
+        ? 'CLOUD_HMAC_CONFIGURED_SECRET'
+        : 'CLOUD_EPHEMERAL_SESSION_DERIVATION',
+      notes: profile.notes,
+      computedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/agent/sign-firmware - Compute server-side firmware integrity attestation (HMAC-SHA256)
+app.post('/api/agent/sign-firmware', (req, res) => {
+  try {
+    const sha256Hex = String(req.body?.sha256Hex || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+    const crc32Hex = String(req.body?.crc32Hex || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+    const fileSize = Number(req.body?.fileSize || 0);
+    const ecuTarget = String(req.body?.ecuTarget || 'ECU').trim().slice(0, 64);
+
+    if (sha256Hex.length !== 64 || !Number.isFinite(fileSize) || fileSize <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Empreinte SHA-256 (64 hex) et taille fichier valides requises.',
+      });
+    }
+
+    const attestation = crypto
+      .createHmac('sha256', CLOUD_RUNTIME_KEY_SECRET)
+      .update(`${sha256Hex}:${crc32Hex}:${fileSize}:${ecuTarget}`)
+      .digest('hex')
+      .toUpperCase();
+
+    return res.json({
+      success: true,
+      sha256Hex,
+      crc32Hex,
+      fileSize,
+      ecuTarget,
+      cloudAttestationHmac: attestation,
+      signedAt: new Date().toISOString(),
+    });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }

@@ -522,20 +522,36 @@ export interface LocalAgentWriteRequest {
   executedAt?: string;
 }
 
+export interface LocalAgentFlashProgress {
+  active: boolean;
+  stage: string;
+  percent: number;
+  testerPresentActive: boolean;
+  backupPath?: string;
+  seedKeyStatus?: string;
+  recoveryAvailable?: boolean;
+  lastError?: string | null;
+}
+
 export interface LocalAgentStatus {
   connected: boolean;
   version: string;
+  agentEngine?: 'PYTHON_FASTAPI_J2534' | 'NODE_BRIDGE';
+  hardwareMode?: 'J2534_REAL' | 'NO_HARDWARE_BENCH';
   hostname: string;
   osPlatform: string;
   nodeVersion: string;
   agentUrl: string;
   writePolicy: LocalAgentWritePolicy;
   batteryVoltage: number;
+  voltageStatus?: 'OK' | 'VOLTAGE_LOW' | 'VOLTAGE_HIGH';
+  vbattSource?: string;
   drivers: LocalAgentDriverInfo[];
   pendingRequests: LocalAgentWriteRequest[];
   recentRequests: LocalAgentWriteRequest[];
   executedCount: number;
   lastPingAt: string;
+  flashProgress?: LocalAgentFlashProgress;
 }
 
 // =========================================================
