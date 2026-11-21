@@ -1,5 +1,14 @@
 [
   {
+    "clientName": "Geely Coolray (L6T7824Z9RZ001540)",
+    "hwid": "MG1US008",
+    "actionType": "flash_executed",
+    "actionDetails": "Flash Anti-LSPI downgrade_cn_to_dz [GEELY-DZ-174-NOLSPI] · 13.5V",
+    "vehicleName": "Geely Coolray (coolray_cn_battle_181)",
+    "id": "ACT-DZ-1781",
+    "timestamp": "2026-11-21T13:10:26.634Z"
+  },
+  {
     "clientName": "Cloud Seed/Key Engine",
     "hwid": "L6T7944Z5RZ001842",
     "actionType": "flash_executed",
