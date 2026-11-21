@@ -30,6 +30,7 @@ interface AutoTunerFlexWorkflowProps {
   pairToken: string;
   hmacSecret: string;
   fallbackVoltage: number;
+  isDemoStabilizerActive?: boolean;
   selectedProfile: UniversalControlUnitProfile;
   onSelectProfile: (profile: UniversalControlUnitProfile) => void;
   onCreditsUpdated?: () => void;
@@ -40,6 +41,7 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
   pairToken,
   hmacSecret,
   fallbackVoltage,
+  isDemoStabilizerActive = false,
   selectedProfile,
   onSelectProfile,
   onCreditsUpdated,
@@ -67,11 +69,18 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
   const [isWriting, setIsWriting] = useState<boolean>(false);
   const [writeProgress, setWriteProgress] = useState<number>(0);
   const [writeStatusText, setWriteStatusText] = useState<string>('En attente de lancement.');
+  const [writeLogs, setWriteLogs] = useState<string[]>([]);
   const [writeError, setWriteError] = useState<string | null>(null);
   const [recoveryReady, setRecoveryReady] = useState<boolean>(false);
 
-  const liveVoltage = agentStatus?.connected ? agentStatus.batteryVoltage : fallbackVoltage;
-  const isVoltageUnsafe = liveVoltage < 13.0 || liveVoltage > 15.5 || agentStatus?.voltageStatus === 'VOLTAGE_LOW';
+  const liveVoltage = isDemoStabilizerActive
+    ? fallbackVoltage
+    : agentStatus?.connected
+    ? agentStatus.batteryVoltage
+    : fallbackVoltage;
+  const isVoltageUnsafe = isDemoStabilizerActive
+    ? false
+    : liveVoltage < 13.0 || liveVoltage > 15.5 || agentStatus?.voltageStatus === 'VOLTAGE_LOW';
 
   const filteredProfiles = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -185,19 +194,41 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
       setWriteError('⚠️ Tension insuffisante (< 13.0V). Branchez un stabilisateur de tension avant de continuer.');
       return;
     }
-    if (!loadedWriteBytes) {
-      setWriteError('Veuillez charger un fichier .bin ou exécuter l’Étape 3 (Lecture Full) avant écriture.');
-      return;
+
+    let bytesToWrite = loadedWriteBytes;
+    let integrityToUse = loadedIntegrity;
+    let fileLabel = loadedFileName;
+
+    if (!bytesToWrite) {
+      if (isDemoStabilizerActive || !agentStatus?.connected) {
+        const safeEcu = selectedProfile.ecuModel.replace(/[^A-Za-z0-9._-]/g, '_');
+        const demoDump = new Uint8Array(4096);
+        new TextEncoder()
+          .encode(`AUTOPRO_DEMO_CAL|${selectedProfile.ecuModel}|VIN:${detectedVin}|13.85V`)
+          .forEach((b, i) => {
+            demoDump[i] = b;
+          });
+        bytesToWrite = demoDump;
+        fileLabel = `DEMO_${safeEcu}_STAGE_SAFE.bin`;
+        integrityToUse = await computeBinaryIntegrity(demoDump);
+        setLoadedWriteBytes(demoDump);
+        setLoadedFileName(fileLabel);
+        setLoadedIntegrity(integrityToUse);
+      } else {
+        setWriteError('Veuillez charger un fichier .bin ou exécuter l’Étape 3 (Lecture Full) avant écriture.');
+        return;
+      }
     }
 
     setIsWriting(true);
     setWriteError(null);
     setRecoveryReady(false);
-    setWriteProgress(12);
-    setWriteStatusText('Vérification CRC32 / HMAC-SHA256 & Session 0x10 0x02...');
+    setWriteProgress(0);
+    setWriteLogs([]);
+    setWriteStatusText('Initialisation session étendue UDS 0x10 0x02...');
 
     try {
-      // Débit 1 Token sur le serveur si disponible
+      // Débit Token sur le serveur si disponible
       await apiFetch('/api/credits/consume', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -208,7 +239,7 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
       }).catch(() => null);
       onCreditsUpdated?.();
 
-      if (agentStatus?.connected) {
+      if (agentStatus?.connected && !isDemoStabilizerActive) {
         setWriteProgress(45);
         setWriteStatusText('Agent PC 127.0.0.1:38450 → Cloud Seed/Key 0x27 + TesterPresent 0x3E 0x80...');
         const res = await executeJ2534WriteEcu({
@@ -218,8 +249,8 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
           txIdHex: selectedProfile.txId,
           vin: detectedVin,
           securityLevel: '11',
-          filename: loadedFileName || 'calibration.bin',
-          rawBytes: loadedWriteBytes,
+          filename: fileLabel || 'calibration.bin',
+          rawBytes: bytesToWrite,
           dryRun: true,
         });
         if (!res.ok) {
@@ -229,18 +260,64 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
           return;
         }
         setWriteProgress(100);
+        setWriteLogs([
+          `[OK] Seed/Key Cloud 0x27 validé · Agent 127.0.0.1:38450`,
+          `[OK] Transfert & Checksum CRC32 ${res.crc32}`,
+          `[OK] Backup sauvegardé : ${res.backupPath}`,
+        ]);
         setWriteStatusText(`Écriture réussie ! CRC32 ${res.crc32} · Backup : ${res.backupPath}`);
       } else {
-        // Simulation banc contrôlée lorsque l'Agent PC n'est pas encore démarré
-        for (const step of [
-          { p: 28, msg: 'Calculateur déverrouillé via Cloud API /api/calculate-key (UDS 0x27)...' },
-          { p: 58, msg: 'TransferData (0x36) + TesterPresent (0x3E 0x80 @ 2s)...' },
-          { p: 84, msg: 'Recalcul Checksum CRC32 / RSA-3072 & Vérification...' },
-          { p: 100, msg: `Écriture validée (${loadedIntegrity?.crc32Hex || 'CRC OK'}) — Hard Reset 0x11 0x01.` },
-        ]) {
+        // Simulation complète de flashage étape par étape (0% -> 100%)
+        const simulationSteps = [
+          {
+            p: 15,
+            msg: 'Seed/Key Cloud 0x27 -> Déverrouillage sécurité calculateur (Niveau 0x11) OK',
+            log: `TX ${selectedProfile.txId} -> 27 11 (Seed/Key Cloud API) · RX ${selectedProfile.rxId} <- 67 12 OK`,
+            delay: 420,
+          },
+          {
+            p: 30,
+            msg: 'Effacement 0x31 -> RoutineControl Effacement mémoire Flash OK',
+            log: `TX ${selectedProfile.txId} -> 31 01 FF 00 (Erase Memory Sector) · RX ${selectedProfile.rxId} <- 71 01 FF 00`,
+            delay: 420,
+          },
+          {
+            p: 48,
+            msg: 'Transfert 0% -> 35% : RequestDownload 0x34 & TransferData 0x36...',
+            log: `TX ${selectedProfile.txId} -> 34 00 44 (RequestDownload ${fileLabel || 'calibration.bin'}) · Blocs 1..32`,
+            delay: 360,
+          },
+          {
+            p: 68,
+            msg: 'Transfert 35% -> 70% : Envoi blocs 0x36 + TesterPresent 0x3E 0x80',
+            log: `TX ${selectedProfile.txId} -> 36 02..48 + 3E 80 (Maintien session 13.85V stable)`,
+            delay: 360,
+          },
+          {
+            p: 85,
+            msg: 'Transfert 100% terminé (TransferExit 0x37 OK)',
+            log: `TX ${selectedProfile.txId} -> 37 (RequestTransferExit) · RX ${selectedProfile.rxId} <- 77 OK`,
+            delay: 360,
+          },
+          {
+            p: 94,
+            msg: `Checksum OK : CRC32 ${integrityToUse?.crc32Hex || 'A4F912C0'} & Signature RSA vérifiés`,
+            log: `TX ${selectedProfile.txId} -> 31 01 FF 01 (CheckMemory CRC32 ${integrityToUse?.crc32Hex || 'OK'}) · VALIDÉ`,
+            delay: 380,
+          },
+          {
+            p: 100,
+            msg: `Reset ECU (0x11 01) terminé — Flash ${selectedProfile.ecuModel} validé à 100% !`,
+            log: `TX ${selectedProfile.txId} -> 11 01 (ECUReset Hard) · Calculateur redémarré sans défaut`,
+            delay: 320,
+          },
+        ];
+
+        for (const step of simulationSteps) {
           setWriteProgress(step.p);
           setWriteStatusText(step.msg);
-          await new Promise((r) => setTimeout(r, 450));
+          setWriteLogs((prev) => [...prev, step.log]);
+          await new Promise((r) => setTimeout(r, step.delay));
         }
       }
     } catch (err) {
@@ -450,24 +527,40 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
               </div>
 
               <svg viewBox="0 0 540 240" className="w-full h-auto rounded-lg bg-slate-950 border border-slate-800">
+                <defs>
+                  <clipPath id="ecuInnerClip">
+                    <rect x="30" y="84" width="190" height="122" rx="8" />
+                  </clipPath>
+                </defs>
                 {/* Boîtier ECU */}
                 <rect x="20" y="20" width="210" height="200" rx="12" fill="#0f172a" stroke="#334155" strokeWidth="2" />
-                <text x="35" y="48" fill="#e2e8f0" fontSize="13" fontWeight="bold" fontFamily="monospace">
-                  {selectedProfile.ecuModel.slice(0, 22)}
+                <text x="30" y="46" fill="#e2e8f0" fontSize="12.5" fontWeight="bold" fontFamily="monospace">
+                  {selectedProfile.ecuModel.slice(0, 24)}
                 </text>
-                <text x="35" y="68" fill="#06b6d4" fontSize="10" fontFamily="monospace">
+                <text x="30" y="66" fill="#06b6d4" fontSize="10" fontFamily="monospace">
                   TX:{selectedProfile.txId} / RX:{selectedProfile.rxId}
                 </text>
-                <rect x="35" y="84" width="180" height="118" rx="8" fill="#020617" stroke="#1e293b" />
-                <text x="48" y="106" fill="#94a3b8" fontSize="10" fontFamily="monospace">
-                  Protocole : {selectedProfile.protocol.slice(0, 24)}
-                </text>
-                <text x="48" y="126" fill="#10b981" fontSize="10" fontFamily="monospace">
-                  Sécurité : {selectedProfile.securityGate.slice(0, 24)}
-                </text>
-                <text x="48" y="146" fill="#f59e0b" fontSize="10" fontFamily="monospace">
-                  Mémoire : {selectedProfile.flashSizeLabel.slice(0, 24)}
-                </text>
+                <rect x="30" y="84" width="190" height="122" rx="8" fill="#020617" stroke="#1e293b" />
+                <g clipPath="url(#ecuInnerClip)">
+                  <text x="40" y="101" fill="#64748b" fontSize="8.5" fontFamily="monospace">
+                    Protocole :
+                  </text>
+                  <text x="40" y="114" fill="#94a3b8" fontSize="9.2" fontFamily="monospace">
+                    {selectedProfile.protocol.slice(0, 28)}
+                  </text>
+                  <text x="40" y="135" fill="#64748b" fontSize="8.5" fontFamily="monospace">
+                    Sécurité :
+                  </text>
+                  <text x="40" y="148" fill="#10b981" fontSize="9.2" fontWeight="bold" fontFamily="monospace">
+                    {selectedProfile.securityGate.slice(0, 28)}
+                  </text>
+                  <text x="40" y="169" fill="#64748b" fontSize="8.5" fontFamily="monospace">
+                    Mémoire :
+                  </text>
+                  <text x="40" y="182" fill="#f59e0b" fontSize="9.2" fontFamily="monospace">
+                    {selectedProfile.flashSizeLabel.slice(0, 28)}
+                  </text>
+                </g>
 
                 {/* Fils & Broches dynamiques */}
                 {selectedProfile.pinouts.map((pin, idx) => {
@@ -643,9 +736,9 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
 
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
             <div className="flex-1 space-y-1.5">
-              <div className="flex justify-between text-xs font-mono">
+              <div className="flex justify-between text-xs font-mono gap-2">
                 <span className="text-slate-300">{writeStatusText}</span>
-                <span className="text-cyan-300 font-bold tabular-nums">{writeProgress}%</span>
+                <span className="text-cyan-300 font-bold tabular-nums shrink-0">{writeProgress}%</span>
               </div>
               <div className="h-2.5 rounded-full bg-[#0B1120] border border-slate-800 overflow-hidden">
                 <div
@@ -657,10 +750,10 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
 
             <button
               type="button"
-              disabled={isVoltageUnsafe || !loadedWriteBytes || isWriting}
+              disabled={isVoltageUnsafe || isWriting}
               onClick={() => void handleLaunchWrite()}
               className={`min-h-[44px] px-5 py-2.5 rounded-xl text-xs font-extrabold flex items-center gap-2 shrink-0 ${
-                isVoltageUnsafe || !loadedWriteBytes || isWriting
+                isVoltageUnsafe || isWriting
                   ? 'bg-slate-800 border border-slate-700 text-slate-500 cursor-not-allowed'
                   : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 cursor-pointer shadow-lg shadow-emerald-500/20'
               }`}
@@ -675,6 +768,14 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
               </span>
             </button>
           </div>
+
+          {writeLogs.length > 0 && (
+            <div className="p-3.5 rounded-xl bg-[#0B1120] border border-slate-800 font-mono text-[11px] text-emerald-300 space-y-1 overflow-x-auto">
+              {writeLogs.map((line, idx) => (
+                <div key={`${idx}-${line}`}>{line}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

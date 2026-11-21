@@ -8,6 +8,7 @@ import {
   BatteryCharging,
   Laptop,
   ShieldCheck,
+  Zap,
 } from 'lucide-react';
 import { UNIVERSAL_PROFILES, UniversalControlUnitProfile } from '../data/universalMasterDatabase';
 import { LocalAgentStatus } from '../types/automotive';
@@ -76,8 +77,11 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
     return () => clearInterval(timer);
   }, [pairToken, loadCredits]);
 
-  const effectiveVoltage = agentStatus?.connected ? agentStatus.batteryVoltage : batteryVoltage;
-  const isVoltageSafe = effectiveVoltage >= 13.0 && effectiveVoltage <= 15.5;
+  const [stabilizerDemo138, setStabilizerDemo138] = useState<boolean>(false);
+
+  const rawLiveVoltage = agentStatus?.connected ? agentStatus.batteryVoltage : batteryVoltage;
+  const effectiveVoltage = stabilizerDemo138 ? 13.85 : rawLiveVoltage;
+  const isVoltageSafe = stabilizerDemo138 || (effectiveVoltage >= 13.0 && effectiveVoltage <= 15.5);
 
   const MODULES: Array<{ id: SuiteModuleTab; label: string; icon: React.ReactNode }> = [
     { id: 'autotuner', label: '1. Flash AutoTuner / FLEX (4 Étapes)', icon: <Layers className="w-4 h-4" /> },
@@ -130,8 +134,31 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
             }`}
           >
             <BatteryCharging className="w-4 h-4" />
-            <span>{effectiveVoltage.toFixed(2)}V</span>
+            <span>
+              {stabilizerDemo138
+                ? '13.85V OK'
+                : isVoltageSafe
+                ? `${effectiveVoltage.toFixed(2)}V OK`
+                : `${effectiveVoltage.toFixed(2)}V`}
+            </span>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setStabilizerDemo138((prev) => !prev)}
+            aria-pressed={stabilizerDemo138}
+            className={`px-2.5 py-2 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+              stabilizerDemo138
+                ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20'
+                : 'bg-[#111827] hover:bg-slate-800 border-amber-500/45 text-amber-300 hover:border-amber-400'
+            }`}
+            title="Basculer entre la tension mesurée (12.60V bloqué) et le mode Stabilisateur 13.85V (simulation)"
+          >
+            <Zap className="w-3.5 h-3.5 shrink-0" />
+            <span>
+              {stabilizerDemo138 ? 'Stabilisateur 13.85V ACTIF' : 'Mode Démo / Stabilisateur 13.8V'}
+            </span>
+          </button>
 
           <button
             type="button"
@@ -172,7 +199,8 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
           agentStatus={agentStatus}
           pairToken={pairToken}
           hmacSecret={hmacSecret}
-          fallbackVoltage={batteryVoltage}
+          fallbackVoltage={effectiveVoltage}
+          isDemoStabilizerActive={stabilizerDemo138}
           selectedProfile={selectedProfile}
           onSelectProfile={setSelectedProfile}
           onCreditsUpdated={() => void loadCredits()}
