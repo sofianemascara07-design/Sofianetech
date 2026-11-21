@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   Cpu,
   Database,
+  Download,
   Droplets,
   FileText,
   Flame,
@@ -21,6 +22,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Share2,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -878,6 +880,202 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
     doc.save(`Rapport_Coolray_DZ_${activeRecord.vin}.pdf`);
   };
 
+  const [whatsappShareUrl, setWhatsappShareUrl] = useState<string | null>(null);
+
+  const buildGaragisteDzPlanPdf = () => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = 210;
+    const margin = 12;
+    const contentW = pageW - margin * 2;
+    const fileName = 'Plan_Atelier_Garagiste_DZ_Coolray_181_174_177.pdf';
+
+    // Header dark navy
+    doc.setFillColor(10, 18, 34);
+    doc.rect(0, 0, pageW, 28, 'F');
+    doc.setTextColor(34, 211, 238);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13.5);
+    doc.text('PLAN DE TRAVAIL GARAGISTE DZ - GEELY COOLRAY 181 CH', margin, 11.5);
+    doc.setTextColor(226, 232, 240);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.8);
+    doc.text(
+      `Programmation & Adaptation Carburant Algerie : 181 ch -> 174 ch (Export DZ) ou 177 ch Anti-LSPI`,
+      margin,
+      18
+    );
+    doc.setTextColor(148, 163, 184);
+    doc.setFontSize(8);
+    doc.text(
+      `VIN actif : ${activeRecord.vin}  |  Duree estimee : 45-60 min  |  Edite le ${new Date().toLocaleDateString('fr-FR')}`,
+      margin,
+      24
+    );
+
+    let y = 34;
+
+    // Alerte Rouge Anti-Bricking 174 vs 177
+    doc.setFillColor(254, 226, 226);
+    doc.setDrawColor(220, 38, 38);
+    doc.roundedRect(margin, y, contentW, 26, 2, 2, 'FD');
+    doc.setTextColor(153, 27, 27);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.text('REGLE CRITIQUE ANTI-BRICKING (174 CH vs 177 CH) - A LIRE AVANT TOUT FLASH :', margin + 3, y + 6);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.2);
+    const alertLines = doc.splitTextToSize(
+      '- Coolray 181 ch (Import Chine BHE15-EFZ 4 cyl.) = ECU Bosch MG1US008.\n' +
+        '- Coolray 174 ch (Export DZ BHE15-EFZ 4 cyl.) = ECU Bosch MG1US008 (compatible par downgrade sur meme HW).\n' +
+        '- Coolray 177 ch Phase 1 (2020-2023 JLH-3G15TD 3 cyl.) = ECU Bosch MG1CS080 -> INTERDIT sur MG1US008 (Bricking immediat) !\n' +
+        '  Pour obtenir 177 ch sur un 181 ch, modifier UNIQUEMENT le fichier d\'origine ORI MG1US008 lu sur le vehicule.',
+      contentW - 6
+    );
+    doc.text(alertLines, margin + 3, y + 11.5);
+    y += 31;
+
+    const phases: Array<{ title: string; duration: string; bullets: string[] }> = [
+      {
+        title: 'PHASE 1 - CONTROLE PREALABLE & DIAGNOSTIC OBD2',
+        duration: '10 min',
+        bullets: [
+          'Lire les defauts DTC (0x19) : verifier l\'absence de rates P0300 / P0302 / P0303 (Cylindres 2 & 3).',
+          'Relever les PIDs moteur : Knock Retard (normal 0 a -2.0 deg), STFT/LTFT (+/-5%), IAT (< 50 deg C).',
+          'Controler niveau/odeur d\'huile et type d\'huile utilise. Si rates ou perte compression : stopper et reparer mecaniquement avant flash.',
+        ],
+      },
+      {
+        title: 'PHASE 2 - STABILISATION ELECTRIQUE & LECTURE FULL BACKUP',
+        duration: '15 min',
+        bullets: [
+          'Brancher un stabilisateur de tension atelier 13.5V - 13.8V (50A+ obligatoire ; blocage strict sous 13.0V).',
+          'Relever VIN (L6T...), Hardware ID (HW), Calibration ID (DID F187/F188) et CVN d\'origine.',
+          'En mode Bench (sur table, sans ouvrir l\'ECU) via J2534/Flex/Autotuner/PCMFlash : faire une LECTURE FULL (Flash + EEPROM) et archiver ORI_MG1US008.bin + SHA-256.',
+        ],
+      },
+      {
+        title: 'PHASE 3 - PREPARATION CALIBRATION (174 CH DZ OU 177 CH ANTI-LSPI)',
+        duration: '10 min',
+        bullets: [
+          'Option A (181 -> 174 ch Export DZ) : Calibration Export DZ compatible exact HW MG1US008 (marge cliquetis +3.2 deg, VIN/Immo/PEPS conserves).',
+          'Option B (181 -> 177 ch Custom Anti-LSPI sur ORI) : Retard allumage -2.5 a -4.0 deg (1500-2800 tr/min, charge >70%), lissage boost <2200 tr/min, AFR ~11.8-12.1.',
+          'Optionnel recommande : Patch TCU 7DCT (0x7E1) anti sous-regime + recalcul Checksum CRC32 / RSA-3072 sur le fichier modifie.',
+        ],
+      },
+      {
+        title: 'PHASE 4 - ECRITURE SECURISEE & ESSAI ROUTIER DE VALIDATION',
+        duration: '10-15 min',
+        bullets: [
+          'Executer l\'ecriture (0x27 Seed/Key -> Effacement 0x31 -> Transfert 0x36 + TesterPresent 0x3E -> Checksum OK -> ECUReset 0x11 01).',
+          'Couper/remettre le contact 15 sec, scanner ECU + TCU + BCM/SGW, effacer les eventuels DTC temporaires (U0100/U0140).',
+          'Essai routier 10 min en reprise (2000-3500 tr/min) : verifier Knock Retard proche de 0 a -1.5 deg et 0 misfire sur Cyl. 2 & 3.',
+        ],
+      },
+      {
+        title: 'PHASE 5 - CLOTURE DOSSIER VIN & CONSIGNES OBLIGATOIRES CLIENT',
+        duration: '5 min',
+        bullets: [
+          'Huile 0W-20 certifiee API SP / ILSAC GF-6 OBLIGATOIRE (jamais de 5W-40 API SN) - vidange tous les 7 500 km max.',
+          'Bougies Iridium froides tous les 25 000 km + nettoyant injecteurs GDI PEA tous les 10 000 km.',
+          'Consigne conduite client : eviter le mode Eco en ville/cote et les fortes accelerations sous 2 000 tr/min.',
+        ],
+      },
+    ];
+
+    for (const phase of phases) {
+      if (y > 250) {
+        doc.addPage();
+        y = 14;
+      }
+      doc.setFillColor(15, 23, 42);
+      doc.rect(margin, y, contentW, 6.5, 'F');
+      doc.setTextColor(34, 211, 238);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.8);
+      doc.text(phase.title, margin + 2.5, y + 4.5);
+      doc.setTextColor(250, 204, 21);
+      doc.text(phase.duration, pageW - margin - 14, y + 4.5);
+      y += 8.5;
+
+      doc.setTextColor(15, 23, 42);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.1);
+      for (const b of phase.bullets) {
+        const lines = doc.splitTextToSize(`• ${b}`, contentW - 4);
+        doc.text(lines, margin + 2, y);
+        y += lines.length * 4 + 1.2;
+      }
+      y += 2;
+    }
+
+    // Footer
+    doc.setDrawColor(203, 213, 225);
+    doc.line(margin, 283, pageW - margin, 283);
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(
+      'AutoPro Flash & Diagnostic Hub DZ  |  https://autoprodz-a7071.web.app  |  Support Atelier : 05 57 76 78 04',
+      margin,
+      288
+    );
+
+    return { doc, fileName };
+  };
+
+  const handleDownloadGaragisteDzPlanPdf = () => {
+    const { doc, fileName } = buildGaragisteDzPlanPdf();
+    doc.save(fileName);
+    setSyncNotice(`Plan Atelier Garagiste DZ téléchargé (${fileName}).`);
+    setTimeout(() => setSyncNotice(null), 4500);
+  };
+
+  const handleShareGaragisteDzPlanPdf = async () => {
+    const { doc, fileName } = buildGaragisteDzPlanPdf();
+    const shareText =
+      `PLAN ATELIER GARAGISTE DZ — Geely Coolray 181 ch -> 174 / 177 ch Anti-LSPI\n` +
+      `⚠️ Règle critique : 181 ch & 174 ch = MG1US008 (4 cyl) | Jamais de fichier 177 ch Phase 1 MG1CS080 (3 cyl) !\n` +
+      `1. Audit OBD2 (DTC 0x19, Knock, Cyl. 2 & 3)\n` +
+      `2. Stabilisateur 13.5-13.8V + Lecture Full Backup (Flash + EEPROM)\n` +
+      `3. Calibration 174 ch Export DZ ou 177 ch Custom Anti-LSPI + Checksum CRC32\n` +
+      `4. Écriture 0x27/0x36 + Essai routier\n` +
+      `5. Huile 0W-20 API SP / GF-6 (7 500 km) + Bougies Iridium + Additif PEA\n` +
+      `AutoPro DZ : https://autoprodz-a7071.web.app`;
+
+    const waUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
+    setWhatsappShareUrl(waUrl);
+
+    try {
+      const pdfBlob = doc.output('blob');
+      const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+      const navShare = navigator as Navigator & {
+        canShare?: (data: ShareData) => boolean;
+      };
+      if (typeof navShare.share === 'function' && (!navShare.canShare || navShare.canShare({ files: [pdfFile] }))) {
+        await navShare.share({
+          title: 'Plan Atelier Garagiste DZ — Geely Coolray 181 ch -> 174/177 ch',
+          text: shareText,
+          files: [pdfFile],
+        });
+        setSyncNotice('Plan PDF partagé avec succès.');
+        setTimeout(() => setSyncNotice(null), 4000);
+        return;
+      }
+    } catch {
+      // Fallback below if user cancels or browser blocks file share
+    }
+
+    doc.save(fileName);
+    try {
+      await navigator.clipboard?.writeText(shareText);
+    } catch {
+      // Ignore clipboard failure in restricted iframes
+    }
+    setSyncNotice(
+      `PDF téléchargé (${fileName}) et résumé copié ! Utilisez le bouton WhatsApp apparu ci-dessous pour l'envoyer.`
+    );
+    setTimeout(() => setSyncNotice(null), 6500);
+  };
+
   // Jauge pour cycles kilométriques
   const renderCycleGauge = (
     title: string,
@@ -977,15 +1175,35 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
             </p>
           </div>
 
-          {/* Score Global Protection Moteur + Export PDF */}
-          <div className="flex flex-wrap items-center gap-3 shrink-0 min-w-0">
+          {/* Score Global Protection Moteur + Export PDF & Plan Garagiste DZ */}
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0 min-w-0">
             <button
               type="button"
               onClick={handleExportCoolrayPdfReport}
-              className="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-cyan-300 flex items-center gap-2 cursor-pointer transition-colors"
+              className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-cyan-300 flex items-center gap-2 cursor-pointer transition-colors"
             >
               <FileText className="w-4 h-4 shrink-0" />
               <span>Rapport PDF Client</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadGaragisteDzPlanPdf}
+              className="min-h-[44px] px-3 py-2 rounded-xl bg-emerald-950/70 hover:bg-emerald-900/60 border border-emerald-500/50 text-xs font-bold text-emerald-300 flex items-center gap-2 cursor-pointer transition-colors"
+              title="Télécharger la fiche Plan Atelier Garagiste DZ (181 ch -> 174 / 177 ch) en PDF A4"
+            >
+              <Download className="w-4 h-4 shrink-0" />
+              <span>Plan Garagiste DZ (PDF)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleShareGaragisteDzPlanPdf()}
+              className="min-h-[44px] px-3 py-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/50 text-xs font-bold text-cyan-300 flex items-center gap-2 cursor-pointer transition-colors"
+              title="Envoyer directement le Plan PDF par WhatsApp / Partage mobile"
+            >
+              <Share2 className="w-4 h-4 shrink-0" />
+              <span>Envoyer Plan</span>
             </button>
 
             <div className="flex items-center justify-between sm:justify-start gap-4 bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 w-full sm:w-auto min-w-0">
@@ -1227,6 +1445,31 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
         <div className="rounded-xl border border-cyan-500/40 bg-cyan-950/30 px-4 py-2.5 text-xs text-cyan-200 flex items-start gap-2 break-words">
           <Database className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
           <span className="min-w-0 break-words">{syncNotice}</span>
+        </div>
+      )}
+
+      {whatsappShareUrl && (
+        <div className="rounded-xl border border-emerald-500/45 bg-emerald-950/25 px-4 py-2.5 text-xs text-emerald-200 flex flex-wrap items-center justify-between gap-2">
+          <span className="min-w-0 break-words">
+            PDF <strong>Plan Atelier Garagiste DZ</strong> prêt à être envoyé :
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <a
+              href={whatsappShareUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs transition-colors"
+            >
+              Ouvrir WhatsApp avec le Plan
+            </a>
+            <button
+              type="button"
+              onClick={() => setWhatsappShareUrl(null)}
+              className="px-2 py-1 rounded-lg bg-slate-800 text-slate-300 text-[11px] cursor-pointer"
+            >
+              Fermer
+            </button>
+          </div>
         </div>
       )}
 
