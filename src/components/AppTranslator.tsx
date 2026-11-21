@@ -1,14 +1,19 @@
 import React, { useState } from 'react';
 import { TranslationItem, ConnectionMode } from '../types/automotive';
 import { SAMPLE_STRINGS_TO_TRANSLATE } from '../data/mockVehicles';
-import { Languages, Sparkles, CheckCircle2, Send, Tablet, FileCode, AlertTriangle, Car } from 'lucide-react';
+import { Languages, Sparkles, CheckCircle2, Send, Tablet, FileCode, AlertTriangle, Car, FileText, Share2, Gauge } from 'lucide-react';
 import { apiFetch } from '../utils/apiBridge';
 import { AiVerificationBadge, AiVerificationInfo } from './AiVerificationBadge';
+import {
+  buildCockpitTranslationPlanPdf,
+  shareCockpitTranslationPlanPdf,
+} from '../utils/cockpitTranslationPdf';
 
 interface AppTranslatorProps {
   connectionMode: ConnectionMode;
   isConnected: boolean;
   onOpenConnectModal: () => void;
+  onOpenCockpit?: () => void;
 }
 
 interface HeadUnitPreset {
@@ -19,6 +24,20 @@ interface HeadUnitPreset {
 }
 
 const HEADUNIT_TRANSLATION_PRESETS: HeadUnitPreset[] = [
+  {
+    id: 'geely_coolray_cockpit_pack',
+    label: 'Geely Coolray (IHU624G / 715P / 535G / Battle 2026) — Pack Cockpit + Tablette',
+    appName: 'Geely Coolray Cockpit & IHU FR/AR',
+    items: [
+      { key: 'app_title', original: '吉利缤越 Coolray 智能座舱与中控系统 (IHU624G/715P)', translated: 'Cockpit Geely Coolray (FR / AR)', context: 'En-tête combiné IPC + écran IHU' },
+      { key: 'menu_lvds_maps', original: '仪表盘地图投屏与 CarPlay 联动 (LVDS Cast)', translated: 'Projection GPS Maps & CarPlay sur Compteur (LVDS)', context: 'Fonction Pack Cockpit Coolray' },
+      { key: 'gauge_turbo_boost', original: '1.5TD 涡轮增压压力 (Turbo Boost bar)', translated: 'Pression Turbo 1.5TD (bar)', context: 'Manomètre Boost Sport' },
+      { key: 'gauge_coolant_temp', original: '冷却液与 7DCT 双离合油温 (°C)', translated: 'Température Moteur & Boîte 7DCT (°C)', context: 'Surveillance thermique DZ' },
+      { key: 'menu_540_camera', original: '540° 全景影像与透明底盘辅助', translated: 'Caméras 540° & Châssis Transparent', context: 'Bascule clignotant & recul' },
+      { key: 'warning_battery_low', original: '严禁混刷 IHU624G / 715P / 535G 与 Flyme 固件 (保持 12.5V+)', translated: 'Attention : Ne jamais croiser IHU624G / 715P / 535G / Flyme (Tension ≥ 12.5V).', context: 'Sécurité Anti-Brick Coolray' },
+      { key: 'btn_clear_dtc', original: '应用法语/阿拉伯语包并保留 DSP 与 540°', translated: 'Appliquer Pack FR/AR (DSP & 540° Intacts)', context: 'Validation ADB non destructive' },
+    ],
+  },
   {
     id: 'autopro_standard',
     label: 'AutoPro Cockpit Standard (EN → FR/AR)',
@@ -100,16 +119,18 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
   connectionMode,
   isConnected,
   onOpenConnectModal,
+  onOpenCockpit,
 }) => {
   const [selectedPresetId, setSelectedPresetId] = useState<string>(HEADUNIT_TRANSLATION_PRESETS[0].id);
-  const [stringsList, setStringsList] = useState<TranslationItem[]>(SAMPLE_STRINGS_TO_TRANSLATE);
+  const [stringsList, setStringsList] = useState<TranslationItem[]>(HEADUNIT_TRANSLATION_PRESETS[0].items);
   const [targetLang, setTargetLang] = useState<string>('Français (France)');
-  const [appName, setAppName] = useState<string>('AutoPro Cockpit HD');
+  const [appName, setAppName] = useState<string>(HEADUNIT_TRANSLATION_PRESETS[0].appName);
   const [isTranslating, setIsTranslating] = useState(false);
   const [aiNotes, setAiNotes] = useState<string | null>(null);
   const [aiVerification, setAiVerification] = useState<AiVerificationInfo | null>(null);
   const [pushStatus, setPushStatus] = useState<string | null>(null);
   const [pushWarning, setPushWarning] = useState<string | null>(null);
+  const [whatsappShareUrl, setWhatsappShareUrl] = useState<string | null>(null);
 
   const handleSelectPreset = (presetId: string) => {
     const preset = HEADUNIT_TRANSLATION_PRESETS.find((p) => p.id === presetId);
@@ -202,36 +223,98 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
   // Check if target language is RTL (like Arabic)
   const isRtl = targetLang.includes('Arabe');
 
+  const currentPreset = HEADUNIT_TRANSLATION_PRESETS.find((p) => p.id === selectedPresetId);
+
+  const handleDownloadPackPlanPdf = () => {
+    const { doc, fileName } = buildCockpitTranslationPlanPdf({
+      platformName: currentPreset?.label || appName,
+      ihuRef: appName,
+      targetLang: isRtl ? 'ar' : 'fr',
+    });
+    doc.save(fileName);
+    setPushStatus(`Planning PDF téléchargé (${fileName}).`);
+    setTimeout(() => setPushStatus(null), 4500);
+  };
+
+  const handleSharePackPlanWhatsApp = async () => {
+    const result = await shareCockpitTranslationPlanPdf({
+      platformName: currentPreset?.label || appName,
+      ihuRef: appName,
+      targetLang: isRtl ? 'ar' : 'fr',
+    });
+    setWhatsappShareUrl(result.waUrl);
+    setPushStatus(result.notice);
+    setTimeout(() => setPushStatus(null), 6500);
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Banner */}
-      <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-            <Languages className="w-5 h-5 text-cyan-400" />
-            <span>Traducteur IA pour Tablettes Chinoises &amp; Écrans Automobiles</span>
-          </h1>
-          <p className="text-xs text-slate-400 mt-1">
-            Traduisez les tablettes chinoises (VW Golf 8 2026 CN, Audi A3/A3L CN, Kia Sportage &amp; Seltos 2026 CN, Geely Cityray Flyme Auto 2.5.0, Starray, Okavango, Icon, Cowboy, Coolray, Jetour, Changan) en Français ou Arabe RTL.
-          </p>
+      <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col gap-4">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+              <Languages className="w-5 h-5 text-cyan-400" />
+              <span>Traducteur IA pour Tablettes Chinoises &amp; Écrans Automobiles</span>
+            </h1>
+            <p className="text-xs text-slate-400 mt-1">
+              Traduisez les tablettes chinoises (Geely Coolray IHU624G/715P/535G, Cityray Flyme Auto 2.5.0, VW Golf 8 2026 CN, Audi A3/A3L CN, Kia Sportage &amp; Seltos 2026 CN, Jetour, Changan) en Français ou Arabe RTL.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleExportStringsXml}
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer border border-slate-700"
+            >
+              <FileCode className="w-4 h-4 text-cyan-400" />
+              <span>Exporter strings.xml</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePushToCarScreen}
+              className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <Send className="w-4 h-4" />
+              <span>Injecter dans la Tablette</span>
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={handleExportStringsXml}
-            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer border border-slate-700"
-          >
-            <FileCode className="w-4 h-4 text-cyan-400" />
-            <span>Exporter strings.xml</span>
-          </button>
+        {/* Planning PDF + Envoi WhatsApp + Accès Cockpit Coolray */}
+        <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleDownloadPackPlanPdf}
+              className="px-3 py-1.5 rounded-lg bg-emerald-950/70 hover:bg-emerald-900/60 border border-emerald-500/50 text-xs font-bold text-emerald-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5 shrink-0" />
+              <span>Planning Pack PDF</span>
+            </button>
 
-          <button
-            onClick={handlePushToCarScreen}
-            className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-          >
-            <Send className="w-4 h-4" />
-            <span>Injecter dans la Tablette</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => void handleSharePackPlanWhatsApp()}
+              className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/60 text-xs font-bold text-emerald-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Share2 className="w-3.5 h-3.5 shrink-0" />
+              <span>Envoyer WhatsApp</span>
+            </button>
+          </div>
+
+          {onOpenCockpit && (
+            <button
+              type="button"
+              onClick={onOpenCockpit}
+              className="px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/50 text-xs font-bold text-rose-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Gauge className="w-3.5 h-3.5 shrink-0" />
+              <span>Ouvrir Pack Cockpit Coolray</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -255,6 +338,31 @@ export const AppTranslator: React.FC<AppTranslatorProps> = ({
         <div className="p-3 bg-emerald-950/40 border border-emerald-700/60 rounded-lg text-emerald-300 text-xs flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{pushStatus}</span>
+        </div>
+      )}
+
+      {whatsappShareUrl && (
+        <div className="p-3 bg-emerald-950/30 border border-emerald-500/50 rounded-lg text-xs text-emerald-200 flex flex-wrap items-center justify-between gap-2">
+          <span>
+            PDF <strong>Planning Pack Cockpit + Traduction</strong> prêt à être envoyé :
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <a
+              href={whatsappShareUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs transition-colors"
+            >
+              Ouvrir WhatsApp avec le Planning
+            </a>
+            <button
+              type="button"
+              onClick={() => setWhatsappShareUrl(null)}
+              className="px-2 py-1 rounded-lg bg-slate-800 text-slate-300 text-[11px] cursor-pointer"
+            >
+              Fermer
+            </button>
+          </div>
         </div>
       )}
 

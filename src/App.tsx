@@ -425,6 +425,7 @@ export default function App() {
             connectionMode={connectionMode}
             isConnected={isConnected}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
+            onOpenCockpit={canRenderTab('chinese_flasher') ? () => setActiveTab('chinese_flasher') : undefined}
           />
         )}
 
@@ -453,6 +454,7 @@ export default function App() {
             isConnected={isConnected}
             batteryVoltage={batteryVoltage}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
+            onOpenTranslator={canRenderTab('translator') ? () => setActiveTab('translator') : undefined}
           />
         )}
 

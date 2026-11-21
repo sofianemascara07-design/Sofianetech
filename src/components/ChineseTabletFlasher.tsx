@@ -27,6 +27,7 @@ interface ChineseTabletFlasherProps {
   isConnected: boolean;
   batteryVoltage?: number;
   onOpenConnectModal: () => void;
+  onOpenTranslator?: () => void;
 }
 
 type ChineseBrandId = 'geely' | 'jetour' | 'chery' | 'changan' | 'mg_dfsk' | 'vw_cn' | 'kia_cn';
@@ -164,6 +165,7 @@ export const ChineseTabletFlasher: React.FC<ChineseTabletFlasherProps> = ({
   isConnected,
   batteryVoltage = 13.5,
   onOpenConnectModal,
+  onOpenTranslator,
 }) => {
   const [targetBrand, setTargetBrand] = useState<ChineseBrandId>('geely');
   const currentSystem = BRAND_SPECS[targetBrand];
@@ -532,6 +534,7 @@ pause
           isConnected={isConnected}
           batteryVoltage={batteryVoltage}
           onOpenConnectModal={onOpenConnectModal}
+          onOpenTranslator={onOpenTranslator}
         />
       ) : (
         <>

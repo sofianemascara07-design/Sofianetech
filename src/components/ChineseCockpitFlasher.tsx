@@ -20,13 +20,21 @@ import {
   Globe,
   MonitorSmartphone,
   Activity,
+  FileText,
+  Share2,
+  Languages,
 } from 'lucide-react';
+import {
+  buildCockpitTranslationPlanPdf,
+  shareCockpitTranslationPlanPdf,
+} from '../utils/cockpitTranslationPdf';
 
 interface ChineseCockpitFlasherProps {
   connectionMode: ConnectionMode;
   isConnected: boolean;
   batteryVoltage: number;
   onOpenConnectModal: () => void;
+  onOpenTranslator?: () => void;
 }
 
 type CockpitPlatformId =
@@ -272,6 +280,7 @@ export const ChineseCockpitFlasher: React.FC<ChineseCockpitFlasherProps> = ({
   isConnected,
   batteryVoltage,
   onOpenConnectModal,
+  onOpenTranslator,
 }) => {
   const [selectedPlatformId, setSelectedPlatformId] = useState<CockpitPlatformId>('geely_coolray');
   const currentPlatform = COCKPIT_PLATFORMS[selectedPlatformId];
@@ -306,6 +315,10 @@ export const ChineseCockpitFlasher: React.FC<ChineseCockpitFlasherProps> = ({
   const [aiLoading, setAiLoading] = useState(false);
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [aiVerification, setAiVerification] = useState<AiVerificationInfo | null>(null);
+
+  // Etat PDF & Partage WhatsApp (Pack Cockpit + Traduction Tablette)
+  const [pdfNotice, setPdfNotice] = useState<string | null>(null);
+  const [whatsappShareUrl, setWhatsappShareUrl] = useState<string | null>(null);
 
   const handleSelectPlatform = (id: CockpitPlatformId) => {
     const p = COCKPIT_PLATFORMS[id];
@@ -577,50 +590,147 @@ pause
       ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
       : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50';
 
+  const handleDownloadPackPlanPdf = () => {
+    const { doc, fileName } = buildCockpitTranslationPlanPdf({
+      platformName: currentPlatform.shortLabel,
+      clusterRef: clusterArch,
+      ihuRef: ihuArch,
+      targetLang,
+      themeLabel: activeThemeObj.label,
+      selectedModules,
+    });
+    doc.save(fileName);
+    setPdfNotice(`Planning PDF téléchargé (${fileName}).`);
+    setTimeout(() => setPdfNotice(null), 4500);
+  };
+
+  const handleSharePackPlanWhatsApp = async () => {
+    const result = await shareCockpitTranslationPlanPdf({
+      platformName: currentPlatform.shortLabel,
+      clusterRef: clusterArch,
+      ihuRef: ihuArch,
+      targetLang,
+      themeLabel: activeThemeObj.label,
+      selectedModules,
+    });
+    setWhatsappShareUrl(result.waUrl);
+    setPdfNotice(result.notice);
+    setTimeout(() => setPdfNotice(null), 6500);
+  };
+
   return (
     <div className="space-y-6">
       {/* Banner Header */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-950/30 border border-cyan-500/40 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded bg-cyan-500 text-slate-950 font-extrabold text-[11px] uppercase tracking-wider">
-              COCKPIT &amp; COMBINÉ NUMÉRIQUE
-            </span>
-            <span className="px-2.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/50 text-rose-300 font-bold text-[11px]">
-              Geely Coolray / Chinois DZ
-            </span>
+      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-950/30 border border-cyan-500/40 flex flex-col gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded bg-cyan-500 text-slate-950 font-extrabold text-[11px] uppercase tracking-wider">
+                PACK COCKPIT + TRADUCTION
+              </span>
+              <span className="px-2.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/50 text-rose-300 font-bold text-[11px]">
+                Geely Coolray / Chinois DZ
+              </span>
+            </div>
+            <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+              <Gauge className="w-5 h-5 text-cyan-400 shrink-0" />
+              <span>Pack Cockpit Coolray + Tablette Traduction (Anti-Brick)</span>
+            </h2>
+            <p className="text-xs text-slate-300 max-w-3xl leading-relaxed">
+              Déploiement complet 2-en-1 : thèmes Sport/Track + projection GPS Maps/CarPlay sur compteur (LVDS) + traduction tablette FR/Arabe RTL pour{' '}
+              <strong>Geely Coolray (SX11 / Restylé / Battle 2026), Cityray, Starray, Jetour, Chery, Changan et MG/Haval</strong>.
+            </p>
           </div>
-          <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-            <Gauge className="w-5 h-5 text-cyan-400 shrink-0" />
-            <span>Flash Cockpit Coolray &amp; Combinés Numériques Chinois (Anti-Brick)</span>
-          </h2>
-          <p className="text-xs text-slate-300 max-w-3xl leading-relaxed">
-            Déploiement de thèmes Sport/Track, projection GPS Google Maps / CarPlay sur le compteur (LVDS) et conversion langue FR/AR pour{' '}
-            <strong>Geely Coolray (SX11 / Restylé), Cityray, Starray, Jetour Dashing/T2, Chery Tiggo 7/8 Pro, Changan UNI et MG/Haval</strong>.
-          </p>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <div
+              className={`px-3 py-2 rounded-xl border text-xs font-mono flex items-center gap-2 ${
+                batteryVoltage < 12.2
+                  ? 'bg-rose-950/60 border-rose-500 text-rose-300'
+                  : 'bg-slate-950 border-slate-700 text-emerald-300'
+              }`}
+            >
+              <BatteryCharging className="w-4 h-4 shrink-0" />
+              <span>Batterie : {batteryVoltage.toFixed(1)}V</span>
+            </div>
+            {!isConnected && (
+              <button
+                type="button"
+                onClick={onOpenConnectModal}
+                className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold cursor-pointer"
+              >
+                Connecter OBD / DoIP
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2.5 shrink-0">
-          <div
-            className={`px-3 py-2 rounded-xl border text-xs font-mono flex items-center gap-2 ${
-              batteryVoltage < 12.2
-                ? 'bg-rose-950/60 border-rose-500 text-rose-300'
-                : 'bg-slate-950 border-slate-700 text-emerald-300'
-            }`}
-          >
-            <BatteryCharging className="w-4 h-4 shrink-0" />
-            <span>Batterie : {batteryVoltage.toFixed(1)}V</span>
-          </div>
-          {!isConnected && (
+        {/* Barre Planning PDF + WhatsApp + Lien Traducteur Tablette */}
+        <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={onOpenConnectModal}
-              className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold cursor-pointer"
+              onClick={handleDownloadPackPlanPdf}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-emerald-950/70 hover:bg-emerald-900/60 border border-emerald-500/50 text-xs font-bold text-emerald-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+              title="Télécharger le Planning Atelier & Client Pack Cockpit + Traduction en PDF A4"
             >
-              Connecter OBD / DoIP
+              <FileText className="w-4 h-4 shrink-0" />
+              <span>Planning Pack PDF</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleSharePackPlanWhatsApp()}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/60 text-xs font-bold text-emerald-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+              title="Télécharger et envoyer le Planning Pack Cockpit + Traduction par WhatsApp"
+            >
+              <Share2 className="w-4 h-4 shrink-0" />
+              <span>Envoyer WhatsApp</span>
+            </button>
+          </div>
+
+          {onOpenTranslator && (
+            <button
+              type="button"
+              onClick={onOpenTranslator}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/50 text-xs font-bold text-cyan-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Languages className="w-4 h-4 shrink-0" />
+              <span>Ouvrir Tablette Traduction FR / AR</span>
             </button>
           )}
         </div>
+
+        {pdfNotice && (
+          <div className="rounded-xl border border-cyan-500/40 bg-cyan-950/35 px-3.5 py-2 text-xs text-cyan-200">
+            {pdfNotice}
+          </div>
+        )}
+
+        {whatsappShareUrl && (
+          <div className="rounded-xl border border-emerald-500/45 bg-emerald-950/30 px-3.5 py-2.5 text-xs text-emerald-200 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              PDF <strong>Planning Pack Cockpit + Traduction</strong> prêt à envoyer :
+            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <a
+                href={whatsappShareUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs transition-colors"
+              >
+                Ouvrir WhatsApp avec le Planning
+              </a>
+              <button
+                type="button"
+                onClick={() => setWhatsappShareUrl(null)}
+                className="px-2 py-1 rounded-lg bg-slate-800 text-slate-300 text-[11px] cursor-pointer"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Platform Selector Grid */}
