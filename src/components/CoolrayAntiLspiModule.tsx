@@ -62,9 +62,12 @@ import {
   getOverallObdStatus,
 } from '../data/coolrayLspiProfiles';
 import { apiFetch } from '../utils/apiBridge';
+import { VEHICLE_PRESETS } from '../data/mockVehicles';
+import { obdHardwareBridge } from '../utils/obdHardwareBridge';
 
 interface CoolrayAntiLspiModuleProps {
   selectedVehicle: Vehicle;
+  setSelectedVehicle?: (vehicle: Vehicle) => void;
   isConnected: boolean;
   batteryVoltage: number;
   onOpenConnectModal: () => void;
@@ -82,21 +85,63 @@ const FLASH_SEQUENCE_STEPS = [
   { id: 5, label: 'Contrôle CRC32 & ECUReset Hard (0x31 / 0x11 01)', ecuRef: 'Validation OK' },
 ];
 
-function inferVariantFromVehicle(vehicle: Vehicle): CoolrayVariantId {
-  const haystack = `${vehicle.brand} ${vehicle.model} ${vehicle.year} ${vehicle.engine}`.toLowerCase();
-  if (haystack.includes('lite') || haystack.includes('atmo') || haystack.includes('dvvt')) {
-    return 'coolray_lite_dvvt_atmo';
-  }
-  if (haystack.includes('battle') || haystack.includes('binyue') || haystack.includes('181') || haystack.includes('chine')) {
-    return 'coolray_cn_battle_181';
-  }
-  if (haystack.includes('3 cyl') || haystack.includes('g-power') || haystack.includes('2020') || haystack.includes('2021') || haystack.includes('2022') || haystack.includes('2023')) {
-    return 'coolray_phase1_3cyl';
-  }
-  if (haystack.includes('coolray') || haystack.includes('geely')) {
+function isGeelyVehicle(vehicle: Vehicle): boolean {
+  const txt = `${vehicle.brand} ${vehicle.model}`.toLowerCase();
+  return txt.includes('geely') || txt.includes('coolray') || txt.includes('binyue');
+}
+
+function inferVariantFromVehicleAndVin(
+  vehicle: Vehicle,
+  vin?: string,
+  calId?: string
+): CoolrayVariantId {
+  const calUpper = (calId || '').toUpperCase();
+  if (calUpper.includes('MG1CS080')) return 'coolray_phase1_3cyl';
+  if (calUpper.includes('MG1UA008')) return 'coolray_dz_export_4cyl';
+  if (calUpper.includes('MG1US008')) return 'coolray_cn_battle_181';
+
+  if (isGeelyVehicle(vehicle)) {
+    const haystack = `${vehicle.brand} ${vehicle.model} ${vehicle.year} ${vehicle.engine}`.toLowerCase();
+    if (haystack.includes('lite') || haystack.includes('atmo') || haystack.includes('dvvt')) {
+      return 'coolray_lite_dvvt_atmo';
+    }
+    if (haystack.includes('battle') || haystack.includes('binyue') || haystack.includes('181') || haystack.includes('chine')) {
+      return 'coolray_cn_battle_181';
+    }
+    if (haystack.includes('3 cyl') || haystack.includes('g-power') || haystack.includes('2020') || haystack.includes('2021') || haystack.includes('2022') || haystack.includes('2023')) {
+      return 'coolray_phase1_3cyl';
+    }
     return 'coolray_dz_export_4cyl';
   }
+
+  const cleanVin = (vin || '').trim().toUpperCase();
+  if (cleanVin.length >= 10) {
+    const yearCode = cleanVin[9];
+    // L=2020, M=2021, N=2022, P=2023 -> Phase 1 3-cylindres
+    if (['L', 'M', 'N', 'P'].includes(yearCode)) {
+      return 'coolray_phase1_3cyl';
+    }
+    if (cleanVin.includes('ATMO') || cleanVin.includes('LITE')) {
+      return 'coolray_lite_dvvt_atmo';
+    }
+    if (cleanVin.includes('DZ') || cleanVin.includes('EXP')) {
+      return 'coolray_dz_export_4cyl';
+    }
+  }
   return 'coolray_cn_battle_181';
+}
+
+function findMatchingCoolrayPreset(variantId: CoolrayVariantId): Vehicle | undefined {
+  if (variantId === 'coolray_cn_battle_181') {
+    return (
+      VEHICLE_PRESETS.find((v) => v.id === 'geely_coolray_battle_2026') ||
+      VEHICLE_PRESETS.find((v) => v.id === 'geely_coolray_full')
+    );
+  }
+  return (
+    VEHICLE_PRESETS.find((v) => v.id === 'geely_coolray_full') ||
+    VEHICLE_PRESETS.find((v) => v.brand.toLowerCase().includes('geely'))
+  );
 }
 
 function severityBadgeClasses(severity: LspiRiskSeverity): string {
@@ -117,16 +162,19 @@ function severityCardBorder(severity: LspiRiskSeverity): string {
 
 export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
   selectedVehicle,
+  setSelectedVehicle,
   isConnected,
   batteryVoltage,
   onOpenConnectModal,
 }) => {
   const [subTab, setSubTab] = useState<CoolraySubTab>('flash');
 
-  // 1. Profil moteur actif
+  // 1. Profil moteur actif (ne jamais utiliser un autre constructeur comme source Coolray)
   const [selectedVariantId, setSelectedVariantId] = useState<CoolrayVariantId>(() =>
-    inferVariantFromVehicle(selectedVehicle)
+    inferVariantFromVehicleAndVin(selectedVehicle)
   );
+  const [isDetectingVehicle, setIsDetectingVehicle] = useState<boolean>(false);
+  const [isDemoBannerActive, setIsDemoBannerActive] = useState<boolean>(false);
   const activeProfile = useMemo(
     () => COOLRAY_ENGINE_PROFILES.find((p) => p.id === selectedVariantId) || COOLRAY_ENGINE_PROFILES[2],
     [selectedVariantId]
@@ -251,13 +299,85 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
     });
   }, [activeProfile.id, activeProfile.ecuHardwareFamily, activeProfile.supportedCalibrations, selectedCalibrationId]);
 
-  const handleAutoDetectFromAppVehicle = () => {
-    const inferred = inferVariantFromVehicle(selectedVehicle);
-    setSelectedVariantId(inferred);
+  // Synchroniser automatiquement le véhicule global de l'application vers Geely Coolray à l'ouverture du module
+  useEffect(() => {
+    if (!setSelectedVehicle) return;
+    if (!isGeelyVehicle(selectedVehicle)) {
+      const coolrayPreset = findMatchingCoolrayPreset(selectedVariantId);
+      if (coolrayPreset) {
+        setSelectedVehicle(coolrayPreset);
+      }
+    }
+  }, [selectedVehicle, selectedVariantId, setSelectedVehicle]);
+
+  const handleSelectCoolrayVariant = (variantId: CoolrayVariantId) => {
+    setSelectedVariantId(variantId);
+    if (setSelectedVehicle) {
+      const preset = findMatchingCoolrayPreset(variantId);
+      if (preset) setSelectedVehicle(preset);
+    }
+  };
+
+  const handleAutoDetectFromAppVehicle = async () => {
+    setIsDetectingVehicle(true);
+    try {
+      const realHwConnected = obdHardwareBridge.isRealHardwareConnected();
+      if (realHwConnected) {
+        const [liveVin, liveCalId] = await Promise.all([
+          obdHardwareBridge.readVin(),
+          obdHardwareBridge.readCalibrationId(),
+        ]);
+        const targetVin = liveVin || vinInput;
+        if (liveVin) setVinInput(liveVin);
+
+        const inferred = inferVariantFromVehicleAndVin(selectedVehicle, targetVin, liveCalId || undefined);
+        handleSelectCoolrayVariant(inferred);
+        const profile = COOLRAY_ENGINE_PROFILES.find((p) => p.id === inferred);
+        if (profile) setDetectedEcuHardware(profile.ecuHardwareFamily);
+        setIsDemoBannerActive(false);
+
+        setSyncNotice(
+          `OBD2 Réel détecté — VIN ${targetVin}${liveCalId ? ` · CALID ${liveCalId}` : ''} → Profil ${profile?.label || inferred}.`
+        );
+      } else {
+        const globalWasNonGeely = !isGeelyVehicle(selectedVehicle);
+        const inferred = inferVariantFromVehicleAndVin(
+          selectedVehicle,
+          vinInput,
+          detectedEcuHardware
+        );
+        handleSelectCoolrayVariant(inferred);
+        const profile = COOLRAY_ENGINE_PROFILES.find((p) => p.id === inferred);
+        if (profile) setDetectedEcuHardware(profile.ecuHardwareFamily);
+
+        setSyncNotice(
+          globalWasNonGeely
+            ? `Véhicule global (${selectedVehicle.brand} ${selectedVehicle.model}) remplacé par Geely Coolray selon VIN ${vinInput} & ECU ${profile?.ecuHardwareFamily || detectedEcuHardware}.`
+            : `Détection VIN / ECU Coolray appliquée : ${profile?.label || inferred} (${vinInput} · ${profile?.ecuHardwareFamily || detectedEcuHardware}).`
+        );
+      }
+    } finally {
+      setIsDetectingVehicle(false);
+      setTimeout(() => setSyncNotice(null), 5500);
+    }
+  };
+
+  const handleRunCoolrayDemo = () => {
+    const demoVin = 'L6T7824Z9RZ001540';
+    setVinInput(demoVin);
+    handleSelectCoolrayVariant('coolray_cn_battle_181');
+    setDetectedEcuHardware('MG1US008');
+    setSelectedCalibrationId('downgrade_cn_to_dz');
+    setTestVoltageOverride(13.5);
+    setSimulateMisfireDtc(false);
+    setDtcAuditRun(true);
+    setFlashResult(null);
+    setIsDemoBannerActive(true);
+    setSubTab('flash');
     setSyncNotice(
-      `Détection automatique appliquée depuis le véhicule actif (${selectedVehicle.brand} ${selectedVehicle.model}).`
+      `Démonstration Atelier chargée : Geely Coolray Chine VI 181 ch · VIN ${demoVin} · ECU MG1US008 · 13.5V · Audit DTC 0x19 validé (prêt pour flash).`
     );
-    setTimeout(() => setSyncNotice(null), 4000);
+    setTimeout(() => setSyncNotice(null), 6500);
   };
 
   // Calcul temps réel du score de protection + cycles kilométriques
@@ -831,51 +951,53 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
     );
   };
 
+  const isRealObdConnected = obdHardwareBridge.isRealHardwareConnected();
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 w-full overflow-x-hidden">
       {/* En-tête du Module Geely Coolray Anti-LSPI */}
-      <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-[#0d1424] to-slate-950 p-5 sm:p-6 shadow-xl">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="px-2.5 py-1 rounded-md bg-rose-950/90 border border-rose-500/50 text-rose-300 text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Flame className="w-3.5 h-3.5 text-rose-400" />
-                Geely Coolray (2020–2026) · Solution Complète Marché Algérien
+      <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-[#0d1424] to-slate-950 p-4 sm:p-6 shadow-xl min-w-0">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 min-w-0">
+          <div className="space-y-2 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              <span className="px-2.5 py-1 rounded-md bg-rose-950/90 border border-rose-500/50 text-rose-300 text-[11px] font-bold uppercase tracking-wider inline-flex items-center gap-1.5 max-w-full whitespace-normal break-words">
+                <Flame className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                <span>Geely Coolray (2020–2026) · Solution Complète Marché Algérien</span>
               </span>
-              <span className="px-2.5 py-1 rounded-md bg-slate-900 border border-slate-700 text-cyan-300 text-[11px] font-mono">
+              <span className="px-2.5 py-1 rounded-md bg-slate-900 border border-slate-700 text-cyan-300 text-[11px] font-mono max-w-full whitespace-normal break-words">
                 BOSCH MG1 · 7DCT · IHU624G/715P · BCM/SGW
               </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
+            <h1 className="text-lg sm:text-2xl font-extrabold text-white tracking-tight break-words">
               Geely Coolray — Diag &amp; Reprogrammation Unité Centrale, Anti-LSPI &amp; Compatibilité Maison Geely
             </h1>
-            <p className="text-xs sm:text-sm text-slate-400 max-w-3xl">
+            <p className="text-xs sm:text-sm text-slate-400 max-w-3xl break-words">
               Solution atelier adaptée au marché algérien : protection Anti-LSPI 1.5T, calibration 7DCT, dépannage unité
               centrale IHU/BCM/SGW et préservation stricte des mises à jour officielles Maison Geely &amp; fournisseurs.
             </p>
           </div>
 
           {/* Score Global Protection Moteur + Export PDF */}
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-3 shrink-0 min-w-0">
             <button
               type="button"
               onClick={handleExportCoolrayPdfReport}
               className="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-cyan-300 flex items-center gap-2 cursor-pointer transition-colors"
             >
-              <FileText className="w-4 h-4" />
+              <FileText className="w-4 h-4 shrink-0" />
               <span>Rapport PDF Client</span>
             </button>
 
-            <div className="flex items-center gap-4 bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3">
-              <div className="text-right">
+            <div className="flex items-center justify-between sm:justify-start gap-4 bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 w-full sm:w-auto min-w-0">
+              <div className="text-left sm:text-right min-w-0">
                 <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
                   Score Protection Moteur
                 </div>
-                <div className="text-xs font-medium text-slate-300">{scoreCalc.statusLabel}</div>
-                <div className="text-[11px] font-mono text-slate-500">VIN : {activeRecord.vin}</div>
+                <div className="text-xs font-medium text-slate-300 truncate">{scoreCalc.statusLabel}</div>
+                <div className="text-[11px] font-mono text-slate-500 break-all">VIN : {activeRecord.vin}</div>
               </div>
               <div
-                className={`w-16 h-16 rounded-xl border-2 flex flex-col items-center justify-center font-mono font-extrabold ${
+                className={`w-16 h-16 shrink-0 rounded-xl border-2 flex flex-col items-center justify-center font-mono font-extrabold ${
                   scoreCalc.score >= 85
                     ? 'border-emerald-500/70 bg-emerald-950/60 text-emerald-300'
                     : scoreCalc.score >= 60
@@ -890,21 +1012,82 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
           </div>
         </div>
 
-        {/* Sélecteur des 4 profils Coolray (2020–2026) */}
-        <div className="mt-5 pt-5 border-t border-slate-800/80 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-              <Cpu className="w-4 h-4 text-cyan-400" />
-              1. Base Motorisations &amp; Profils Véhicules Geely Coolray (2020–2026)
-            </div>
+        {/* Bandeau Mode Réel vs Démonstration */}
+        <div
+          className={`mt-4 rounded-xl border px-3.5 py-2.5 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+            isRealObdConnected
+              ? 'border-emerald-500/40 bg-emerald-950/20 text-emerald-200'
+              : 'border-cyan-500/35 bg-slate-950/70 text-slate-300'
+          }`}
+        >
+          <div className="flex items-start sm:items-center gap-2 min-w-0">
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 mt-1 sm:mt-0 ${
+                isRealObdConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+              }`}
+            />
+            <span className="break-words">
+              {isRealObdConnected ? (
+                <>
+                  <strong>Liaison OBD2 Réelle active :</strong> la détection auto interroge le VIN (Mode 09 02) et l&apos;ID ECU (09 04) directement sur la Geely Coolray.
+                </>
+              ) : isDemoBannerActive ? (
+                <>
+                  <strong>Démonstration Atelier Active (Sans voiture) :</strong> scénario complet Coolray Chine VI 181 ch · ECU MG1US008 · 13.5V · Audit DTC 0x19 prêt pour test de flash.
+                </>
+              ) : (
+                <>
+                  <strong>Mode Banc / Hors-Ligne :</strong> aucun boîtier ELM327 réel branché. Utilisez la détection par VIN Geely ou lancez la démonstration guidée.
+                </>
+              )}
+            </span>
+          </div>
+          {!isRealObdConnected && (
             <button
               type="button"
-              onClick={handleAutoDetectFromAppVehicle}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-cyan-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+              onClick={onOpenConnectModal}
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-semibold text-cyan-300 shrink-0 cursor-pointer self-start sm:self-auto"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Détection auto ({selectedVehicle.brand} {selectedVehicle.model})</span>
+              Connecter Boîtier Réel
             </button>
+          )}
+        </div>
+
+        {/* Sélecteur des 4 profils Coolray (2020–2026) */}
+        <div className="mt-5 pt-5 border-t border-slate-800/80 space-y-3 min-w-0">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 min-w-0">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-start sm:items-center gap-2 min-w-0">
+              <Cpu className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5 sm:mt-0" />
+              <span className="break-words">1. Base Motorisations &amp; Profils Véhicules Geely Coolray (2020–2026)</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              <button
+                type="button"
+                disabled={isDetectingVehicle}
+                onClick={() => void handleAutoDetectFromAppVehicle()}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-cyan-300 flex items-center gap-1.5 cursor-pointer transition-colors max-w-full whitespace-normal text-left"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${isDetectingVehicle ? 'animate-spin' : ''}`} />
+                <span>
+                  {isDetectingVehicle
+                    ? 'Lecture VIN / ECU...'
+                    : isRealObdConnected
+                    ? 'Détection auto OBD2 / VIN Coolray'
+                    : isGeelyVehicle(selectedVehicle)
+                    ? `Détection auto (${selectedVehicle.brand} ${selectedVehicle.model})`
+                    : 'Détection auto VIN / ECU Coolray'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRunCoolrayDemo}
+                className="px-3 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/50 text-xs font-bold text-cyan-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <Play className="w-3.5 h-3.5 shrink-0" />
+                <span>Démonstration</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -917,8 +1100,8 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
                 <button
                   key={profile.id}
                   type="button"
-                  onClick={() => setSelectedVariantId(profile.id)}
-                  className={`text-left rounded-xl border p-3.5 transition-all cursor-pointer space-y-2 ${
+                  onClick={() => handleSelectCoolrayVariant(profile.id)}
+                  className={`text-left rounded-xl border p-3.5 transition-all cursor-pointer space-y-2 min-w-0 ${
                     isSelected
                       ? isChinePriority
                         ? 'border-rose-500 bg-rose-950/30 ring-1 ring-rose-500/40'
@@ -928,8 +1111,8 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
                       : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="text-xs font-bold text-white leading-snug">{profile.label}</span>
+                  <div className="flex items-start justify-between gap-2 min-w-0">
+                    <span className="text-xs font-bold text-white leading-snug break-words">{profile.label}</span>
                     {isChinePriority && (
                       <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/50 text-rose-300 text-[10px] font-bold shrink-0">
                         PRIORITAIRE LSPI
@@ -942,7 +1125,7 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
                     )}
                   </div>
 
-                  <div className="text-[11px] text-slate-300 font-medium">{profile.engineCode}</div>
+                  <div className="text-[11px] text-slate-300 font-medium break-words">{profile.engineCode}</div>
 
                   <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
                     <span className="px-1.5 py-0.5 rounded bg-slate-950 text-cyan-300 border border-slate-800">
@@ -962,7 +1145,7 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
 
           {/* Note technique profil sélectionné */}
           <div
-            className={`rounded-xl border px-4 py-3 text-xs flex items-start gap-3 ${
+            className={`rounded-xl border px-4 py-3 text-xs flex items-start gap-3 min-w-0 ${
               activeProfile.lspiPriorityLevel === 'PRIORITAIRE_CHINE_VI'
                 ? 'border-rose-500/50 bg-rose-950/30 text-rose-200'
                 : activeProfile.lspiPriorityLevel === 'EXCLU_ATMO_STANDARD'
@@ -975,77 +1158,75 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
             ) : (
               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
             )}
-            <div className="space-y-0.5">
-              <div className="font-bold">
+            <div className="space-y-0.5 min-w-0">
+              <div className="font-bold break-words">
                 {activeProfile.label} — ECU {activeProfile.ecuModel} ({activeProfile.transmission})
               </div>
-              <p className="text-[11px] opacity-90 leading-relaxed">{activeProfile.calibrationNote}</p>
+              <p className="text-[11px] opacity-90 leading-relaxed break-words">{activeProfile.calibrationNote}</p>
             </div>
           </div>
         </div>
 
         {/* Barre sous-onglets du module */}
-        <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-800/80 pt-4">
+        <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-800/80 pt-4 min-w-0">
           <button
             type="button"
             onClick={() => setSubTab('flash')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border max-w-full whitespace-normal text-left ${
               subTab === 'flash'
                 ? 'bg-cyan-500 text-slate-950 border-cyan-400'
                 : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
             }`}
           >
-            <Zap className="w-4 h-4" />
+            <Zap className="w-4 h-4 shrink-0" />
             <span>A. Flash Anti-LSPI (ECU / TCU)</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('central_unit_dz')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border max-w-full whitespace-normal text-left ${
               subTab === 'central_unit_dz'
                 ? 'bg-cyan-500 text-slate-950 border-cyan-400'
                 : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
             }`}
           >
-            <MonitorSmartphone className="w-4 h-4" />
+            <MonitorSmartphone className="w-4 h-4 shrink-0" />
             <span>B. Unité Centrale DZ &amp; Compatibilité Maison Geely</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('obd_audit')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border max-w-full whitespace-normal text-left ${
               subTab === 'obd_audit'
                 ? 'bg-cyan-500 text-slate-950 border-cyan-400'
                 : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
             }`}
           >
-            <Activity className="w-4 h-4" />
+            <Activity className="w-4 h-4 shrink-0" />
             <span>C. Audit Santé Combustion OBD2</span>
           </button>
 
           <button
             type="button"
             onClick={() => setSubTab('maintenance')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors border max-w-full whitespace-normal text-left ${
               subTab === 'maintenance'
                 ? 'bg-cyan-500 text-slate-950 border-cyan-400'
                 : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
             }`}
           >
-            <ClipboardCheck className="w-4 h-4" />
+            <ClipboardCheck className="w-4 h-4 shrink-0" />
             <span>D. Précautions &amp; Dossier VIN</span>
           </button>
         </div>
       </div>
 
       {syncNotice && (
-        <div className="rounded-xl border border-cyan-500/40 bg-cyan-950/30 px-4 py-2.5 text-xs text-cyan-200 flex items-center justify-between gap-2">
-          <span className="flex items-center gap-2">
-            <Database className="w-4 h-4 text-cyan-400" />
-            {syncNotice}
-          </span>
+        <div className="rounded-xl border border-cyan-500/40 bg-cyan-950/30 px-4 py-2.5 text-xs text-cyan-200 flex items-start gap-2 break-words">
+          <Database className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+          <span className="min-w-0 break-words">{syncNotice}</span>
         </div>
       )}
 
@@ -1408,7 +1589,7 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
                         </div>
 
                         {flashResult.frames && flashResult.frames.length > 0 && (
-                          <div className="rounded-lg bg-slate-950 border border-slate-800 p-3 font-mono text-[11px] text-cyan-300 space-y-1">
+                          <div className="rounded-lg bg-slate-950 border border-slate-800 p-3 font-mono text-[11px] text-cyan-300 space-y-1 overflow-x-auto break-all sm:break-normal">
                             <div className="flex items-center gap-1.5 text-slate-400 mb-1">
                               <Terminal className="w-3.5 h-3.5" />
                               <span>Journal Trames UDS Exécutées</span>
@@ -2079,7 +2260,7 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
                   <span>{oemAuditResult.summary}</span>
                   <span className="font-mono text-[11px]">{oemAuditResult.checkedAt}</span>
                 </div>
-                <div className="rounded-lg bg-slate-950 border border-slate-800 p-3 font-mono text-[11px] text-cyan-300 space-y-1">
+                <div className="rounded-lg bg-slate-950 border border-slate-800 p-3 font-mono text-[11px] text-cyan-300 space-y-1 overflow-x-auto break-all sm:break-normal">
                   {oemAuditResult.udsFrames.map((f) => (
                     <div key={f}>{f}</div>
                   ))}
@@ -2270,7 +2451,7 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
                     <span>{centralOpResult.message}</span>
                   </div>
                   {centralOpResult.frames && (
-                    <div className="rounded-lg bg-slate-950 border border-slate-800 p-3 font-mono text-[11px] text-cyan-300 space-y-1">
+                    <div className="rounded-lg bg-slate-950 border border-slate-800 p-3 font-mono text-[11px] text-cyan-300 space-y-1 overflow-x-auto break-all sm:break-normal">
                       {centralOpResult.frames.map((frame) => (
                         <div key={frame}>{frame}</div>
                       ))}

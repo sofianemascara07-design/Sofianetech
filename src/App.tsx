@@ -344,10 +344,10 @@ export default function App() {
   };
 
   return (
-    <div className={`relative min-h-screen text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-slate-950 ${atelierMode ? 'atelier-mode bg-[#070b14]' : 'bg-transparent'}`}>
+    <div className={`relative min-h-screen w-full max-w-full overflow-x-hidden text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-slate-950 ${atelierMode ? 'atelier-mode bg-[#070b14]' : 'bg-transparent'}`}>
       <WallpaperBackdrop wallpaper={activeWallpaper} atelierMode={atelierMode} />
 
-      <div className="relative z-10 flex flex-col min-h-screen">
+      <div className="relative z-10 flex flex-col min-h-screen min-w-0 w-full">
       <Header
         activeTab={activeTab}
         onSelectTab={setActiveTab}
@@ -366,7 +366,7 @@ export default function App() {
         demoRemainingText={demoRemainingText}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
+      <main className="flex-1 max-w-7xl w-full min-w-0 mx-auto px-3 sm:px-6 py-5 sm:py-8">
         {activeTab === 'admin' && isAdmin && (
           <AdminSubscribersPanel onAdminSessionInvalid={lockSession} />
         )}
@@ -504,6 +504,7 @@ export default function App() {
         {activeTab === 'coolray_lspi' && canRenderTab('coolray_lspi') && (
           <CoolrayAntiLspiModule
             selectedVehicle={selectedVehicle}
+            setSelectedVehicle={setSelectedVehicle}
             isConnected={isConnected}
             batteryVoltage={batteryVoltage}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
