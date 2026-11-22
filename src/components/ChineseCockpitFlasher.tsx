@@ -23,11 +23,16 @@ import {
   FileText,
   Share2,
   Languages,
+  Wrench,
 } from 'lucide-react';
 import {
   buildCockpitTranslationPlanPdf,
   shareCockpitTranslationPlanPdf,
 } from '../utils/cockpitTranslationPdf';
+import {
+  buildHardwarePlanPdf,
+  shareHardwarePlanPdf,
+} from '../utils/hardwarePlanPdf';
 
 interface ChineseCockpitFlasherProps {
   connectionMode: ConnectionMode;
@@ -618,6 +623,20 @@ pause
     setTimeout(() => setPdfNotice(null), 6500);
   };
 
+  const handleDownloadHardwarePlanPdf = () => {
+    const { doc, fileName } = buildHardwarePlanPdf();
+    doc.save(fileName);
+    setPdfNotice(`Plan Matériel (FR + Darija) téléchargé (${fileName}).`);
+    setTimeout(() => setPdfNotice(null), 4500);
+  };
+
+  const handleShareHardwarePlanWhatsApp = async () => {
+    const result = await shareHardwarePlanPdf();
+    setWhatsappShareUrl(result.waUrl);
+    setPdfNotice(result.notice);
+    setTimeout(() => setPdfNotice(null), 6500);
+  };
+
   return (
     <div className="space-y-6">
       {/* Banner Header */}
@@ -686,6 +705,26 @@ pause
             >
               <Share2 className="w-4 h-4 shrink-0" />
               <span>Envoyer WhatsApp</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadHardwarePlanPdf}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-amber-950/70 hover:bg-amber-900/60 border border-amber-500/50 text-xs font-bold text-amber-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+              title="Télécharger la fiche Matériel Exigé (Français + Darija) en PDF A4"
+            >
+              <Wrench className="w-4 h-4 shrink-0" />
+              <span>Matériel PDF (FR + Darija)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleShareHardwarePlanWhatsApp()}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/50 text-xs font-bold text-amber-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+              title="Envoyer le Plan Matériel (FR + Darija) par WhatsApp"
+            >
+              <Share2 className="w-4 h-4 shrink-0" />
+              <span>Matériel WhatsApp</span>
             </button>
           </div>
 

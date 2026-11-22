@@ -66,6 +66,10 @@ import {
 import { apiFetch } from '../utils/apiBridge';
 import { VEHICLE_PRESETS } from '../data/mockVehicles';
 import { obdHardwareBridge } from '../utils/obdHardwareBridge';
+import {
+  buildHardwarePlanPdf,
+  shareHardwarePlanPdf,
+} from '../utils/hardwarePlanPdf';
 
 interface CoolrayAntiLspiModuleProps {
   selectedVehicle: Vehicle;
@@ -1076,6 +1080,20 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
     setTimeout(() => setSyncNotice(null), 6500);
   };
 
+  const handleDownloadHardwarePlanPdf = () => {
+    const { doc, fileName } = buildHardwarePlanPdf();
+    doc.save(fileName);
+    setSyncNotice(`Plan Matériel Exigé (FR + Darija) téléchargé (${fileName}).`);
+    setTimeout(() => setSyncNotice(null), 4500);
+  };
+
+  const handleShareHardwarePlanPdf = async () => {
+    const result = await shareHardwarePlanPdf();
+    setWhatsappShareUrl(result.waUrl);
+    setSyncNotice(result.notice);
+    setTimeout(() => setSyncNotice(null), 6500);
+  };
+
   // Jauge pour cycles kilométriques
   const renderCycleGauge = (
     title: string,
@@ -1204,6 +1222,26 @@ export const CoolrayAntiLspiModule: React.FC<CoolrayAntiLspiModuleProps> = ({
             >
               <Share2 className="w-4 h-4 shrink-0" />
               <span>Envoyer Plan</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadHardwarePlanPdf}
+              className="min-h-[44px] px-3 py-2 rounded-xl bg-amber-950/70 hover:bg-amber-900/60 border border-amber-500/50 text-xs font-bold text-amber-300 flex items-center gap-2 cursor-pointer transition-colors"
+              title="Télécharger le Plan Matériel Exigé (Français + Darija) en PDF A4"
+            >
+              <Wrench className="w-4 h-4 shrink-0" />
+              <span>Matériel PDF (FR/Darija)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleShareHardwarePlanPdf()}
+              className="min-h-[44px] px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/50 text-xs font-bold text-amber-200 flex items-center gap-2 cursor-pointer transition-colors"
+              title="Envoyer le Plan Matériel Exigé (FR + Darija) par WhatsApp"
+            >
+              <Share2 className="w-4 h-4 shrink-0" />
+              <span>Envoyer Matériel</span>
             </button>
 
             <div className="flex items-center justify-between sm:justify-start gap-4 bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 w-full sm:w-auto min-w-0">
