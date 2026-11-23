@@ -1133,70 +1133,72 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
             </div>
           </div>
 
-          {/* Firebase Hosting (autoprodz-a7071.web.app) & Render Backend Sync Panel */}
-          <div className="p-5 rounded-2xl bg-slate-900/80 border border-amber-500/40 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h2 className="text-sm font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
-                  <Server className="w-4 h-4 text-amber-400" />
-                  <span>Synchronisation Firebase Hosting (autoprodz-a7071.web.app) &amp; Backend Render</span>
-                </h2>
-                <p className="text-xs text-slate-300 mt-0.5">
-                  Les fichiers <code className="text-cyan-300">firebase.json</code>, <code className="text-cyan-300">.firebaserc</code>, <code className="text-cyan-300">render.yaml</code> et le pont API CORS sont prêts.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
-              {/* Render Backend Connector */}
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
-                <label className="text-[11px] font-bold text-cyan-300 block">
-                  URL de votre Backend Render (ex: https://autopro-dz-backend.onrender.com) :
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="url"
-                    placeholder="https://votre-backend.onrender.com"
-                    value={renderUrlInput}
-                    onChange={(e) => setRenderUrlInput(e.target.value)}
-                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-500"
-                  />
-                  <button
-                    onClick={handleSaveAndTestRenderBackend}
-                    disabled={isTestingBackend}
-                    className="px-3.5 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-lg cursor-pointer shrink-0 disabled:opacity-50"
-                  >
-                    {isTestingBackend ? 'Test...' : 'Lier & Tester'}
-                  </button>
+          {/* Firebase Hosting & Render Backend Sync Panel (Admin Only) */}
+          {isAdmin && (
+            <div className="p-5 rounded-2xl bg-slate-900/80 border border-amber-500/40 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
+                    <Server className="w-4 h-4 text-amber-400" />
+                    <span>Synchronisation Firebase Hosting &amp; Backend API</span>
+                  </h2>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Configuration d'infrastructure et déploiement réservés à l'administrateur.
+                  </p>
                 </div>
-                {backendStatusMsg && (
-                  <div className="p-2 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-slate-200">
-                    {backendStatusMsg}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+                {/* Render Backend Connector */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                  <label className="text-[11px] font-bold text-cyan-300 block">
+                    URL Backend API :
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="url"
+                      placeholder="https://votre-backend.onrender.com"
+                      value={renderUrlInput}
+                      onChange={(e) => setRenderUrlInput(e.target.value)}
+                      className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-500"
+                    />
+                    <button
+                      onClick={handleSaveAndTestRenderBackend}
+                      disabled={isTestingBackend}
+                      className="px-3.5 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-lg cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      {isTestingBackend ? 'Test...' : 'Lier & Tester'}
+                    </button>
                   </div>
-                )}
-              </div>
-
-              {/* Termux 1-Command Deploy */}
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
-                    <Terminal className="w-3.5 h-3.5" />
-                    <span>Commande Termux pour mettre à jour autoprodz-a7071.web.app :</span>
-                  </span>
-                  <button
-                    onClick={() => handleCopy(termuxDeployCmd, 'termux')}
-                    className="text-[11px] text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer font-semibold"
-                  >
-                    {copiedTermux ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    <span>{copiedTermux ? 'Copié' : 'Copier'}</span>
-                  </button>
+                  {backendStatusMsg && (
+                    <div className="p-2 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-slate-200">
+                      {backendStatusMsg}
+                    </div>
+                  )}
                 </div>
-                <pre className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap break-all">
-                  {termuxDeployCmd}
-                </pre>
+
+                {/* Termux 1-Command Deploy */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                      <Terminal className="w-3.5 h-3.5" />
+                      <span>Commande de déploiement Hosting :</span>
+                    </span>
+                    <button
+                      onClick={() => handleCopy(termuxDeployCmd, 'termux')}
+                      className="text-[11px] text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer font-semibold"
+                    >
+                      {copiedTermux ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedTermux ? 'Copié' : 'Copier'}</span>
+                    </button>
+                  </div>
+                  <pre className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap break-all">
+                    {termuxDeployCmd}
+                  </pre>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Ready-to-send Outreach Message (WhatsApp / Email / SMS) */}
           <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-4">

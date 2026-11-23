@@ -1,4 +1,5 @@
-const STORAGE_KEY = 'autopro_render_backend_url';
+import { getAuthToken } from './authSession';
+
 export const DEFAULT_RENDER_BACKEND_URL = 'https://autopro-suitebacken.onrender.com';
 
 function isFullStackSelfHost(): boolean {
@@ -13,22 +14,8 @@ function isFullStackSelfHost(): boolean {
 }
 
 export function getBackendBaseUrl(): string {
-  try {
-    if (typeof window !== 'undefined' && window.location?.search) {
-      const params = new URLSearchParams(window.location.search);
-      const apiParam = params.get('api');
-      if (apiParam && apiParam.trim().startsWith('http')) {
-        const cleanParam = apiParam.trim().replace(/\/+$/, '');
-        localStorage.setItem(STORAGE_KEY, cleanParam);
-        return cleanParam;
-      }
-    }
-  } catch {
-    // Ignore URL/storage errors
-  }
-
-  // On AI Studio Cloud Run (.run.app), Render (.onrender.com), or localhost,
-  // ALWAYS use the co-located Express backend so a stale localStorage URL never breaks /api calls.
+  // Sur Cloud Run (.run.app), Render (.onrender.com) ou localhost,
+  // utiliser le backend Express co-localisé sans lecture URL ni localStorage.
   if (isFullStackSelfHost()) {
     return '';
   }
@@ -38,44 +25,15 @@ export function getBackendBaseUrl(): string {
     return envUrl.trim().replace(/\/+$/, '');
   }
 
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (
-      saved &&
-      saved.trim() &&
-      !saved.includes('autopro-dz-backend.onrender.com') &&
-      !saved.includes('votre-backend') &&
-      !saved.includes('.run.app')
-    ) {
-      return saved.trim().replace(/\/+$/, '');
-    }
-  } catch {
-    // Ignore storage errors
-  }
-
   return DEFAULT_RENDER_BACKEND_URL;
 }
 
 export function setBackendBaseUrl(url: string): string {
-  const clean = url.trim().replace(/\/+$/, '');
-  try {
-    if (clean) {
-      localStorage.setItem(STORAGE_KEY, clean);
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
-  } catch {
-    // Ignore storage errors
-  }
-  return clean;
+  return url.trim().replace(/\/+$/, '');
 }
 
 export function resetBackendBaseUrl(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // Ignore storage errors
-  }
+  // No-op: backend base URL is fixed by build/runtime environment
 }
 
 export function isStaticFirebaseWithoutBackend(): boolean {
@@ -137,9 +95,16 @@ async function fetchWithTimeout(
   init?.signal?.addEventListener('abort', onCallerAbort, { once: true });
 
   try {
+    const headers = new Headers(init?.headers || undefined);
+    const token = getAuthToken();
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+
     const response = await globalThis.fetch(url, {
       credentials: crossOrigin ? 'omit' : 'include',
       ...init,
+      headers,
       signal: controller.signal,
     });
     clearTimeout(timeoutId);

@@ -3,7 +3,9 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { registerAutoUpdateServiceWorker } from './utils/swCacheManager';
+import { clearAuthToken, purgeLegacySensitiveStorage } from './utils/authSession';
 
+purgeLegacySensitiveStorage();
 registerAutoUpdateServiceWorker();
 
 interface ErrorBoundaryState {
@@ -28,12 +30,8 @@ class RootErrorBoundary extends React.Component<
   }
 
   private handleResetSession = () => {
-    try {
-      localStorage.removeItem('autopro_license_session');
-      sessionStorage.removeItem('autopro_admin_passcode');
-    } catch {
-      // Ignore storage errors
-    }
+    clearAuthToken();
+    purgeLegacySensitiveStorage();
     window.location.reload();
   };
 

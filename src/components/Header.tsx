@@ -196,7 +196,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 )}
                 <span className="hidden md:inline font-mono text-[11px] max-w-[140px] truncate">
-                  {isAdmin ? 'ADMIN SOFIANE' : licenseSession.clientName || 'Abonné Pro'}
+                  {isAdmin ? 'Administration' : licenseSession.clientName || 'Abonné Pro'}
                 </span>
               </button>
             )}
@@ -268,7 +268,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <span className="w-2 h-2 rounded-full bg-cyan-400" />
-              <span>Historique SaaS</span>
+              <span>Historique</span>
             </button>
           )}
 
@@ -296,7 +296,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Wrench className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Atelier CN (Pinouts · ADAS · VIN)</span>
+              <span>Atelier CN</span>
             </button>
           )}
 
@@ -338,7 +338,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>Master Suite (FLEX · Swiftec · J1939)</span>
+              <span>Master Suite</span>
             </button>
           )}
 
@@ -407,7 +407,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Copilote Agent PC</span>
+              <span>Copilote</span>
             </button>
           )}
 
@@ -461,7 +461,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Lock className="w-3.5 h-3.5 text-amber-400" />
-              <span>Coffre Payant (APK/.BIN)</span>
+              <span>Coffre</span>
             </button>
           )}
 

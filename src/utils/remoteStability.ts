@@ -1,4 +1,4 @@
-import { apiFetch } from './apiBridge';
+import { apiFetch, apiUrl } from './apiBridge';
 
 export type RemoteConnectionHealthStatus = 'optimal' | 'degraded' | 'reconnecting' | 'offline';
 
@@ -277,20 +277,23 @@ export function downloadWindowsRemoteStabilizerBat(): string {
     'powercfg /setactive SCHEME_CURRENT >nul 2>&1',
     'echo [OK] Ports USB maintenus alimentes en continu.',
     'echo.',
-    'echo [3/4] Verification passerelle ADB TCP/IP (:5555) pour tablette distante...',
+    'echo [3/4] Verification passerelle ADB Wi-Fi pour tablette distante...',
     'where adb >nul 2>&1',
     'if %errorlevel%==0 (',
     '  adb start-server',
     '  adb devices',
-    '  echo Pour passer la tablette en WiFi/Reseau distant (cable branche une fois) :',
-    '  echo   adb tcpip 5555',
     ') else (',
     '  echo [INFO] ADB non trouve dans le PATH (uniquement requis si tablette Android directe).',
     ')',
     'echo.',
-    'echo [4/4] Boucle Keep-Alive vers Cloud AutoPro DZ (CTRL+C pour arreter)...',
+    'echo [4/4] Boucle Keep-Alive vers Serveur AutoPro DZ (CTRL+C pour arreter)...',
     ':loop',
-    'curl -s -o nul -w "Ping Serveur AutoPro DZ : HTTP %%{http_code} | Latence: %%{time_total}s\\n" https://autopro-suitebacken.onrender.com/api/health',
+    `curl -s -o nul -w "Ping Serveur AutoPro DZ : HTTP %%{http_code} | Latence: %%{time_total}s\\n" ${(() => {
+      const p = apiUrl('/api/health');
+      if (p.startsWith('http')) return p;
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      return `${origin}${p}`;
+    })()}`,
     'timeout /t 45 /nobreak >nul',
     'goto loop',
   ];

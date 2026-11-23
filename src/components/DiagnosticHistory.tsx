@@ -47,11 +47,12 @@ interface DiagnosticHistoryProps {
   selectedVehicle?: Vehicle;
   onSelectVehicle?: (vehicle: Vehicle) => void;
   onOpenConnectModal?: () => void;
+  isAdmin?: boolean;
 }
 
 export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
   selectedVehicle,
-  onSelectVehicle,
+  isAdmin = false,
 }) => {
   const [scans, setScans] = useState<DiagnosticScanSession[]>([]);
   const [activities, setActivities] = useState<ClientActivityRecord[]>([]);
@@ -78,8 +79,8 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
     vehicleId: selectedVehicle?.id || VEHICLE_PRESETS[0].id,
     vin: selectedVehicle ? `${selectedVehicle.brand.substring(0, 3).toUpperCase()}-DZ26-${Math.floor(1000 + Math.random() * 9000)}` : 'VF3-DZ26-MASCARA-7788',
     mileageKm: 35000,
-    clientName: 'Atelier Mascara Auto',
-    technicianName: 'Sofiane M. (Master Tech DZ)',
+    clientName: 'Atelier Client',
+    technicianName: 'Technicien Atelier',
     dtcCode: 'P0299',
     dtcSystem: 'Calculateur Moteur (ECM)',
     dtcDesc: 'Pression de suralimentation trop faible',
@@ -100,45 +101,64 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const [scansRes, statsRes, actRes] = await Promise.all([
-        apiFetch('/api/history'),
-        apiFetch('/api/db/stats'),
-        apiFetch('/api/clients/activity'),
-      ]);
+      if (isAdmin) {
+        const [scansRes, statsRes, actRes] = await Promise.all([
+          apiFetch('/api/history'),
+          apiFetch('/api/db/stats'),
+          apiFetch('/api/clients/activity'),
+        ]);
 
-      if (!scansRes.ok || !statsRes.ok) {
-        throw new Error('Erreur lors du chargement des données SaaS');
+        if (!scansRes.ok) {
+          throw new Error('Erreur lors du chargement des données');
+        }
+
+        const scansData = await scansRes.json();
+        const statsData = statsRes.ok ? await statsRes.json() : { stats: null };
+        const actData = actRes.ok ? await actRes.json() : { activities: [] };
+
+        const nextScans = scansData.scans || [];
+        const nextStats = statsData.stats || null;
+        const nextActs = actData.activities || [];
+
+        setScans(nextScans);
+        setDbStats(nextStats);
+        setActivities(nextActs);
+        setIsCacheMode(false);
+        const saved = saveHistoryCache({
+          scans: nextScans,
+          stats: nextStats,
+          activities: nextActs,
+        });
+        setCacheUpdatedAt(saved.updatedAt);
+      } else {
+        const scansRes = await apiFetch('/api/history');
+        if (!scansRes.ok) {
+          throw new Error('Erreur lors du chargement de l’historique');
+        }
+        const scansData = await scansRes.json();
+        const nextScans = scansData.scans || [];
+        setScans(nextScans);
+        setDbStats(null);
+        setActivities([]);
+        setIsCacheMode(false);
+        const saved = saveHistoryCache({
+          scans: nextScans,
+          stats: null,
+          activities: [],
+        });
+        setCacheUpdatedAt(saved.updatedAt);
       }
-
-      const scansData = await scansRes.json();
-      const statsData = await statsRes.json();
-      const actData = actRes.ok ? await actRes.json() : { activities: [] };
-
-      const nextScans = scansData.scans || [];
-      const nextStats = statsData.stats || null;
-      const nextActs = actData.activities || [];
-
-      setScans(nextScans);
-      setDbStats(nextStats);
-      setActivities(nextActs);
-      setIsCacheMode(false);
-      const saved = saveHistoryCache({
-        scans: nextScans,
-        stats: nextStats,
-        activities: nextActs,
-      });
-      setCacheUpdatedAt(saved.updatedAt);
     } catch (err: any) {
       const cached = loadHistoryCache();
-      if (cached && ((cached.scans && cached.scans.length > 0) || (cached.activities && cached.activities.length > 0))) {
+      if (cached && ((cached.scans && cached.scans.length > 0) || (isAdmin && cached.activities && cached.activities.length > 0))) {
         setScans(cached.scans || []);
-        setDbStats(cached.stats || null);
-        setActivities(cached.activities || []);
+        setDbStats(isAdmin ? cached.stats || null : null);
+        setActivities(isAdmin ? cached.activities || [] : []);
         setIsCacheMode(true);
         setCacheUpdatedAt(cached.updatedAt);
         setError(null);
       } else {
-        setError(err.message || 'Impossible de se connecter à la base de données SaaS');
+        setError(err.message || 'Impossible de charger les données de diagnostic');
       }
     } finally {
       setLoading(false);
@@ -147,12 +167,15 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
 
   useEffect(() => {
     const cached = loadHistoryCache();
-    if (cached && ((cached.scans && cached.scans.length > 0) || (cached.activities && cached.activities.length > 0))) {
+    if (cached && ((cached.scans && cached.scans.length > 0) || (isAdmin && cached.activities && cached.activities.length > 0))) {
       setScans(cached.scans || []);
-      setDbStats(cached.stats || null);
-      setActivities(cached.activities || []);
+      setDbStats(isAdmin ? cached.stats || null : null);
+      setActivities(isAdmin ? cached.activities || [] : []);
       setCacheUpdatedAt(cached.updatedAt);
       setLoading(false);
+    }
+    if (!isAdmin) {
+      setActiveSubTab('scans');
     }
     fetchScansAndStats();
 
@@ -161,7 +184,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
     };
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
-  }, []);
+  }, [isAdmin]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -169,6 +192,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
   };
 
   const handleOptimizeDb = async () => {
+    if (!isAdmin) return;
     setIsOptimizing(true);
     setOptimizeMessage(null);
     try {
@@ -205,9 +229,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
   };
 
   const handleDeleteScan = async (scanId: string) => {
-    if (!window.confirm(`Confirmer la suppression de la session ${scanId} de la base de données ?`)) {
-      return;
-    }
+    if (!isAdmin) return;
     try {
       const res = await apiFetch(`/api/history/${scanId}`, { method: 'DELETE' });
       const data = await res.json();
@@ -222,9 +244,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
   };
 
   const handleResetToSeed = async () => {
-    if (!window.confirm('Recharger l\'historique d\'atelier complet avec les cas d\'Algérie (Geely, Jetour, Fiat Doblo, Chery) ?')) {
-      return;
-    }
+    if (!isAdmin) return;
     try {
       const res = await apiFetch('/api/history/seed', { method: 'POST' });
       const data = await res.json();
@@ -291,6 +311,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
   };
 
   const handleExportJson = () => {
+    if (!isAdmin) return;
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(scans, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
@@ -302,6 +323,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
   };
 
   const handleDownloadFullBackup = async () => {
+    if (!isAdmin) return;
     setIsBackingUp(true);
     try {
       const res = await apiFetch('/api/db/backup');
@@ -572,45 +594,51 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
 
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 relative z-10">
           <div className="space-y-1.5">
-            <div className="flex items-center gap-2.5">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-cyan-950 text-cyan-400 border border-cyan-800/80 flex items-center gap-1.5">
-                <Database className="w-3 h-3 text-cyan-400" />
-                <span>Base de Données SaaS Haute Performance</span>
-              </span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono text-emerald-300 bg-emerald-950/80 border border-emerald-700/60 flex items-center gap-1">
-                <Zap className="w-2.5 h-2.5 text-emerald-400" />
-                <span>Latence {dbStats?.avgQueryLatencyMs || 0.35} ms</span>
-              </span>
-            </div>
+            {isAdmin && (
+              <div className="flex items-center gap-2.5">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-cyan-950 text-cyan-400 border border-cyan-800/80 flex items-center gap-1.5">
+                  <Database className="w-3 h-3 text-cyan-400" />
+                  <span>Base de Données SaaS Haute Performance</span>
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono text-emerald-300 bg-emerald-950/80 border border-emerald-700/60 flex items-center gap-1">
+                  <Zap className="w-2.5 h-2.5 text-emerald-400" />
+                  <span>Latence {dbStats?.avgQueryLatencyMs || 0.35} ms</span>
+                </span>
+              </div>
+            )}
             <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
               <History className="w-5 h-5 text-cyan-400" />
               <span>Historique Diagnostic &amp; Suivi Santé du Véhicule</span>
             </h2>
             <p className="text-xs text-slate-400 max-w-2xl">
-              Stockage persistant et indexé en mémoire des sessions de scan multimarque (Geely, Jetour, Fiat Doblo, Chery, etc.) avec traçabilité des codes DTC, causes racines et préconisations de réparation chiffrées en DZD.
+              Suivi des sessions de scan multimarque avec traçabilité des codes défauts, diagnostics et préconisations de réparation.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            <button
-              onClick={handleDownloadFullBackup}
-              disabled={isBackingUp}
-              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 hover:text-white flex items-center gap-2 cursor-pointer transition-colors shadow-sm disabled:opacity-50"
-              title="Télécharger une sauvegarde complète permanente (Scans + Activités Clients + Base SaaS)"
-            >
-              <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{isBackingUp ? 'Sauvegarde...' : 'Sauvegarde Intégrale'}</span>
-            </button>
+            {isAdmin && (
+              <button
+                onClick={handleDownloadFullBackup}
+                disabled={isBackingUp}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 hover:text-white flex items-center gap-2 cursor-pointer transition-colors shadow-sm disabled:opacity-50"
+                title="Télécharger une sauvegarde complète permanente"
+              >
+                <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{isBackingUp ? 'Sauvegarde...' : 'Sauvegarde Intégrale'}</span>
+              </button>
+            )}
 
-            <button
-              onClick={handleOptimizeDb}
-              disabled={isOptimizing}
-              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 border border-cyan-500/40 text-cyan-300 hover:text-white flex items-center gap-2 cursor-pointer transition-colors shadow-sm disabled:opacity-50"
-              title="Reconstruire les index et compacter le stockage"
-            >
-              <Zap className={`w-3.5 h-3.5 text-cyan-400 ${isOptimizing ? 'animate-spin' : ''}`} />
-              <span>{isOptimizing ? 'Optimisation...' : 'Optimiser Base'}</span>
-            </button>
+            {isAdmin && (
+              <button
+                onClick={handleOptimizeDb}
+                disabled={isOptimizing}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 border border-cyan-500/40 text-cyan-300 hover:text-white flex items-center gap-2 cursor-pointer transition-colors shadow-sm disabled:opacity-50"
+                title="Reconstruire les index et compacter le stockage"
+              >
+                <Zap className={`w-3.5 h-3.5 text-cyan-400 ${isOptimizing ? 'animate-spin' : ''}`} />
+                <span>{isOptimizing ? 'Optimisation...' : 'Optimiser Base'}</span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsNewScanModalOpen(true)}
@@ -620,21 +648,25 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
               <span>Enregistrer Scan Manuel</span>
             </button>
 
-            <button
-              onClick={handleExportJson}
-              className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white cursor-pointer transition-colors"
-              title="Exporter les scans en JSON"
-            >
-              <Download className="w-4 h-4" />
-            </button>
+            {isAdmin && (
+              <>
+                <button
+                  onClick={handleExportJson}
+                  className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white cursor-pointer transition-colors"
+                  title="Exporter les scans en JSON"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
 
-            <button
-              onClick={handleResetToSeed}
-              className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 hover:text-amber-400 cursor-pointer transition-colors"
-              title="Réinitialiser avec les véhicules tests d'Algérie"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
+                <button
+                  onClick={handleResetToSeed}
+                  className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 hover:text-amber-400 cursor-pointer transition-colors"
+                  title="Réinitialiser avec les véhicules tests d'Algérie"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -733,7 +765,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
         </div>
       </div>
 
-      {/* Sub-Tabs Switcher: Diagnostics vs Activité Clients & Licences */}
+      {/* Sub-Tabs Switcher: Diagnostics vs Activité Clients & Licences (Admin uniquement) */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex p-1 rounded-xl bg-slate-900 border border-slate-800 gap-1">
           <button
@@ -747,26 +779,28 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
             <History className="w-3.5 h-3.5" />
             <span>Historique Scans &amp; Santé ({scans.length})</span>
           </button>
-          <button
-            onClick={() => setActiveSubTab('activity')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
-              activeSubTab === 'activity'
-                ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            <span>Activité Clients &amp; Licences ({activities.length})</span>
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setActiveSubTab('activity')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
+                activeSubTab === 'activity'
+                  ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Activité Clients &amp; Licences ({activities.length})</span>
+            </button>
+          )}
         </div>
 
         <div className="px-3 py-1.5 rounded-xl bg-emerald-950/40 border border-emerald-700/50 text-[11px] font-semibold text-emerald-300 flex items-center gap-2">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Durée Illimitée · Sauvegarde Persistante SaaS Active</span>
+          <span>Sauvegarde Persistante Active</span>
         </div>
       </div>
 
-      {activeSubTab === 'activity' ? (
+      {isAdmin && activeSubTab === 'activity' ? (
         <div className="space-y-4">
           {/* Activity Filter Bar */}
           <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs">
@@ -956,15 +990,17 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
           <History className="w-8 h-8 text-slate-600 mx-auto" />
           <h3 className="text-sm font-bold text-white">Aucune session trouvée</h3>
           <p className="text-xs text-slate-400 max-w-md mx-auto">
-            Aucun enregistrement ne correspond aux critères de filtre. Vous pouvez enregistrer un nouveau scan manuellement ou réinitialiser avec les cas d'atelier d'Algérie.
+            Aucun enregistrement ne correspond aux critères de filtre.
           </p>
-          <button
-            onClick={handleResetToSeed}
-            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-cyan-300 inline-flex items-center gap-1.5 cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Recharger les Véhicules Algérie (Geely, Jetour, Fiat Doblo)</span>
-          </button>
+          {isAdmin && (
+            <button
+              onClick={handleResetToSeed}
+              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-cyan-300 inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Recharger les Véhicules Algérie (Geely, Jetour, Fiat Doblo)</span>
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
@@ -1043,13 +1079,15 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
                       <span>Générer rapport</span>
                     </button>
 
-                    <button
-                      onClick={() => handleDeleteScan(scan.id)}
-                      className="p-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-rose-400 cursor-pointer transition-colors"
-                      title="Supprimer la session"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleDeleteScan(scan.id)}
+                        className="p-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-rose-400 cursor-pointer transition-colors"
+                        title="Supprimer la session"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
 
                     <button
                       onClick={() => setExpandedScanId(isExpanded ? null : scan.id)}

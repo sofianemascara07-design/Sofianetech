@@ -21,17 +21,51 @@ import {
   PublicVaultPackage,
   VaultFileCategory,
   VaultPaidTier,
+  SubscriberVaultPackage,
 } from '../types/automotive';
 import { SEEDED_ECU_PINOUTS } from '../data/chinaWorkshopSeed';
 import { buildDefaultCoolrayRecord } from '../data/coolrayLspiProfiles';
 
-const SERVER_HMAC_SECRET = process.env.SESSION_SECRET || process.env.ADMIN_PASSCODE || 'AUTOPRO-DZ-2026-HMAC-ROOT';
+const SERVER_HMAC_SECRET = (() => {
+  const configured = (process.env.SESSION_SECRET || process.env.AUTOPRO_HMAC_SECRET || '').trim();
+  return configured.length >= 16 ? configured : crypto.randomBytes(32).toString('hex');
+})();
+
+export interface AuthTokenPayload {
+  jti: string;
+  role: 'admin' | 'subscriber';
+  subscriberId?: string;
+  keyUpper?: string;
+  hwid: string;
+  tier: LicenseTier;
+  clientName: string;
+  iat: number;
+  exp: number;
+}
 
 function constantTimeMatch(a: string, b: string): boolean {
   const bufA = Buffer.from(a, 'utf8');
   const bufB = Buffer.from(b, 'utf8');
   if (bufA.length !== bufB.length) return false;
   return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function hashPasscode(raw: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(raw, salt, 64).toString('hex');
+  return `${salt}:${derived}`;
+}
+
+function verifyHashedPasscode(raw: string, storedHash: string): boolean {
+  if (!storedHash || !storedHash.includes(':')) return false;
+  const [salt, expectedHex] = storedHash.split(':', 2);
+  if (!salt || !expectedHex) return false;
+  try {
+    const derivedHex = crypto.scryptSync(raw, salt, 64).toString('hex');
+    return constantTimeMatch(derivedHex, expectedHex);
+  } catch {
+    return false;
+  }
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -133,12 +167,15 @@ const INITIAL_SEEDED_SDR_PROSPECTS: SdrProspect[] = [
   },
 ];
 
-const DEFAULT_SECURITY_SETTINGS: SecuritySettings & { adminPasscode: string } = {
+type StoredSecuritySettings = SecuritySettings & {
+  adminPasscodeHash?: string;
+};
+
+const DEFAULT_SECURITY_SETTINGS: StoredSecuritySettings = {
   demoLinksEnabled: false,
   defaultDemoMinutes: 10,
   revokedAllDemosBefore: new Date().toISOString(),
   blockedDemoKeys: ['AP-DZ26-MST-9882-7EAB-5A63', 'DEMO-FREE', 'AUTOPRO-DEMO'],
-  adminPasscode: process.env.ADMIN_PASSCODE || 'SOFIANE-DZ-2026',
   adminPasscodeUpdatedAt: new Date().toISOString(),
   revokedRecords: [],
 };
@@ -426,9 +463,11 @@ export class AutoProDatabase {
   private pinouts: EcuPinoutEntry[] = [];
   private coolrayLspiRecords: CoolrayVehicleFollowUpRecord[] = [];
   private vaultPackages: VaultPackageRecord[] = [];
-  private securitySettings: SecuritySettings & { adminPasscode: string } = { ...DEFAULT_SECURITY_SETTINGS };
+  private securitySettings: StoredSecuritySettings = { ...DEFAULT_SECURITY_SETTINGS };
   private vinIndex: Map<string, string[]> = new Map(); // VIN -> array of scan IDs
   private codeIndex: Map<string, string[]> = new Map(); // DTC code -> array of scan IDs
+  private revokedJtis: Set<string> = new Set();
+  private minAdminIat = 0;
   private isInitialized = false;
   private totalQueriesServed = 0;
   private totalQueryTimeMs = 0;
@@ -440,15 +479,29 @@ export class AutoProDatabase {
     void this.hydrateFromCloudKv();
   }
 
+  private sanitizeLoadedSecuritySettings(raw: unknown): StoredSecuritySettings {
+    const obj = raw && typeof raw === 'object' ? { ...(raw as Record<string, unknown>) } : {};
+    if ('adminPasscode' in obj) {
+      delete obj.adminPasscode;
+    }
+    return {
+      ...DEFAULT_SECURITY_SETTINGS,
+      ...(obj as Partial<StoredSecuritySettings>),
+    };
+  }
+
   private async hydrateFromCloudKv() {
     if (!UPSTASH_URL || !UPSTASH_TOKEN) return;
     try {
       const [kvSec, kvSubs] = await Promise.all([
-        kvGetJson<SecuritySettings & { adminPasscode?: string }>('autopro_security_v2'),
+        kvGetJson<Record<string, unknown>>('autopro_security_v2'),
         kvGetJson<SubscriberRecord[]>('autopro_subscribers_v2'),
       ]);
       if (kvSec && typeof kvSec === 'object') {
-        this.securitySettings = { ...this.securitySettings, ...kvSec };
+        this.securitySettings = this.sanitizeLoadedSecuritySettings({
+          ...this.securitySettings,
+          ...kvSec,
+        });
         this.saveSecurityToFile(true);
       }
       if (Array.isArray(kvSubs) && kvSubs.length > 0) {
@@ -500,7 +553,11 @@ export class AutoProDatabase {
       if (fs.existsSync(SECURITY_FILE)) {
         try {
           const rawSec = JSON.parse(fs.readFileSync(SECURITY_FILE, 'utf-8'));
-          this.securitySettings = { ...DEFAULT_SECURITY_SETTINGS, ...rawSec };
+          const hadPlaintext = Boolean(rawSec && typeof rawSec === 'object' && 'adminPasscode' in rawSec);
+          this.securitySettings = this.sanitizeLoadedSecuritySettings(rawSec);
+          if (hadPlaintext) {
+            this.saveSecurityToFile(true);
+          }
         } catch {
           this.securitySettings = { ...DEFAULT_SECURITY_SETTINGS };
           this.saveSecurityToFile();
@@ -740,10 +797,36 @@ export class AutoProDatabase {
     return pub;
   }
 
+  private toSubscriberVaultPackage(rec: VaultPackageRecord, tier: LicenseTier): SubscriberVaultPackage {
+    return {
+      id: rec.id,
+      title: rec.title,
+      fileName: rec.fileName,
+      extension: rec.extension,
+      category: rec.category,
+      version: rec.version,
+      sizeBytes: rec.sizeBytes,
+      notes: rec.notes,
+      uploadedAt: rec.uploadedAt,
+      updatedAt: rec.updatedAt,
+      isEligible: tier !== 'demo' && rec.allowedTiers.includes(tier as VaultPaidTier),
+    };
+  }
+
   public listVaultPackages(includeInactive = false): PublicVaultPackage[] {
     return this.vaultPackages
       .filter((item) => (includeInactive ? true : item.isActive))
       .map((item) => this.toPublicVaultPackage(item))
+      .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+  }
+
+  public listVaultPackagesForRole(tier: LicenseTier, isAdmin: boolean): SubscriberVaultPackage[] {
+    if (isAdmin) {
+      return this.listVaultPackages(true).map((item) => ({ ...item, isEligible: true }));
+    }
+    return this.vaultPackages
+      .filter((item) => item.isActive)
+      .map((item) => this.toSubscriberVaultPackage(item, tier))
       .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
   }
 
@@ -902,14 +985,7 @@ export class AutoProDatabase {
 
   public verifyPaidVaultDownloadAccess(params: {
     id: string;
-    key?: string;
-    hwid?: string;
-    signature?: string;
-    subscriberId?: string;
-    clientName?: string;
-    tier?: LicenseTier;
-    isAdmin?: boolean;
-    adminPasscode?: string;
+    session: AuthTokenPayload;
   }): {
     allowed: boolean;
     statusCode: number;
@@ -946,8 +1022,8 @@ export class AutoProDatabase {
       };
     }
 
-    // 1. Admin bypass with server passcode verification
-    if (params.isAdmin && params.adminPasscode && this.verifyAdminPasscode(params.adminPasscode)) {
+    // 1. Authenticated Admin role
+    if (params.session.role === 'admin') {
       item.downloadCount += 1;
       item.updatedAt = new Date().toISOString();
       this.vaultPackages[idx] = item;
@@ -970,13 +1046,13 @@ export class AutoProDatabase {
     }
 
     // 2. Strictly reject Demo / unauthenticated attempts
-    const cleanKey = (params.key || '').trim().toUpperCase();
-    if (!cleanKey || params.tier === 'demo') {
+    const cleanKey = (params.session.keyUpper || '').trim().toUpperCase();
+    if (!cleanKey || params.session.tier === 'demo') {
       return {
         allowed: false,
         statusCode: 403,
         message:
-          'Téléchargement bloqué : un abonnement payant actif est obligatoire. Les comptes Démo ne peuvent pas télécharger. Contactez Sofiane au 05 57 76 78 04.',
+          'Téléchargement bloqué : un abonnement payant actif est obligatoire. Les comptes Démo ne peuvent pas télécharger.',
       };
     }
 
@@ -988,7 +1064,7 @@ export class AutoProDatabase {
       };
     }
 
-    const tombstone = this.findRevocationTombstone(params.subscriberId, cleanKey);
+    const tombstone = this.findRevocationTombstone(params.session.subscriberId, cleanKey);
     if (tombstone) {
       return {
         allowed: false,
@@ -997,29 +1073,7 @@ export class AutoProDatabase {
       };
     }
 
-    let sub = this.subscribers.find((s) => s.licenseKey.toUpperCase() === cleanKey);
-
-    // Support HMAC-verified paid subscribers across ephemeral server restarts if not revoked
-    if (!sub) {
-      const isPaidMetaTier = Boolean(params.tier && params.tier !== 'admin');
-      if (
-        isPaidMetaTier &&
-        params.clientName &&
-        params.signature &&
-        this.verifySignedLicensePayload(cleanKey, params.clientName, params.hwid || 'HWID', params.signature)
-      ) {
-        sub = {
-          id: params.subscriberId || 'SUB-HMAC',
-          clientName: params.clientName,
-          licenseKey: cleanKey,
-          boundHwid: params.hwid || null,
-          tier: params.tier!,
-          status: 'active',
-          createdAt: new Date().toISOString(),
-        };
-      }
-    }
-
+    const sub = this.subscribers.find((s) => s.licenseKey.toUpperCase() === cleanKey);
     if (!sub) {
       return {
         allowed: false,
@@ -1045,7 +1099,7 @@ export class AutoProDatabase {
       };
     }
 
-    if (sub.boundHwid && params.hwid && sub.boundHwid !== params.hwid) {
+    if (sub.boundHwid && params.session.hwid && sub.boundHwid !== params.session.hwid) {
       return {
         allowed: false,
         statusCode: 403,
@@ -1057,7 +1111,7 @@ export class AutoProDatabase {
       return {
         allowed: false,
         statusCode: 403,
-        message: `Votre formule actuelle (${sub.tier}) n’inclut pas ce fichier. Formules autorisées : ${item.allowedTiers.join(', ')}.`,
+        message: `Votre formule actuelle (${sub.tier}) n’inclut pas ce fichier.`,
       };
     }
 
@@ -1068,9 +1122,9 @@ export class AutoProDatabase {
 
     this.logActivity({
       clientName: sub.clientName,
-      hwid: params.hwid || sub.boundHwid || 'HWID-CLIENT',
+      hwid: params.session.hwid || sub.boundHwid || 'HWID-CLIENT',
       actionType: 'vault_download',
-      actionDetails: `Téléchargement Coffre Payant : ${item.fileName} (${item.version})`,
+      actionDetails: `Téléchargement Coffre : ${item.fileName} (${item.version})`,
       locationCity: 'Algérie (Abonné Payant)',
       durationMinutes: 1,
     });
@@ -1258,45 +1312,201 @@ export class AutoProDatabase {
   }
 
   // =========================================================
-  // ADMIN SECURITY, SUBSCRIBER WHITELIST & DEMO KILL-SWITCH
+  // ADMIN SECURITY, BEARER SESSIONS & SUBSCRIBER WHITELIST
   // =========================================================
+  public isAdminConfigured(): boolean {
+    const envPass = (process.env.ADMIN_PASSCODE || '').trim();
+    return Boolean(envPass) || Boolean(this.securitySettings.adminPasscodeHash);
+  }
+
+  public bootstrapAdminPasscode(newPasscode: string): boolean {
+    if (this.isAdminConfigured()) return false;
+    const clean = (newPasscode || '').trim();
+    if (clean.length < 8) return false;
+    this.securitySettings.adminPasscodeHash = hashPasscode(clean);
+    this.securitySettings.adminPasscodeUpdatedAt = new Date().toISOString();
+    this.minAdminIat = Date.now();
+    this.saveSecurityToFile();
+    return true;
+  }
+
   public verifyAdminPasscode(passcode: string): boolean {
     if (!passcode || typeof passcode !== 'string') return false;
     const raw = passcode.trim();
-    const upper = raw.toUpperCase().replace(/\s+/g, '-');
-    return (
-      constantTimeMatch(upper, 'AP-SOFIANE-MASTER-2026-VIP') ||
-      constantTimeMatch(upper, 'SOFIANE-MASTER-2026-VIP') ||
-      constantTimeMatch(upper, 'SOFIANE-DZ-2026') ||
-      constantTimeMatch(raw, this.securitySettings.adminPasscode)
-    );
+    if (!raw) return false;
+    const envPass = (process.env.ADMIN_PASSCODE || '').trim();
+    if (envPass) {
+      return constantTimeMatch(raw, envPass);
+    }
+    if (this.securitySettings.adminPasscodeHash) {
+      return verifyHashedPasscode(raw, this.securitySettings.adminPasscodeHash);
+    }
+    return false;
   }
 
-  public signLicensePayload(licenseKey: string, clientName: string, hwid: string): string {
-    return (
-      'HMAC-' +
-      crypto
-        .createHmac('sha256', SERVER_HMAC_SECRET)
-        .update(`${licenseKey.trim().toUpperCase()}:${clientName.trim()}:${hwid.trim()}`)
-        .digest('hex')
-        .slice(0, 28)
-        .toUpperCase()
-    );
+  public maskLicenseKey(key: string): string {
+    const clean = (key || '').trim().toUpperCase();
+    if (!clean) return '••••';
+    if (clean.length <= 4) return '••••';
+    return `AP-••••-${clean.slice(-4)}`;
   }
 
-  public verifySignedLicensePayload(
-    licenseKey: string,
-    clientName: string,
-    hwid: string,
-    signature: string
-  ): boolean {
-    if (!signature || typeof signature !== 'string' || !signature.startsWith('HMAC-')) return false;
-    const expectedExact = this.signLicensePayload(licenseKey, clientName, hwid || 'HWID');
-    const expectedFallback = this.signLicensePayload(licenseKey, clientName, 'HWID');
-    return (
-      constantTimeMatch(signature.trim().toUpperCase(), expectedExact) ||
-      constantTimeMatch(signature.trim().toUpperCase(), expectedFallback)
-    );
+  public issueAuthToken(params: {
+    role: 'admin' | 'subscriber';
+    subscriberId?: string;
+    keyUpper?: string;
+    hwid: string;
+    tier: LicenseTier;
+    clientName: string;
+    ttlMs?: number;
+  }): string {
+    const now = Date.now();
+    const defaultTtl = params.role === 'admin' ? 12 * 3600_000 : 24 * 3600_000;
+    const payload: AuthTokenPayload = {
+      jti: crypto.randomUUID(),
+      role: params.role,
+      ...(params.subscriberId ? { subscriberId: params.subscriberId } : {}),
+      ...(params.keyUpper ? { keyUpper: params.keyUpper.trim().toUpperCase() } : {}),
+      hwid: params.hwid.trim(),
+      tier: params.tier,
+      clientName: params.clientName.trim(),
+      iat: now,
+      exp: now + (params.ttlMs || defaultTtl),
+    };
+    const bodyB64 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    const sigB64 = crypto
+      .createHmac('sha256', SERVER_HMAC_SECRET)
+      .update(bodyB64)
+      .digest('base64url');
+    return `${bodyB64}.${sigB64}`;
+  }
+
+  public revokeAuthToken(token: string): void {
+    const parts = (token || '').trim().split('.');
+    if (parts.length !== 2) return;
+    try {
+      const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')) as Partial<AuthTokenPayload>;
+      if (payload?.jti) {
+        this.revokedJtis.add(payload.jti);
+        if (this.revokedJtis.size > 5000) {
+          const oldest = this.revokedJtis.values().next().value;
+          if (oldest) this.revokedJtis.delete(oldest);
+        }
+      }
+    } catch {
+      // Ignore malformed token on logout
+    }
+  }
+
+  public verifyAuthToken(token: string):
+    | { valid: true; session: AuthTokenPayload; subscriber?: SubscriberRecord }
+    | { valid: false; reason: string; explicitlyRevoked?: boolean } {
+    if (!token || typeof token !== 'string') {
+      return { valid: false, reason: 'Jeton d’authentification manquant.' };
+    }
+    const parts = token.trim().split('.');
+    if (parts.length !== 2) {
+      return { valid: false, reason: 'Format de jeton invalide.' };
+    }
+    const [bodyB64, sigB64] = parts;
+    const expectedSig = crypto
+      .createHmac('sha256', SERVER_HMAC_SECRET)
+      .update(bodyB64)
+      .digest('base64url');
+    if (!constantTimeMatch(sigB64, expectedSig)) {
+      return { valid: false, reason: 'Signature de session invalide.' };
+    }
+
+    let payload: AuthTokenPayload;
+    try {
+      payload = JSON.parse(Buffer.from(bodyB64, 'base64url').toString('utf8')) as AuthTokenPayload;
+    } catch {
+      return { valid: false, reason: 'Session corrompue.' };
+    }
+
+    if (!payload || !payload.jti || !payload.role || !payload.exp || Date.now() > payload.exp) {
+      return { valid: false, reason: 'Session expirée. Veuillez vous reconnecter.' };
+    }
+
+    if (this.revokedJtis.has(payload.jti)) {
+      return { valid: false, explicitlyRevoked: true, reason: 'Session fermée.' };
+    }
+
+    if (payload.role === 'admin') {
+      if (payload.iat < this.minAdminIat) {
+        return { valid: false, explicitlyRevoked: true, reason: 'Session Administrateur expirée suite au changement de mot de passe.' };
+      }
+      return { valid: true, session: payload };
+    }
+
+    const cleanKey = (payload.keyUpper || '').trim().toUpperCase();
+    if (!cleanKey || this.securitySettings.blockedDemoKeys.includes(cleanKey)) {
+      return {
+        valid: false,
+        explicitlyRevoked: true,
+        reason: 'Clé bloquée ou désactivée par l’administrateur.',
+      };
+    }
+
+    const tombstone = this.findRevocationTombstone(payload.subscriberId, cleanKey);
+    if (tombstone) {
+      return {
+        valid: false,
+        explicitlyRevoked: true,
+        reason: 'Accès révoqué par l’administrateur.',
+      };
+    }
+
+    const sub = this.subscribers.find((s) => s.licenseKey.toUpperCase() === cleanKey);
+    if (!sub) {
+      return {
+        valid: false,
+        explicitlyRevoked: true,
+        reason: 'Abonnement introuvable ou supprimé.',
+      };
+    }
+
+    if (sub.status !== 'active') {
+      return {
+        valid: false,
+        explicitlyRevoked: true,
+        reason: 'Accès désactivé par l’administrateur (licence suspendue).',
+      };
+    }
+
+    if (sub.boundHwid && payload.hwid && sub.boundHwid !== payload.hwid) {
+      return {
+        valid: false,
+        explicitlyRevoked: true,
+        reason: 'Session invalide : clé liée à un autre appareil.',
+      };
+    }
+
+    if (sub.tier === 'demo') {
+      if (!this.securitySettings.demoLinksEnabled) {
+        return {
+          valid: false,
+          explicitlyRevoked: true,
+          reason: 'Les démonstrations partagées ont été fermées par l’administrateur.',
+        };
+      }
+      if (this.securitySettings.revokedAllDemosBefore && payload.iat < new Date(this.securitySettings.revokedAllDemosBefore).getTime()) {
+        return {
+          valid: false,
+          explicitlyRevoked: true,
+          reason: 'Toutes les démonstrations précédentes ont été révoquées par l’administrateur.',
+        };
+      }
+      if (sub.demoExpiresAt && Date.now() > new Date(sub.demoExpiresAt).getTime()) {
+        return {
+          valid: false,
+          explicitlyRevoked: true,
+          reason: 'Durée de la démonstration expirée.',
+        };
+      }
+    }
+
+    return { valid: true, session: payload, subscriber: sub };
   }
 
   private computeConnectionStatus(sub: SubscriberRecord): ConnectionPresenceStatus {
@@ -1355,15 +1565,16 @@ export class AutoProDatabase {
 
   public updateAdminPasscode(newPasscode: string): boolean {
     const clean = newPasscode.trim();
-    if (clean.length < 4) return false;
-    this.securitySettings.adminPasscode = clean;
+    if (clean.length < 8) return false;
+    this.securitySettings.adminPasscodeHash = hashPasscode(clean);
     this.securitySettings.adminPasscodeUpdatedAt = new Date().toISOString();
+    this.minAdminIat = Date.now();
     this.saveSecurityToFile();
     return true;
   }
 
   public getPublicSecuritySettings(): SecuritySettings {
-    const { adminPasscode: _hidden, ...publicSettings } = this.securitySettings;
+    const { adminPasscodeHash: _hiddenHash, ...publicSettings } = this.securitySettings;
     return publicSettings;
   }
 
@@ -1680,24 +1891,13 @@ export class AutoProDatabase {
   }
 
   public checkSessionHeartbeat(params: {
-    key: string;
-    hwid?: string;
-    isAdmin?: boolean;
-    activatedAt?: string;
+    session: AuthTokenPayload;
     latencyMs?: number;
     stabilityScore?: number;
     connectionMode?: string;
     wakeLockActive?: boolean;
     reconnectCount?: number;
     ipAddress?: string;
-    sessionMeta?: {
-      subscriberId?: string;
-      clientName?: string;
-      tier?: LicenseTier;
-      phone?: string;
-      signature?: string;
-      createdAt?: string;
-    };
   }): {
     valid: boolean;
     explicitlyRevoked?: boolean;
@@ -1707,67 +1907,38 @@ export class AutoProDatabase {
     reason?: string;
     demoExpiresAt?: string | null;
   } {
-    if (params.isAdmin) {
+    if (params.session.role === 'admin') {
+      if (params.session.iat < this.minAdminIat) {
+        return {
+          valid: false,
+          explicitlyRevoked: true,
+          reason: 'Session Administrateur expirée.',
+        };
+      }
       return { valid: true };
     }
-    const cleanKey = (params.key || '').trim().toUpperCase();
+
+    const cleanKey = (params.session.keyUpper || '').trim().toUpperCase();
     if (!cleanKey || this.securitySettings.blockedDemoKeys.includes(cleanKey)) {
       return {
         valid: false,
         explicitlyRevoked: true,
-        reason: 'Lien / clé de démonstration désactivé par l\'administrateur.',
+        reason: 'Lien / clé de démonstration désactivé par l’administrateur.',
       };
     }
 
-    const tombstone = this.findRevocationTombstone(params.sessionMeta?.subscriberId, cleanKey);
-    let subIdx = this.subscribers.findIndex(s => s.licenseKey.toUpperCase() === cleanKey);
+    const tombstone = this.findRevocationTombstone(params.session.subscriberId, cleanKey);
+    const subIdx = this.subscribers.findIndex((s) => s.licenseKey.toUpperCase() === cleanKey);
 
     if (subIdx === -1) {
-      if (tombstone) {
-        return {
-          valid: false,
-          explicitlyRevoked: true,
-          subscriberStatus: 'revoked',
-          reason: 'Accès désactivé ou supprimé par l\'administrateur.',
-        };
-      }
-
-      // Self-healing restoration for signed paid subscriptions after ephemeral server restarts (Render Free Tier)
-      const meta = params.sessionMeta;
-      const isPaidTier = meta?.tier && meta.tier !== 'demo' && meta.tier !== 'admin';
-      if (
-        isPaidTier &&
-        meta?.clientName &&
-        meta?.signature &&
-        this.verifySignedLicensePayload(cleanKey, meta.clientName, params.hwid || 'HWID', meta.signature)
-      ) {
-        const nowIso = new Date().toISOString();
-        const restoredSub: SubscriberRecord = {
-          id: meta.subscriberId || `SUB-DZ-REST-${Date.now().toString(36).toUpperCase()}`,
-          clientName: meta.clientName.trim(),
-          phone: meta.phone?.trim() || '',
-          licenseKey: cleanKey,
-          boundHwid: params.hwid?.trim() || null,
-          tier: meta.tier!,
-          status: 'active',
-          maxDemoMinutes: null,
-          demoExpiresAt: null,
-          createdAt: meta.createdAt || params.activatedAt || nowIso,
-          updatedAt: nowIso,
-          lastUsedAt: nowIso,
-          lastHeartbeatAt: nowIso,
-          notes: 'Abonnement vérifié HMAC · Synchronisé automatiquement',
-        };
-        this.subscribers.unshift(restoredSub);
-        subIdx = 0;
-        this.saveSubscribersToFile();
-      } else {
-        return {
-          valid: false,
-          explicitlyRevoked: meta?.tier === 'demo',
-          reason: 'Abonnement introuvable ou en attente de synchronisation serveur.',
-        };
-      }
+      return {
+        valid: false,
+        explicitlyRevoked: Boolean(tombstone) || params.session.tier === 'demo',
+        subscriberStatus: tombstone ? 'revoked' : undefined,
+        reason: tombstone
+          ? 'Accès désactivé ou supprimé par l’administrateur.'
+          : 'Abonnement introuvable.',
+      };
     }
 
     const sub = this.subscribers[subIdx];
@@ -1776,10 +1947,10 @@ export class AutoProDatabase {
         valid: false,
         explicitlyRevoked: true,
         subscriberStatus: sub.status,
-        reason: 'Accès désactivé par l\'administrateur (client suspendu).',
+        reason: 'Accès désactivé par l’administrateur (client suspendu).',
       };
     }
-    if (sub.boundHwid && params.hwid && sub.boundHwid !== params.hwid) {
+    if (sub.boundHwid && params.session.hwid && sub.boundHwid !== params.session.hwid) {
       return {
         valid: false,
         explicitlyRevoked: true,
@@ -1791,17 +1962,18 @@ export class AutoProDatabase {
         return {
           valid: false,
           explicitlyRevoked: true,
-          reason: 'Les démonstrations partagées ont été fermées par l\'administrateur.',
+          reason: 'Les démonstrations partagées ont été fermées par l’administrateur.',
         };
       }
-      if (this.securitySettings.revokedAllDemosBefore && params.activatedAt) {
-        if (new Date(params.activatedAt).getTime() < new Date(this.securitySettings.revokedAllDemosBefore).getTime()) {
-          return {
-            valid: false,
-            explicitlyRevoked: true,
-            reason: 'Toutes les démonstrations précédentes ont été révoquées par l\'administrateur.',
-          };
-        }
+      if (
+        this.securitySettings.revokedAllDemosBefore &&
+        params.session.iat < new Date(this.securitySettings.revokedAllDemosBefore).getTime()
+      ) {
+        return {
+          valid: false,
+          explicitlyRevoked: true,
+          reason: 'Toutes les démonstrations précédentes ont été révoquées par l’administrateur.',
+        };
       }
       if (sub.demoExpiresAt && Date.now() > new Date(sub.demoExpiresAt).getTime()) {
         return {

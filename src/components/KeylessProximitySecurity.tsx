@@ -74,7 +74,7 @@ export const KeylessProximitySecurity: React.FC<KeylessProximitySecurityProps> =
       proximityThresholdMeters: 3.0,
       autoLockEnabled: true,
       autoUnlockEnabled: true,
-      emergencyPin: '884926',
+      emergencyPin: '',
       isEngineBlocked: false,
       alarmActive: false,
       lastKnownGpsLocation: {
@@ -208,11 +208,11 @@ export const KeylessProximitySecurity: React.FC<KeylessProximitySecurityProps> =
         setPinFeedback({ success: false, message: data.message || 'Code PIN incorrect.' });
       }
     } catch {
-      if (pinInput.trim() === digitalKey.emergencyPin || pinInput.trim() === '884926') {
+      if (digitalKey.emergencyPin && pinInput.trim() === digitalKey.emergencyPin) {
         setIsLocked(false);
         setPinFeedback({ success: true, message: 'Code PIN validé en mode direct ! Portes déverrouillées.' });
       } else {
-        setPinFeedback({ success: false, message: 'Code PIN invalide.' });
+        setPinFeedback({ success: false, message: 'Vérification serveur requise ou code PIN invalide.' });
       }
     }
   };
@@ -290,14 +290,14 @@ Véhicule : ${selectedVehicle.brand} ${selectedVehicle.model} (${selectedVehicle
 N° de Châssis VIN : ${digitalKey.vehicleVin}
 Ancien Propriétaire : ${digitalKey.ownerName}
 Nouveau Propriétaire Acquéreur : ${data.newOwnerName} (Tél: ${data.newOwnerPhone})
-N° Certificat de Cession : ${data.transferCertId || 'CERT-CESSION-DZ-884926'}
+N° Certificat de Cession : ${data.transferCertId || `CERT-CESSION-DZ-${Date.now().toString().slice(-6)}`}
 Date de Cession : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString()}
 
 ACTIONS DE SÉCURITÉ EXÉCUTÉES DANS LE BCM :
 ✓ Réinitialisation d'usine totale de la mémoire BSI/BCM
 ✓ Révocation définitive de tous les smartphones de l'ancien propriétaire
 ✓ Appairage exclusif validé pour le nouvel acquéreur
-✓ Nouveau Code PIN de Secours généré pour l'acheteur : ${data.buyerEmergencyPin || '741258'}
+✓ Nouveau Code PIN de Secours généré pour l'acheteur : ${data.buyerEmergencyPin || 'Généré sur BCM'}
 
 Ce certificat atteste que l'ancien propriétaire ne possède plus aucun accès
 au véhicule, ni à distance, ni via l'application mobile.
@@ -309,6 +309,7 @@ au véhicule, ni à distance, ni via l'application mobile.
   };
 
   const handleCopyPin = () => {
+    if (!digitalKey.emergencyPin) return;
     navigator.clipboard.writeText(digitalKey.emergencyPin);
     setCopiedPin(true);
     setTimeout(() => setCopiedPin(false), 2000);
@@ -558,15 +559,17 @@ au véhicule, ni à distance, ni via l'application mobile.
                 <span className="text-slate-400 text-[11px]">Code PIN d'Urgence :</span>
                 <div className="flex items-center gap-1.5">
                   <span className="font-bold text-amber-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
-                    {digitalKey.emergencyPin}
+                    {digitalKey.emergencyPin ? '•••••• (Configuré)' : 'Protégé (Serveur)'}
                   </span>
-                  <button
-                    onClick={handleCopyPin}
-                    className="text-cyan-400 hover:text-white cursor-pointer"
-                    title="Copier le code PIN"
-                  >
-                    {copiedPin ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
+                  {digitalKey.emergencyPin && (
+                    <button
+                      onClick={handleCopyPin}
+                      className="text-cyan-400 hover:text-white cursor-pointer"
+                      title="Copier le code PIN"
+                    >
+                      {copiedPin ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -691,7 +694,7 @@ au véhicule, ni à distance, ni via l'application mobile.
             <form onSubmit={handleVerifyEmergencyPin} className="max-w-md space-y-3">
               <div>
                 <label className="block text-slate-400 mb-1 font-semibold">
-                  Entrez votre Code PIN de Secours (Par défaut : 884926) :
+                  Entrez votre Code PIN de Secours (6 chiffres) :
                 </label>
                 <div className="flex gap-2">
                   <input

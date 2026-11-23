@@ -32,10 +32,12 @@ type SuiteModuleTab = 'autotuner' | 'swiftec' | 'ecm_maps' | 'copilot_j1939' | '
 
 interface UniversalMasterSuiteProps {
   batteryVoltage: number;
+  isAdmin?: boolean;
 }
 
 export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
   batteryVoltage,
+  isAdmin = false,
 }) => {
   const [activeModule, setActiveModule] = useState<SuiteModuleTab>('autotuner');
   const [selectedProfile, setSelectedProfile] = useState<UniversalControlUnitProfile>(
@@ -52,6 +54,7 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
   const [ledger, setLedger] = useState<CreditLedgerItem[]>([]);
 
   const loadCredits = useCallback(async () => {
+    if (!isAdmin) return;
     try {
       const res = await apiFetch('/api/credits/status');
       if (res.ok) {
@@ -64,10 +67,14 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
     } catch {
       // Keep local fallback
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
-    void loadCredits();
+    if (isAdmin) {
+      void loadCredits();
+    } else if (activeModule === 'pcm_credits') {
+      setActiveModule('autotuner');
+    }
     const probe = async () => {
       const st = await probeLocalPcAgent(pairToken);
       setAgentStatus(st);
@@ -75,7 +82,7 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
     void probe();
     const timer = setInterval(() => void probe(), 4000);
     return () => clearInterval(timer);
-  }, [pairToken, loadCredits]);
+  }, [pairToken, loadCredits, isAdmin, activeModule]);
 
   const [stabilizerDemo138, setStabilizerDemo138] = useState<boolean>(false);
 
@@ -88,7 +95,9 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
     { id: 'swiftec', label: '2. Éditeur 1-Clic Swiftec (.bin)', icon: <FileCode2 className="w-4 h-4" /> },
     { id: 'ecm_maps', label: '3. Cartographie ECM Titanium Lite', icon: <Gauge className="w-4 h-4" /> },
     { id: 'copilot_j1939', label: '4. Diag J1939 & Copilot FR/Darija', icon: <Truck className="w-4 h-4" /> },
-    { id: 'pcm_credits', label: '5. Packs PCMFlash & Tokens', icon: <Coins className="w-4 h-4" /> },
+    ...(isAdmin
+      ? [{ id: 'pcm_credits' as SuiteModuleTab, label: '5. Packs PCMFlash & Tokens', icon: <Coins className="w-4 h-4" /> }]
+      : []),
   ];
 
   return (
@@ -123,7 +132,7 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
             }`}
           >
             <Laptop className="w-4 h-4" />
-            <span>{agentStatus?.connected ? 'Agent 127.0.0.1:38450 OK' : 'Agent PC Hors Ligne'}</span>
+            <span>{agentStatus?.connected ? 'Agent PC OK' : 'Agent PC Hors Ligne'}</span>
           </div>
 
           <div
@@ -160,18 +169,20 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
             </span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveModule('pcm_credits')}
-            className="px-3 py-2 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-300 text-xs font-mono font-extrabold flex items-center gap-1.5 cursor-pointer tabular-nums hover:border-amber-400"
-          >
-            <Coins className="w-4 h-4" />
-            <span>{balanceTokens} Tokens</span>
-          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setActiveModule('pcm_credits')}
+              className="px-3 py-2 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-300 text-xs font-mono font-extrabold flex items-center gap-1.5 cursor-pointer tabular-nums hover:border-amber-400"
+            >
+              <Coins className="w-4 h-4" />
+              <span>{balanceTokens} Tokens</span>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* 5-Module Navigation Switcher */}
+      {/* Module Navigation Switcher */}
       <div className="flex flex-wrap gap-2">
         {MODULES.map((mod) => {
           const isActive = activeModule === mod.id;
@@ -204,6 +215,7 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
           selectedProfile={selectedProfile}
           onSelectProfile={setSelectedProfile}
           onCreditsUpdated={() => void loadCredits()}
+          isAdmin={isAdmin}
         />
       )}
 
@@ -222,7 +234,7 @@ export const UniversalMasterSuite: React.FC<UniversalMasterSuiteProps> = ({
         <CopilotJ1939Diagnostic selectedProfile={selectedProfile} />
       )}
 
-      {activeModule === 'pcm_credits' && (
+      {isAdmin && activeModule === 'pcm_credits' && (
         <PcmFlashCreditsModule
           balanceTokens={balanceTokens}
           activePacks={activePacks}

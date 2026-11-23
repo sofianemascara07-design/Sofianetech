@@ -121,12 +121,73 @@ export interface VaultPackageRecord {
 
 export type PublicVaultPackage = Omit<VaultPackageRecord, 'storedFileName'>;
 
+export interface SubscriberVaultPackage {
+  id: string;
+  title: string;
+  fileName: string;
+  extension: '.apk' | '.bin' | '.zip' | '.eep' | '.hex';
+  category: VaultFileCategory;
+  version: string;
+  sizeBytes: number;
+  notes?: string;
+  uploadedAt: string;
+  updatedAt: string;
+  isEligible?: boolean;
+  // Admin-only optional fields (omitted for subscribers)
+  sha256?: string;
+  allowedTiers?: VaultPaidTier[];
+  isActive?: boolean;
+  downloadCount?: number;
+}
+
+export interface OfficialGithubRepoEntry {
+  repo: string;
+  owner: string;
+  name: string;
+  displayName: string;
+  category:
+    | 'Autoradio & Média'
+    | 'GPS Hors-Ligne'
+    | 'Diagnostic OBD2'
+    | 'Android Auto'
+    | 'Utilitaires & GMS';
+  license: string;
+  descriptionFr: string;
+  officialHtmlUrl: string;
+  extensions: string[];
+}
+
+export interface OfficialExternalSourceEntry {
+  id: string;
+  name: string;
+  platform: 'F-Droid' | 'Aurora Store' | 'APKMirror' | 'XDA Head-Units';
+  category: string;
+  descriptionFr: string;
+  officialUrl: string;
+  recommendedApps: string[];
+}
+
+export interface GithubReleaseAssetItem {
+  id: number;
+  name: string;
+  extension: string;
+  sizeBytes: number;
+  downloadUrl: string;
+  sha256: string | null;
+  sha256Source: 'github_digest' | 'release_notes' | 'unavailable';
+  downloadCount: number;
+  updatedAt: string;
+  releaseTag: string;
+  releaseName: string;
+  publishedAt: string;
+  releaseHtmlUrl: string;
+}
+
 export type ConnectionPresenceStatus = 'online' | 'unstable' | 'offline' | 'never_connected';
 
 export interface LicenseSession {
-  key: string;
+  maskedKey: string;
   subscriberId?: string;
-  phone?: string;
   createdAt?: string;
   clientName: string;
   hwid: string;
@@ -137,7 +198,6 @@ export interface LicenseSession {
   demoExpiresAt?: string | null;
   isValid: boolean;
   isAdmin?: boolean;
-  signature: string;
   allowedModules: string[];
 }
 

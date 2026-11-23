@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -28,61 +28,13 @@ import {
 } from 'lucide-react';
 import { ConnectionPresenceStatus, LicenseTier, SecuritySettings, SubscriberRecord } from '../types/automotive';
 import { apiFetch } from '../utils/apiBridge';
+import { getAuthToken, setAuthToken } from '../utils/authSession';
 import { downloadCommercialPacksPdf, downloadCommercialPacksExcel } from '../utils/commercialCatalogExport';
 
 interface DeletedTombstone {
   id: string;
   licenseKey: string;
   deletedAt: string;
-}
-
-const ADMIN_SUBS_MIRROR_KEY = 'autopro_admin_subscribers_mirror_v1';
-const ADMIN_SUBS_DELETED_KEY = 'autopro_admin_deleted_subs_v1';
-
-function loadAdminMirror(): SubscriberRecord[] {
-  try {
-    const raw = localStorage.getItem(ADMIN_SUBS_MIRROR_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveAdminMirror(list: SubscriberRecord[]) {
-  try {
-    localStorage.setItem(ADMIN_SUBS_MIRROR_KEY, JSON.stringify(list));
-  } catch {
-    // Ignore storage quota errors
-  }
-}
-
-function loadDeletedTombstones(): DeletedTombstone[] {
-  try {
-    const raw = localStorage.getItem(ADMIN_SUBS_DELETED_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function addDeletedTombstone(id: string, licenseKey: string): DeletedTombstone[] {
-  const prev = loadDeletedTombstones().filter(
-    (d) => d.id !== id && d.licenseKey.toUpperCase() !== licenseKey.toUpperCase()
-  );
-  const next: DeletedTombstone[] = [
-    { id, licenseKey: licenseKey.toUpperCase(), deletedAt: new Date().toISOString() },
-    ...prev,
-  ].slice(0, 300);
-  try {
-    localStorage.setItem(ADMIN_SUBS_DELETED_KEY, JSON.stringify(next));
-  } catch {
-    // Ignore storage quota errors
-  }
-  return next;
 }
 
 function formatDurationFr(seconds: number): string {
@@ -161,7 +113,8 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
   onAdminSessionInvalid,
   onOpenVault,
 }) => {
-  const [subscribers, setSubscribers] = useState<SubscriberRecord[]>(() => loadAdminMirror());
+  const [subscribers, setSubscribers] = useState<SubscriberRecord[]>([]);
+  const deletedTombstonesRef = useRef<DeletedTombstone[]>([]);
   const [security, setSecurity] = useState<SecuritySettings>({
     demoLinksEnabled: false,
     defaultDemoMinutes: 10,
@@ -193,39 +146,31 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
   const [newAdminPasscode, setNewAdminPasscode] = useState('');
   const [savingSecurity, setSavingSecurity] = useState(false);
 
-  const getAdminPasscode = () => sessionStorage.getItem('autopro_admin_passcode') || '';
-
   const showMsg = (type: 'success' | 'error', text: string) => {
     setFeedback({ type, text });
     setTimeout(() => setFeedback(null), 5000);
   };
 
   const loadOverview = useCallback(async (silent = false) => {
-    const pass = getAdminPasscode();
-    if (!pass) {
-      onAdminSessionInvalid?.('Mot de passe Admin manquant dans cette session.');
+    if (!getAuthToken()) {
+      onAdminSessionInvalid?.('Jeton de session Administrateur absent.');
       return;
     }
     if (!silent) setLoading(true);
     try {
-      const localMirror = loadAdminMirror();
-      const deletedTombstones = loadDeletedTombstones();
-
-      // Synchronize local Admin mirror with backend so wiped Render restarts auto-restore all subscribers
       const res = await apiFetch('/api/admin/subscribers/sync', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-passcode': pass,
         },
         body: JSON.stringify({
-          subscribers: localMirror,
-          deletedTombstones,
+          subscribers: [],
+          deletedTombstones: deletedTombstonesRef.current,
         }),
       });
 
-      if (res.status === 401) {
-        onAdminSessionInvalid?.('Session Administrateur refusée ou mot de passe modifié.');
+      if (res.status === 401 || res.status === 403) {
+        onAdminSessionInvalid?.('Session Administrateur expirée ou refusée.');
         return;
       }
 
@@ -233,7 +178,6 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
       if (res.ok && data.success) {
         const syncedList: SubscriberRecord[] = data.subscribers || [];
         setSubscribers(syncedList);
-        saveAdminMirror(syncedList);
         if (data.securitySettings) {
           setSecurity(data.securitySettings);
         }
@@ -243,13 +187,9 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
         throw new Error('SYNC_FAILED');
       }
     } catch {
-      const fallbackMirror = loadAdminMirror();
-      if (fallbackMirror.length > 0) {
-        setSubscribers(fallbackMirror);
-      }
       setIsMirrorOffline(true);
       if (!silent) {
-        showMsg('error', 'Serveur en réveil / hors ligne — Affichage du coffre local Admin (sync auto à la reconnexion).');
+        showMsg('error', 'Serveur temporairement indisponible — Nouvelle tentative automatique à la reconnexion.');
       }
     } finally {
       if (!silent) setLoading(false);
@@ -290,7 +230,6 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-passcode': getAdminPasscode(),
         },
         body: JSON.stringify({}),
       });
@@ -317,7 +256,6 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-passcode': getAdminPasscode(),
         },
         body: JSON.stringify({
           demoLinksEnabled: nextValue,
@@ -345,6 +283,10 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
 
   const handleUpdateSecurityRules = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (newAdminPasscode.trim() && newAdminPasscode.trim().length < 8) {
+      showMsg('error', 'Le nouveau mot de passe Admin doit contenir au moins 8 caractères.');
+      return;
+    }
     setSavingSecurity(true);
     try {
       const payload: Record<string, unknown> = {
@@ -357,17 +299,16 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-passcode': getAdminPasscode(),
         },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (res.ok && data.success) {
         setSecurity(data.securitySettings);
-        if (newAdminPasscode.trim()) {
-          sessionStorage.setItem('autopro_admin_passcode', newAdminPasscode.trim());
-          setNewAdminPasscode('');
+        if (typeof data.token === 'string' && data.token) {
+          setAuthToken(data.token);
         }
+        setNewAdminPasscode('');
         showMsg('success', 'Paramètres de sécurité & code Admin mis à jour.');
       } else {
         showMsg('error', data.error || 'Mise à jour refusée.');
@@ -391,7 +332,6 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-passcode': getAdminPasscode(),
         },
         body: JSON.stringify({
           clientName: newClientName.trim(),
@@ -404,11 +344,7 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success && data.subscriber) {
-        setSubscribers(prev => {
-          const next = [data.subscriber, ...prev];
-          saveAdminMirror(next);
-          return next;
-        });
+        setSubscribers(prev => [data.subscriber, ...prev]);
         setLastCreatedSub(data.subscriber);
         setNewClientName('');
         setNewPhone('');
@@ -438,7 +374,6 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-passcode': getAdminPasscode(),
         },
         body: JSON.stringify({
           status: nextStatus,
@@ -450,15 +385,11 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success && data.subscriber) {
-        setSubscribers(prev => {
-          const next = prev.map(item => (item.id === sub.id ? data.subscriber : item));
-          saveAdminMirror(next);
-          return next;
-        });
+        setSubscribers(prev => prev.map(item => (item.id === sub.id ? data.subscriber : item)));
         showMsg(
           'success',
           nextStatus === 'suspended'
-            ? `Client "${sub.clientName}" DÉSACTIVÉ & BLOQUÉ immédiatement (même s'il a déjà ouvert le lien).`
+            ? `Client "${sub.clientName}" DÉSACTIVÉ & BLOQUÉ immédiatement.`
             : `Client "${sub.clientName}" RÉACTIVÉ avec succès.`
         );
       } else {
@@ -476,15 +407,10 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
     try {
       const res = await apiFetch(`/api/admin/subscribers/${sub.id}/reset-hwid`, {
         method: 'POST',
-        headers: { 'x-admin-passcode': getAdminPasscode() },
       });
       const data = await res.json();
       if (res.ok && data.success && data.subscriber) {
-        setSubscribers(prev => {
-          const next = prev.map(item => (item.id === sub.id ? data.subscriber : item));
-          saveAdminMirror(next);
-          return next;
-        });
+        setSubscribers(prev => prev.map(item => (item.id === sub.id ? data.subscriber : item)));
         showMsg('success', `Empreinte HWID réinitialisée pour ${sub.clientName}.`);
       } else {
         showMsg('error', data.error || 'Erreur reset HWID.');
@@ -501,16 +427,16 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
     try {
       const res = await apiFetch(`/api/admin/subscribers/${sub.id}`, {
         method: 'DELETE',
-        headers: { 'x-admin-passcode': getAdminPasscode() },
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        addDeletedTombstone(sub.id, sub.licenseKey);
-        setSubscribers(prev => {
-          const next = prev.filter(item => item.id !== sub.id);
-          saveAdminMirror(next);
-          return next;
-        });
+        deletedTombstonesRef.current = [
+          { id: sub.id, licenseKey: sub.licenseKey.toUpperCase(), deletedAt: new Date().toISOString() },
+          ...deletedTombstonesRef.current.filter(
+            (d) => d.id !== sub.id && d.licenseKey !== sub.licenseKey.toUpperCase()
+          ),
+        ].slice(0, 300);
+        setSubscribers(prev => prev.filter(item => item.id !== sub.id));
         showMsg('success', `Abonné "${sub.clientName}" supprimé définitivement.`);
       } else {
         showMsg('error', data.error || 'Suppression refusée.');
@@ -581,7 +507,7 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                Console Propriétaire Sofiane · Accès Ouvert
+                Console Administration &amp; Abonnés
               </span>
               <span
                 className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${
@@ -604,17 +530,17 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
                 <Radio className="w-3 h-3" />
                 <span>
                   {isMirrorOffline
-                    ? 'Coffre Local Admin (Serveur hors-ligne)'
+                    ? 'Serveur hors-ligne'
                     : `Sync Direct${lastSyncAt ? ` · ${lastSyncAt}` : ''}`}
                 </span>
               </span>
             </div>
             <h1 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2.5">
               <ShieldAlert className="w-6 h-6 text-amber-400 shrink-0" />
-              <span>Contrôle Abonnés Permanents, Présence Directe &amp; Anti-Manipulation</span>
+              <span>Contrôle Abonnés, Présence Directe &amp; Sécurité</span>
             </h1>
             <p className="text-xs text-slate-300 max-w-3xl leading-relaxed">
-              Tous les abonnés activés restent enregistrés et visibles en permanence jusqu’à désactivation manuelle (avec synchronisation coffre local + auto-restauration HMAC). Surveillez en direct qui est connecté ou a perdu la connexion.
+              Gérez les abonnés enregistrés, leur présence en direct et le verrouillage des démonstrations.
             </p>
           </div>
 
@@ -938,7 +864,7 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
               </label>
               <input
                 type="password"
-                placeholder="Nouveau code secret Admin (min. 4 car.)"
+                placeholder="Nouveau code secret Admin (min. 8 car.)"
                 value={newAdminPasscode}
                 onChange={(e) => setNewAdminPasscode(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-500"

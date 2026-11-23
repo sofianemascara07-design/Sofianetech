@@ -61,7 +61,7 @@ ALLOWED_ORIGINS = {
 }
 
 # Secret HMAC éphémère ou configuré via variable d'environnement pour la session locale
-SESSION_HMAC_SECRET = os.environ.get("AUTOPRO_AGENT_HMAC_SECRET") or "AUTOPRO_DZ_LOCAL_SESSION_KEY_2026"
+SESSION_HMAC_SECRET = os.environ.get("AUTOPRO_AGENT_HMAC_SECRET") or secrets.token_hex(32)
 
 # Seuils Watchdog Tension Batterie (Anti-Bricking)
 VOLT_MIN_ALLOWED = 13.0

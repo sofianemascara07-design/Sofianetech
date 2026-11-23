@@ -146,13 +146,9 @@ export const SdrProspectsTracker: React.FC<SdrProspectsTrackerProps> = ({ shared
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const getAdminHeaders = (): Record<string, string> => {
-    const pass = sessionStorage.getItem('autopro_admin_passcode') || '';
-    return {
-      'Content-Type': 'application/json',
-      ...(pass ? { 'x-admin-passcode': pass } : {}),
-    };
-  };
+  const getAdminHeaders = (): Record<string, string> => ({
+    'Content-Type': 'application/json',
+  });
 
   const fetchProspects = async () => {
     setLoading(true);

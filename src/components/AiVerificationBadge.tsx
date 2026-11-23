@@ -19,11 +19,9 @@ export const AiVerificationBadge: React.FC<AiVerificationBadgeProps> = ({ verifi
 
   const isFiltered = verification.blockedHallucinations && verification.blockedHallucinations.length > 0;
   const providerLabel =
-    verification.provider === 'gemini-4-hydrogen'
-      ? 'Gemini 4 Déterministe'
-      : verification.provider === 'groq-deterministic'
-      ? 'Groq Déterministe (Temp 0)'
-      : 'Règles Atelier Certifiées (Hors-Ligne)';
+    verification.provider === 'gemini-4-hydrogen' || verification.provider === 'groq-deterministic'
+      ? 'Contrôle Serveur Certifié'
+      : 'Contrôle Hors-Ligne Certifié';
 
   return (
     <div

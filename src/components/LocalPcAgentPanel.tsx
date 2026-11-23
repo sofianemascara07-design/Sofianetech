@@ -26,7 +26,6 @@ import {
   LocalAgentWritePolicy,
 } from '../types/automotive';
 import {
-  LOCAL_PC_AGENT_URL,
   getOrCreateAgentPairToken,
   regenerateAgentPairToken,
   getOrCreateAgentHmacSecret,
@@ -48,6 +47,7 @@ import {
 interface LocalPcAgentPanelProps {
   batteryVoltage?: number;
   compact?: boolean;
+  isAdmin?: boolean;
   onAgentConnectionChange?: (connected: boolean) => void;
 }
 
@@ -71,6 +71,7 @@ const ECU_TARGET_PRESETS = [
 export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
   batteryVoltage = 13.8,
   compact = false,
+  isAdmin = false,
   onAgentConnectionChange,
 }) => {
   const [pairToken, setPairToken] = useState<string>(() => getOrCreateAgentPairToken());
@@ -196,7 +197,7 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
     });
     setFeedback({
       type: 'ok',
-      text: `Fichier "${file.name}" vérifié (${(integrity.sizeBytes / 1024).toFixed(1)} Ko · CRC32 ${integrity.crc32Hex}) et signé HMAC-SHA256.`,
+      text: `Fichier "${file.name}" vérifié (${(integrity.sizeBytes / 1024).toFixed(1)} Ko · CRC32 ${integrity.crc32Hex}).`,
     });
   };
 
@@ -223,7 +224,7 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
       });
       await refreshStatus(true);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Erreur communication Agent PC 127.0.0.1:38450.';
+      const msg = err instanceof Error ? err.message : 'Erreur communication Agent PC local.';
       setFlashResult({ ok: false, status: 'AGENT_ERROR', message: msg });
       setFeedback({ type: 'err', text: msg });
     } finally {
@@ -232,6 +233,7 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
   };
 
   const handleTestCloudSeedKey = async () => {
+    if (!isAdmin) return;
     setBusyActionId('seed_test');
     try {
       const res = await testCloudSeedKey({
@@ -242,10 +244,10 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
       });
       if (res.success && res.keyHex) {
         setCloudSeedTest(
-          `Seed 4A9F12C0 → Cloud Key ${res.keyHex} (${res.udsSendKeyFrameHex}) · ${res.ecuFamily}`
+          `Seed 4A9F12C0 → Clé Serveur OK (${res.ecuFamily})`
         );
       } else {
-        setCloudSeedTest(res.error || 'Échec calcul Cloud Seed/Key.');
+        setCloudSeedTest(res.error || 'Échec calcul Seed/Key.');
       }
     } finally {
       setBusyActionId(null);
@@ -274,7 +276,7 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
     } catch {
       setFeedback({
         type: 'err',
-        text: 'Agent PC non détecté sur 127.0.0.1:38450. Lancez install_agent.bat sur le poste client.',
+        text: 'Agent PC non détecté. Vérifiez que le service local est actif sur votre poste.',
       });
     } finally {
       setBusyActionId(null);
@@ -324,7 +326,7 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <span className="px-2.5 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1.5">
               <Laptop className="w-3.5 h-3.5" />
-              Agent PC J2534 Python FastAPI · 127.0.0.1:38450
+              {isAdmin ? 'Agent PC J2534 · Passerelle Locale' : 'Agent PC J2534 Local'}
             </span>
 
             <span
@@ -335,11 +337,11 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
               }`}
             >
               {agentStatus?.connected
-                ? `CONNECTÉ · ${agentStatus.agentEngine === 'PYTHON_FASTAPI_J2534' ? 'FastAPI ctypes J2534' : 'Bridge'} · ${agentStatus.hostname}`
-                : 'HORS LIGNE · 127.0.0.1:38450'}
+                ? `CONNECTÉ · ${agentStatus.hostname || 'Poste Atelier'}`
+                : 'HORS LIGNE'}
             </span>
 
-            {/* Badge Tension Batterie en temps réel (PassThruIoctl READ_VBATT) */}
+            {/* Badge Tension Batterie en temps réel */}
             <span
               className={`px-2.5 py-0.5 rounded font-mono text-[10px] font-extrabold border flex items-center gap-1 tabular-nums ${
                 isVoltageSafe
@@ -349,7 +351,7 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
             >
               <BatteryCharging className="w-3.5 h-3.5" />
               <span>
-                {effectiveVoltage.toFixed(2)}V · {isVoltageSafe ? 'STABILISÉ (≥13.0V)' : 'VOLTAGE_LOW / BLOQUÉ'}
+                {effectiveVoltage.toFixed(2)}V · {isVoltageSafe ? 'STABILISÉ (≥13.0V)' : 'TENSION BASSE / BLOQUÉ'}
               </span>
             </span>
 
@@ -361,10 +363,10 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
           </div>
 
           <h3 className="text-base font-bold text-white">
-            Pont Sécurisé PC ↔ J2534 (Scanmatik 2 Pro / Tactrix OpenPort 2.0) &amp; Cloud Seed/Key 0x27
+            Pont Sécurisé PC ↔ J2534 (Scanmatik 2 Pro / Tactrix OpenPort 2.0)
           </h3>
           <p className="text-xs text-slate-400">
-            Isolation stricte localhost + pare-feu Windows port 38450, signature HMAC-SHA256 sur chaque <code className="text-cyan-300">.bin</code>, calcul Seed/Key déporté Cloud, Auto-Backup <code className="text-cyan-300">C:\AutoPro_Backups\</code> et <code className="text-cyan-300">TesterPresent 0x3E 0x80</code> / 2s.
+            Vérification d&apos;intégrité sur chaque fichier binaire, sauvegarde automatique avant écriture et maintien de session sécurisé.
           </p>
         </div>
 
@@ -379,33 +381,37 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
             <span>Détecter Agent</span>
           </button>
 
-          <button
-            type="button"
-            onClick={handleDownloadPythonInstallBat}
-            className="min-h-[40px] px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-sm"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>install_agent.bat (UAC + Pare-feu)</span>
-          </button>
+          {isAdmin && (
+            <>
+              <button
+                type="button"
+                onClick={handleDownloadPythonInstallBat}
+                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>install_agent.bat (UAC + Pare-feu)</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => void handleDownloadAgentPy()}
-            className="min-h-[40px] px-3 py-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-          >
-            <FileCode2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>agent_server.py</span>
-          </button>
+              <button
+                type="button"
+                onClick={() => void handleDownloadAgentPy()}
+                className="min-h-[40px] px-3 py-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileCode2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>agent_server.py</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={handleDownloadStandaloneMjs}
-            className="min-h-[40px] px-2.5 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1 cursor-pointer"
-            title="Version légère Node.js alternative"
-          >
-            <Terminal className="w-3.5 h-3.5 text-slate-400" />
-            <span>.mjs</span>
-          </button>
+              <button
+                type="button"
+                onClick={handleDownloadStandaloneMjs}
+                className="min-h-[40px] px-2.5 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                title="Version légère Node.js alternative"
+              >
+                <Terminal className="w-3.5 h-3.5 text-slate-400" />
+                <span>.mjs</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -445,29 +451,31 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
         </div>
       )}
 
-      {/* FLASH ECU ANTI-BRICKING & HMAC-SHA256 + CLOUD SEED/KEY 0x27 */}
+      {/* FLASH ECU ANTI-BRICKING */}
       <div className="p-4 rounded-xl bg-slate-950/90 border border-cyan-500/30 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-cyan-400" />
             <span className="text-xs font-extrabold uppercase tracking-wider text-white">
-              Console Flash J2534 Anti-Bricking (HMAC-SHA256 + CRC32 + Cloud 0x27)
+              Console Flash J2534 Anti-Bricking (CRC32 + Protections)
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={busyActionId === 'seed_test'}
-              onClick={() => void handleTestCloudSeedKey()}
-              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-            >
-              <CloudCog className="w-3.5 h-3.5" />
-              <span>Tester Cloud Seed/Key 0x27</span>
-            </button>
-          </div>
+          {isAdmin && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={busyActionId === 'seed_test'}
+                onClick={() => void handleTestCloudSeedKey()}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+              >
+                <CloudCog className="w-3.5 h-3.5" />
+                <span>Tester Cloud Seed/Key 0x27</span>
+              </button>
+            </div>
+          )}
         </div>
 
-        {cloudSeedTest && (
+        {isAdmin && cloudSeedTest && (
           <div className="px-3 py-2 rounded-lg bg-cyan-950/50 border border-cyan-500/40 text-[11px] font-mono text-cyan-200">
             {cloudSeedTest}
           </div>
@@ -545,11 +553,11 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
                   ? `${agentStatus.flashProgress.stage} (${agentStatus.flashProgress.percent}%)`
                   : flashResult
                   ? `${flashResult.status} : ${flashResult.message}`
-                  : 'Prêt : Auto-Backup C:\\AutoPro_Backups\\ + TesterPresent 0x3E 0x80'}
+                  : 'Prêt : Sauvegarde locale automatique + Maintien session actif'}
               </span>
               {agentStatus?.flashProgress?.testerPresentActive && (
                 <span className="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-500/50 text-emerald-300 font-mono text-[10px]">
-                  0x3E 0x80 ACTIF
+                  MAINTIEN ACTIF
                 </span>
               )}
             </div>
@@ -571,7 +579,7 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
                 }}
               />
             </div>
-            {(flashResult?.backupPath || agentStatus?.flashProgress?.backupPath) && (
+            {isAdmin && (flashResult?.backupPath || agentStatus?.flashProgress?.backupPath) && (
               <div className="text-[10px] font-mono text-emerald-300 flex items-center gap-1">
                 <HardDrive className="w-3 h-3" />
                 <span>
@@ -603,62 +611,64 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
         </div>
       </div>
 
-      {/* Config Row: Pairing Token + HMAC Secret + Auto-Write Policy */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
-        <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-300 flex items-center gap-1.5">
-              <KeyRound className="w-3.5 h-3.5 text-cyan-400" />
-              Jeton X-AutoPro-Token &amp; Clé HMAC-SHA256
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setPairToken(regenerateAgentPairToken());
-                setHmacSecret(regenerateAgentHmacSecret());
-              }}
-              className="text-[11px] text-cyan-400 hover:text-cyan-300 font-semibold cursor-pointer"
-            >
-              Régénérer Paire
-            </button>
+      {/* Config Row: Pairing Token + HMAC Secret (Admin Only) + Auto-Write Policy */}
+      <div className={`grid grid-cols-1 ${isAdmin ? 'lg:grid-cols-2' : ''} gap-3 text-xs`}>
+        {isAdmin && (
+          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                <KeyRound className="w-3.5 h-3.5 text-cyan-400" />
+                Jeton X-AutoPro-Token &amp; Clé HMAC-SHA256
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPairToken(regenerateAgentPairToken());
+                  setHmacSecret(regenerateAgentHmacSecret());
+                }}
+                className="text-[11px] text-cyan-400 hover:text-cyan-300 font-semibold cursor-pointer"
+              >
+                Régénérer Paire
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 font-mono font-bold text-cyan-300 truncate">
+                {pairToken}
+              </code>
+              <button
+                type="button"
+                onClick={() => handleCopy('token', pairToken)}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1 cursor-pointer"
+              >
+                {copiedKey === 'token' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedKey === 'token' ? 'OK' : 'Token'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCopy('hmac', hmacSecret)}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 flex items-center gap-1 cursor-pointer"
+              >
+                {copiedKey === 'hmac' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedKey === 'hmac' ? 'OK' : 'HMAC'}</span>
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <code className="text-[10px] font-mono text-slate-400 truncate">{launchCommand}</code>
+              <button
+                type="button"
+                onClick={() =>
+                  handleCopy(
+                    'cmd',
+                    `set AUTOPRO_TOKEN=${pairToken}&& set AUTOPRO_HMAC_SECRET=${hmacSecret}&& python agent_server.py`
+                  )
+                }
+                className="px-2 py-0.5 rounded bg-slate-800 text-[10px] text-slate-300 shrink-0 cursor-pointer"
+              >
+                {copiedKey === 'cmd' ? 'OK' : 'Copier CLI'}
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 font-mono font-bold text-cyan-300 truncate">
-              {pairToken}
-            </code>
-            <button
-              type="button"
-              onClick={() => handleCopy('token', pairToken)}
-              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1 cursor-pointer"
-            >
-              {copiedKey === 'token' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedKey === 'token' ? 'OK' : 'Token'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleCopy('hmac', hmacSecret)}
-              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 flex items-center gap-1 cursor-pointer"
-            >
-              {copiedKey === 'hmac' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedKey === 'hmac' ? 'OK' : 'HMAC'}</span>
-            </button>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <code className="text-[10px] font-mono text-slate-400 truncate">{launchCommand}</code>
-            <button
-              type="button"
-              onClick={() =>
-                handleCopy(
-                  'cmd',
-                  `set AUTOPRO_TOKEN=${pairToken}&& set AUTOPRO_HMAC_SECRET=${hmacSecret}&& python agent_server.py`
-                )
-              }
-              className="px-2 py-0.5 rounded bg-slate-800 text-[10px] text-slate-300 shrink-0 cursor-pointer"
-            >
-              {copiedKey === 'cmd' ? 'OK' : 'Copier CLI'}
-            </button>
-          </div>
-        </div>
+        )}
 
         {/* Politique d'Exécution d'Écriture */}
         <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800 space-y-2">
@@ -719,25 +729,33 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
           <div className="flex items-center justify-between">
             <span className="font-bold text-white flex items-center gap-1.5">
               <Cpu className="w-4 h-4 text-cyan-400" />
-              Drivers J2534 Détectés (Registre Windows)
+              Interfaces J2534 Détectées
             </span>
             <span className="text-[10px] font-mono text-slate-500">
-              {agentStatus ? `${agentStatus.drivers.length} interface(s)` : 'Hors ligne'}
+              {agentStatus ? `${(agentStatus.drivers ?? []).length} interface(s)` : 'Hors ligne'}
             </span>
           </div>
 
           {!agentStatus ? (
             <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-slate-400 space-y-1.5">
-              <p>
-                1. Téléchargez <strong className="text-cyan-300">install_agent.bat</strong> et <strong className="text-emerald-300">agent_server.py</strong> dans un même dossier puis lancez <code className="text-slate-200">install_agent.bat</code>.
-              </p>
-              <p>
-                2. L’installateur élève les droits UAC, bloque le port <code className="text-slate-300">38450</code> sur le réseau public via <code className="text-slate-300">netsh advfirewall</code> et scanne <code className="text-slate-300">PassThruSupport.04.04</code>.
-              </p>
+              {isAdmin ? (
+                <>
+                  <p>
+                    1. Téléchargez <strong className="text-cyan-300">install_agent.bat</strong> et <strong className="text-emerald-300">agent_server.py</strong> dans un même dossier puis lancez <code className="text-slate-200">install_agent.bat</code>.
+                  </p>
+                  <p>
+                    2. L’installateur élève les droits UAC, configure le pare-feu local et scanne les pilotes J2534 installés.
+                  </p>
+                </>
+              ) : (
+                <p>
+                  Branchez votre interface J2534 USB et démarrez votre passerelle locale sur le poste atelier pour détecter le matériel.
+                </p>
+              )}
             </div>
           ) : (
             <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-              {agentStatus.drivers.map((drv, i) => (
+              {(agentStatus.drivers ?? []).map((drv, i) => (
                 <div
                   key={`${drv.name}-${i}`}
                   className="p-2 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between gap-2"
@@ -745,7 +763,7 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
                   <div className="min-w-0">
                     <div className="font-semibold text-white truncate">{drv.name}</div>
                     <div className="text-[10px] font-mono text-slate-400 truncate">
-                      {drv.vendor} {drv.dllPath ? `· ${drv.dllPath}` : ''}
+                      {drv.vendor} {isAdmin && drv.dllPath ? `· ${drv.dllPath}` : ''}
                     </div>
                   </div>
                   <span
@@ -782,15 +800,15 @@ export const LocalPcAgentPanel: React.FC<LocalPcAgentPanelProps> = ({
             </button>
           </div>
 
-          {!agentStatus || agentStatus.recentRequests.length === 0 ? (
+          {!agentStatus || (agentStatus.recentRequests ?? []).length === 0 ? (
             <div className="p-4 rounded-lg bg-slate-900 border border-slate-800 text-center text-[11px] text-slate-400">
               {agentStatus?.connected
                 ? 'Aucune requête en attente. Chargez un .bin ci-dessus ou testez une routine UDS.'
-                : `Connectez l’Agent PC sur ${LOCAL_PC_AGENT_URL} pour superviser les écritures et télémesures J2534.`}
+                : 'Connectez l’Agent PC local pour superviser les écritures et télémesures J2534.'}
             </div>
           ) : (
             <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
-              {agentStatus.recentRequests.map((reqItem) => (
+              {(agentStatus.recentRequests ?? []).map((reqItem) => (
                 <div
                   key={reqItem.id}
                   className={`p-2.5 rounded-lg border space-y-1.5 ${

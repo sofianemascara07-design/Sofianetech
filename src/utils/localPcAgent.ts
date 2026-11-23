@@ -7,8 +7,8 @@ import { apiFetch } from './apiBridge';
 import agentServerPySource from '../agent/agent_server.py?raw';
 
 export const LOCAL_PC_AGENT_URL = 'http://127.0.0.1:38450';
-const TOKEN_STORAGE_KEY = 'autopro_pc_agent_token';
-const HMAC_STORAGE_KEY = 'autopro_pc_agent_hmac_secret';
+let memoryPairToken = '';
+let memoryHmacSecret = '';
 
 function generateRandomHex(byteCount: number): string {
   const buf = new Uint8Array(byteCount);
@@ -24,51 +24,27 @@ function generateRandomHex(byteCount: number): string {
 }
 
 export function getOrCreateAgentPairToken(): string {
-  try {
-    const existing = localStorage.getItem(TOKEN_STORAGE_KEY);
-    if (existing && existing.startsWith('AP-PC-') && existing.length >= 12) {
-      return existing;
-    }
-    const token = `AP-PC-${generateRandomHex(6)}`;
-    localStorage.setItem(TOKEN_STORAGE_KEY, token);
-    return token;
-  } catch {
-    return `AP-PC-${generateRandomHex(6)}`;
+  if (!memoryPairToken || !memoryPairToken.startsWith('AP-PC-') || memoryPairToken.length < 12) {
+    memoryPairToken = `AP-PC-${generateRandomHex(6)}`;
   }
+  return memoryPairToken;
 }
 
 export function regenerateAgentPairToken(): string {
-  const token = `AP-PC-${generateRandomHex(6)}`;
-  try {
-    localStorage.setItem(TOKEN_STORAGE_KEY, token);
-  } catch {
-    // Ignore storage error
-  }
-  return token;
+  memoryPairToken = `AP-PC-${generateRandomHex(6)}`;
+  return memoryPairToken;
 }
 
 export function getOrCreateAgentHmacSecret(): string {
-  try {
-    const existing = localStorage.getItem(HMAC_STORAGE_KEY);
-    if (existing && existing.length >= 32) {
-      return existing;
-    }
-    const secret = generateRandomHex(32);
-    localStorage.setItem(HMAC_STORAGE_KEY, secret);
-    return secret;
-  } catch {
-    return generateRandomHex(32);
+  if (!memoryHmacSecret || memoryHmacSecret.length < 32) {
+    memoryHmacSecret = generateRandomHex(32);
   }
+  return memoryHmacSecret;
 }
 
 export function regenerateAgentHmacSecret(): string {
-  const secret = generateRandomHex(32);
-  try {
-    localStorage.setItem(HMAC_STORAGE_KEY, secret);
-  } catch {
-    // Ignore storage error
-  }
-  return secret;
+  memoryHmacSecret = generateRandomHex(32);
+  return memoryHmacSecret;
 }
 
 /**
@@ -820,7 +796,7 @@ export async function downloadAgentServerPy(): Promise<string> {
 export function downloadPairedInstallAgentBat(
   pairToken: string,
   hmacSecret: string,
-  cloudApiUrl = typeof window !== 'undefined' ? window.location.origin : 'https://autoprodz-a7071.web.app'
+  cloudApiUrl = typeof window !== 'undefined' ? window.location.origin : ''
 ): string {
   const safeUrl = cloudApiUrl.replace(/["'&|<>^]/g, '');
   const pyB64 = uint8ToBase64(new TextEncoder().encode(agentServerPySource));

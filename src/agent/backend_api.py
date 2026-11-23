@@ -46,8 +46,8 @@ from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 # ==============================================================================
 
 DATABASE_URL = os.environ.get("AUTOPRO_DATABASE_URL", "sqlite:///./autopro_saas.db")
-JWT_SECRET = os.environ.get("AUTOPRO_JWT_SECRET") or "CHANGE_ME_AUTOPRO_DZ_JWT_SECRET_2026"
-VIN_BIND_SECRET = os.environ.get("AUTOPRO_VIN_BIND_SECRET") or "CHANGE_ME_AUTOPRO_VIN_HMAC_2026"
+JWT_SECRET = os.environ.get("AUTOPRO_JWT_SECRET") or secrets.token_hex(32)
+VIN_BIND_SECRET = os.environ.get("AUTOPRO_VIN_BIND_SECRET") or secrets.token_hex(32)
 JWT_EXPIRY_SECONDS = int(os.environ.get("AUTOPRO_JWT_TTL", "43200"))  # 12 heures
 
 ALLOWED_ORIGINS = [
@@ -247,6 +247,9 @@ def get_db():
 
 
 def ensure_default_accounts() -> None:
+    admin_pass = (os.environ.get("AUTOPRO_ADMIN_PASS") or "").strip()
+    if not admin_pass:
+        return
     db = SessionLocal()
     try:
         admin_email = os.environ.get("AUTOPRO_ADMIN_EMAIL", "admin@autoprodz.dz")
@@ -256,24 +259,12 @@ def ensure_default_accounts() -> None:
                     email=admin_email,
                     workshop_name="Console Admin AutoPro DZ",
                     wilaya="Mascara",
-                    password_hash=hash_password(os.environ.get("AUTOPRO_ADMIN_PASS", "AutoProDZ#2026")),
+                    password_hash=hash_password(admin_pass),
                     role="admin",
                     credits=9999,
                 )
             )
-        demo_email = "atelier@autoprodz.dz"
-        if not db.query(WorkshopAccount).filter(WorkshopAccount.email == demo_email).first():
-            db.add(
-                WorkshopAccount(
-                    email=demo_email,
-                    workshop_name="Atelier Pilote DZ",
-                    wilaya="Mascara",
-                    password_hash=hash_password("AtelierDZ#2026"),
-                    role="workshop",
-                    credits=25,
-                )
-            )
-        db.commit()
+            db.commit()
     finally:
         db.close()
 

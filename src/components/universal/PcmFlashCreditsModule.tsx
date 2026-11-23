@@ -6,10 +6,8 @@ import {
   Download,
   FileCode2,
   CheckCircle2,
-  Server,
 } from 'lucide-react';
 import { apiFetch } from '../../utils/apiBridge';
-import cloudBackendFastapiRaw from '../../agent/cloud_backend_fastapi.py?raw';
 import {
   downloadAgentServerPy,
   downloadPairedInstallAgentBat,
@@ -87,20 +85,9 @@ export const PcmFlashCreditsModule: React.FC<PcmFlashCreditsModuleProps> = ({
     }
   };
 
-  const handleDownloadCloudFastApi = () => {
-    const blob = new Blob([cloudBackendFastapiRaw], { type: 'text/x-python;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'cloud_backend_fastapi.py';
-    a.click();
-    URL.revokeObjectURL(url);
-    setBanner('Code Backend Cloud FastAPI (cloud_backend_fastapi.py) téléchargé.');
-  };
-
   const handleDownloadBat = () => {
     const fn = downloadPairedInstallAgentBat(getOrCreateAgentPairToken(), getOrCreateAgentHmacSecret());
-    setBanner(`Installateur PC "${fn}" (UAC + netsh pare-feu 38450 + agent_server.py auto-extrait) téléchargé.`);
+    setBanner(`Installateur PC "${fn}" téléchargé.`);
   };
 
   return (
@@ -129,15 +116,6 @@ export const PcmFlashCreditsModule: React.FC<PcmFlashCreditsModuleProps> = ({
           >
             <PlusCircle className="w-4 h-4" />
             <span>+10 Tokens Atelier</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadCloudFastApi}
-            className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#0B1120] hover:border-cyan-400 border border-slate-700 text-cyan-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-          >
-            <Server className="w-4 h-4" />
-            <span>Backend FastAPI (.py)</span>
           </button>
 
           <button

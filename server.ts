@@ -4,7 +4,12 @@ import dotenv from 'dotenv';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { saasDatabase } from './src/server/database';
+import { saasDatabase, AuthTokenPayload } from './src/server/database';
+import type {
+  OfficialGithubRepoEntry,
+  OfficialExternalSourceEntry,
+  GithubReleaseAssetItem,
+} from './src/types/automotive';
 import {
   AiVerificationReport,
   verifyDiagnosticAiOutput,
@@ -69,13 +74,11 @@ app.use((req, res, next) => {
   if (origin && isAllowedOrigin(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Vary', 'Origin');
-  } else if (!origin) {
-    res.header('Access-Control-Allow-Origin', '*');
   }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
   res.header(
     'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-passcode, X-AutoPro-Token, X-AutoPro-Signature, X-Vault-File-Name, X-Vault-Title, X-Vault-Version, X-Vault-Category, X-Vault-Tiers, X-Vault-Notes'
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Vault-File-Name, X-Vault-Title, X-Vault-Version, X-Vault-Category, X-Vault-Tiers, X-Vault-Notes'
   );
   res.header('Access-Control-Expose-Headers', 'Content-Disposition, X-Vault-Sha256');
 
@@ -181,9 +184,6 @@ app.get('/api/health', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   return res.json({
     status: 'ok',
-    service: 'AutoPro Diagnostic & Flash Backend DZ',
-    version: '3.2.0-remote-stable',
-    features: ['admin-whitelist', 'limited-demo', 'cameras', 'atelier-mode', 'pdf-reports', 'client-activity', 'backup', 'hmac-security', 'rate-limit', 'ihu-antibrick', 'remote-keepalive'],
     timestamp: new Date().toISOString(),
   });
 });
@@ -192,6 +192,59 @@ app.get('/api/remote/ping', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   return res.json({ ok: true, serverTimeMs: Date.now() });
 });
+
+interface AuthenticatedRequest extends express.Request {
+  authSession?: AuthTokenPayload;
+  rawAuthToken?: string;
+}
+
+const extractBearerToken = (req: express.Request): string => {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  return '';
+};
+
+const requireAuth = (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+  const token = extractBearerToken(req);
+  const check = saasDatabase.verifyAuthToken(token);
+  if (!check.valid) {
+    return res.status(check.explicitlyRevoked ? 403 : 401).json({
+      success: false,
+      valid: false,
+      blocked: Boolean(check.explicitlyRevoked),
+      explicitlyRevoked: Boolean(check.explicitlyRevoked),
+      error: check.reason,
+      message: check.reason,
+    });
+  }
+  req.authSession = check.session;
+  req.rawAuthToken = token;
+  return next();
+};
+
+const requireAdmin = (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+  const token = extractBearerToken(req);
+  const check = saasDatabase.verifyAuthToken(token);
+  if (!check.valid) {
+    return res.status(401).json({
+      success: false,
+      valid: false,
+      error: 'Authentification Administrateur requise.',
+    });
+  }
+  if (check.session.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      valid: false,
+      error: 'Accès réservé à l’administrateur.',
+    });
+  }
+  req.authSession = check.session;
+  req.rawAuthToken = token;
+  return next();
+};
 
 // Initialize Google GenAI
 const getAIClient = () => {
@@ -313,7 +366,7 @@ const generateUnifiedAI = async (
 };
 
 // API: AI Diagnostic Expert (with post-generation code & URL anti-hallucination guardrails)
-app.post('/api/diagnose/ai', async (req, res) => {
+app.post('/api/diagnose/ai', requireAuth, async (req, res) => {
   try {
     const { brand, model, year, engine, dtcCodes, symptoms } = req.body || {};
     const dtcArray: string[] = Array.isArray(dtcCodes) ? dtcCodes.map(String) : [];
@@ -374,7 +427,7 @@ N'invente aucun code DTC inexistant, aucun code PIN et aucune URL externe.`;
 });
 
 // API: Quick Scan Visual Synthesis (Gateway, Moteur, ABS, Airbag)
-app.post('/api/diagnose/quick-scan-summary', async (req, res) => {
+app.post('/api/diagnose/quick-scan-summary', requireAuth, async (req, res) => {
   try {
     const { vehicleName = 'Véhicule', batteryVoltage = 12.6, ecuResults = [] } = req.body || {};
     const ecus: Array<{
@@ -424,7 +477,7 @@ app.post('/api/diagnose/quick-scan-summary', async (req, res) => {
 });
 
 // API: Traducteur & Dépanneur DTC Brut IA (Valises Launch / Autel : chinois / mauvais anglais -> Français technique)
-app.post('/api/dtc/translate-raw', async (req, res) => {
+app.post('/api/dtc/translate-raw', requireAuth, async (req, res) => {
   try {
     const {
       rawInput = '',
@@ -692,7 +745,7 @@ ENTRÉE VALISE (${scannerSource}) — VÉHICULE (${brand}) :
 });
 
 // API: AI App & Automotive UI Translator (with 1:1 key & placeholder integrity verification)
-app.post('/api/translate/ai', async (req, res) => {
+app.post('/api/translate/ai', requireAuth, async (req, res) => {
   try {
     const { targetLanguage, sourceStrings = [], appName } = req.body || {};
     const safeSources: Array<{ key: string; text: string }> = Array.isArray(sourceStrings) ? sourceStrings : [];
@@ -788,7 +841,7 @@ Règles impératives (Zéro Hallucination) :
 });
 
 // API: AI Tuning & Flash Recommendation (with anti-hallucination update & checksum guard)
-app.post('/api/flash/recommendations', async (req, res) => {
+app.post('/api/flash/recommendations', requireAuth, async (req, res) => {
   try {
     const { brand, model, ecuType, flashStage = 'Stage 1' } = req.body || {};
     const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
@@ -857,7 +910,7 @@ Donne de manière concise et précise :
 });
 
 // API: Chinese Car Android Head-Unit Anti-Brick AI Guard & Recovery
-app.post('/api/chinese-tablet/ai-guard', async (req, res) => {
+app.post('/api/chinese-tablet/ai-guard', requireAuth, async (req, res) => {
   try {
     const {
       mode = 'preflight',
@@ -1090,7 +1143,7 @@ Exécutez d'abord ces commandes ADB en **lecture seule** pour identifier exactem
 });
 
 // API: Flash Cockpit & Combiné Numérique (Geely Coolray, Cityray/Starray, Jetour, Chery, Changan, MG/Haval)
-app.post('/api/chinese-cockpit/plan', (req, res) => {
+app.post('/api/chinese-cockpit/plan', requireAuth, (req, res) => {
   try {
     const {
       brandId = 'geely_coolray',
@@ -1213,7 +1266,7 @@ app.post('/api/chinese-cockpit/plan', (req, res) => {
   }
 });
 
-app.post('/api/chinese-cockpit/ai-guard', async (req, res) => {
+app.post('/api/chinese-cockpit/ai-guard', requireAuth, async (req, res) => {
   try {
     const {
       brandId = 'geely_coolray',
@@ -1317,7 +1370,7 @@ CONSIGNES STRICTES :
 });
 
 // API: Tablet App Sideload / Smart Premium Bundle Install
-app.post('/api/tablet/install', (req, res) => {
+app.post('/api/tablet/install', requireAuth, (req, res) => {
   const { appId, appName, packageName, connectionMode = 'wifi', targetDevice, bundleIds, enableMultiWindow } = req.body || {};
   const timestamp = new Date().toISOString();
   const safeMode = String(connectionMode).toUpperCase();
@@ -1347,7 +1400,7 @@ app.post('/api/tablet/install', (req, res) => {
 });
 
 // API: Indirect 1-Button Head-Unit APK Install / Update (ADB Wi-Fi, PC Agent USB, or Browser Relay)
-app.post('/api/tablet/indirect-install', (req, res) => {
+app.post('/api/tablet/indirect-install', requireAuth, (req, res) => {
   const {
     appId = 'communitypack_market',
     appName = 'CommunityPack Market',
@@ -1416,7 +1469,7 @@ app.post('/api/tablet/indirect-install', (req, res) => {
 });
 
 // API: Smartech DZ DiagAuto - Detection & Status Probe
-app.get('/api/smartech-dz/status', (_req, res) => {
+app.get('/api/smartech-dz/status', requireAuth, (_req, res) => {
   return res.json({
     isDetected: true,
     packageName: 'dz.smartech.diagauto',
@@ -1437,7 +1490,7 @@ app.get('/api/smartech-dz/status', (_req, res) => {
 });
 
 // API: Smartech DZ DiagAuto - Plugin Injector & Bridge
-app.post('/api/smartech-dz/inject-plugin', (req, res) => {
+app.post('/api/smartech-dz/inject-plugin', requireAuth, (req, res) => {
   const { pluginId, pluginName, targetPackage } = req.body;
   const timestamp = new Date().toISOString();
 
@@ -1459,7 +1512,7 @@ app.post('/api/smartech-dz/inject-plugin', (req, res) => {
 });
 
 // API: Smartech DZ DiagAuto - Real-time Diagnostic Sync
-app.post('/api/smartech-dz/sync', (req, res) => {
+app.post('/api/smartech-dz/sync', requireAuth, (req, res) => {
   const { dtcCodes, vehicle, calibration } = req.body;
   return res.json({
     success: true,
@@ -1472,7 +1525,7 @@ app.post('/api/smartech-dz/sync', (req, res) => {
 });
 
 // API: BCM / Habitacle Comfort Controls (Doors, Windows, Sunroof, Trunk, Climate)
-app.post('/api/bcm/command', (req, res) => {
+app.post('/api/bcm/command', requireAuth, (req, res) => {
   const { vehicleId, commandType, parameters } = req.body;
   const timestamp = new Date().toLocaleTimeString('fr-FR');
 
@@ -1544,7 +1597,7 @@ app.post('/api/bcm/command', (req, res) => {
 });
 
 // API: Intelligent Voice Command Parsing with Gemini AI & Domain NLP
-app.post('/api/ai/voice-command', async (req, res) => {
+app.post('/api/ai/voice-command', requireAuth, async (req, res) => {
   try {
     const { transcript, matrixName = 'AutoPro', vehicle } = req.body;
     if (!transcript || typeof transcript !== 'string') {
@@ -1706,7 +1759,7 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
 });
 
 // API: Smart Keyless Proximity (3 meters auto lock / unlock)
-app.post('/api/keyless/proximity-update', (req, res) => {
+app.post('/api/keyless/proximity-update', requireAuth, (req, res) => {
   const { distanceMeters, thresholdMeters = 3.0, currentLockState = true } = req.body;
   const dist = parseFloat(distanceMeters) || 0;
   const threshold = parseFloat(thresholdMeters) || 3.0;
@@ -1738,7 +1791,7 @@ app.post('/api/keyless/proximity-update', (req, res) => {
 });
 
 // API: Security & Emergency Handling (Panne, Perte, Vol, Vente)
-app.post('/api/keyless/emergency-action', (req, res) => {
+app.post('/api/keyless/emergency-action', requireAuth, (req, res) => {
   const { actionType, vehicleId, pinCode, newOwnerName, newOwnerPhone } = req.body;
   const timestamp = new Date().toLocaleTimeString('fr-FR');
 
@@ -1780,7 +1833,7 @@ app.post('/api/keyless/emergency-action', (req, res) => {
     }
 
     case 'override_pin':
-      if (pinCode === '884926' || pinCode === '123456' || (pinCode && pinCode.length === 6)) {
+      if (typeof pinCode === 'string' && /^\d{6}$/.test(pinCode.trim())) {
         return res.json({
           success: true,
           actionType,
@@ -1815,7 +1868,7 @@ app.post('/api/keyless/emergency-action', (req, res) => {
 });
 
 // API: Outil IA Clonage Clés, Transpondeurs & Extraction Code PIN (IMMO Atelier)
-app.post('/api/immo/ai-key-tool', async (req, res) => {
+app.post('/api/immo/ai-key-tool', requireAuth, async (req, res) => {
   try {
     const {
       brand = 'Fiat',
@@ -1947,7 +2000,7 @@ Sois concis, structuré en français professionnel d'atelier.`;
 });
 
 // API: Server-side AKL Dump Integrity Verification & Modular OEM Crypto Table Hook
-app.post('/api/immo/akl/verify-dump', (req, res) => {
+app.post('/api/immo/akl/verify-dump', requireAuth, (req, res) => {
   try {
     const {
       procedureId,
@@ -2009,71 +2062,148 @@ app.post('/api/immo/akl/verify-dump', (req, res) => {
   }
 });
 
-// API: Commercial License Verification & Activation Gate
+const ADMIN_ALLOWED_MODULES = [
+  'diagnostic',
+  'history',
+  'cameras',
+  'flash',
+  'comfort',
+  'keyless',
+  'chinese_flasher',
+  'smartech',
+  'connection',
+  'apps',
+  'vault',
+  'translator',
+  'packaging',
+  'admin',
+  'workshop_cn',
+  'transmission',
+];
+
+function buildAdminLicenseSessionPayload(hwid: string) {
+  return {
+    maskedKey: 'ADMIN-••••',
+    clientName: 'Administration AutoPro DZ',
+    hwid: hwid || 'ADMIN-MASTER',
+    tier: 'admin' as const,
+    tierLabel: 'Administration · Accès Complet',
+    activatedAt: new Date().toISOString(),
+    expiresAt: 'Illimitée (Administrateur)',
+    demoExpiresAt: null,
+    isValid: true,
+    isAdmin: true,
+    allowedModules: ADMIN_ALLOWED_MODULES,
+  };
+}
+
+// One-time First-Run Admin Setup/Claim route (only active when neither ADMIN_PASSCODE nor adminPasscodeHash is set)
+app.post('/api/admin/bootstrap', (req, res) => {
+  if (saasDatabase.isAdminConfigured()) {
+    return res.status(409).json({
+      valid: false,
+      error: 'Le mot de passe Administrateur est déjà configuré.',
+      message: 'Le mot de passe Administrateur est déjà configuré.',
+    });
+  }
+  const passcode = typeof req.body?.passcode === 'string' ? req.body.passcode.trim() : '';
+  const hwid = typeof req.body?.hwid === 'string' ? req.body.hwid.trim() : 'ADMIN-MASTER';
+  if (passcode.length < 8) {
+    return res.status(400).json({
+      valid: false,
+      error: 'Le mot de passe Administrateur doit contenir au moins 8 caractères.',
+      message: 'Le mot de passe Administrateur doit contenir au moins 8 caractères.',
+    });
+  }
+
+  const claimed = saasDatabase.bootstrapAdminPasscode(passcode);
+  if (!claimed) {
+    return res.status(409).json({
+      valid: false,
+      error: 'Initialisation impossible : administrateur déjà configuré.',
+      message: 'Initialisation impossible : administrateur déjà configuré.',
+    });
+  }
+
+  const token = saasDatabase.issueAuthToken({
+    role: 'admin',
+    hwid,
+    tier: 'admin',
+    clientName: 'Administration AutoPro DZ',
+  });
+
+  saasDatabase.logActivity({
+    clientName: 'Administration AutoPro DZ',
+    hwid,
+    actionType: 'activation',
+    actionDetails: 'Initialisation initiale du compte Administrateur',
+    locationCity: 'Algérie',
+    durationMinutes: 1,
+  });
+
+  return res.status(201).json({
+    valid: true,
+    token,
+    message: 'Accès Administrateur initialisé et verrouillé avec succès.',
+    license: buildAdminLicenseSessionPayload(hwid),
+  });
+});
+
 // API: Cryptographic License & Admin Verification (Strict Subscriber Whitelist + Limited Demo)
 app.post('/api/license/verify', (req, res) => {
-  const { key, clientName, hwid, adminPasscode, mode } = req.body;
+  const { key, clientName, hwid, adminPasscode, mode } = req.body || {};
 
-  // 1. Admin Direct Access (Sofiane Master Control via AP-SOFIANE-MASTER-2026-VIP or Admin Passcode)
-  const candidateAdminSecret = (typeof adminPasscode === 'string' && adminPasscode.trim())
-    ? adminPasscode.trim()
-    : (typeof key === 'string' ? key.trim() : '');
+  // 1. Admin Direct Access (verified exclusively server-side)
+  const candidateAdminSecret =
+    typeof adminPasscode === 'string' && adminPasscode.trim()
+      ? adminPasscode.trim()
+      : typeof key === 'string'
+      ? key.trim()
+      : '';
 
-  if (mode === 'admin' || saasDatabase.verifyAdminPasscode(candidateAdminSecret)) {
+  if (mode === 'admin') {
+    if (!saasDatabase.isAdminConfigured()) {
+      return res.status(403).json({
+        valid: false,
+        adminSetupRequired: true,
+        message: 'Première installation requise : définissez d’abord votre mot de passe Administrateur.',
+      });
+    }
     if (!saasDatabase.verifyAdminPasscode(candidateAdminSecret)) {
       return res.status(403).json({
         valid: false,
-        message: 'Clé Maître Administrateur incorrecte.',
+        message: 'Mot de passe Administrateur incorrect.',
       });
     }
 
-    const adminKey = 'AP-SOFIANE-MASTER-2026-VIP';
+    const resolvedAdminHwid = typeof hwid === 'string' && hwid.trim() ? hwid.trim() : 'ADMIN-MASTER';
+    const token = saasDatabase.issueAuthToken({
+      role: 'admin',
+      hwid: resolvedAdminHwid,
+      tier: 'admin',
+      clientName: 'Administration AutoPro DZ',
+    });
+
     saasDatabase.logActivity({
-      clientName: 'Admin Sofiane Mascara',
-      hwid: hwid || 'ADMIN-CONSOLE',
+      clientName: 'Administration AutoPro DZ',
+      hwid: resolvedAdminHwid,
       actionType: 'activation',
-      actionDetails: 'Connexion Administrateur Principal (Accès Ouvert Complet)',
-      locationCity: 'Mascara, Algérie',
+      actionDetails: 'Connexion Console Administrateur',
+      locationCity: 'Algérie',
       durationMinutes: 1,
     });
 
     return res.json({
       valid: true,
-      message: 'Accès Administrateur complet ouvert.',
-      license: {
-        key: adminKey,
-        clientName: 'Admin Sofiane (Propriétaire)',
-        hwid: hwid || 'ADMIN-MASTER',
-        tier: 'admin',
-        tierLabel: 'ADMIN PROPRIÉTAIRE · Accès Ouvert & Contrôle Abonnés',
-        activatedAt: new Date().toISOString(),
-        expiresAt: 'Illimitée (Administrateur)',
-        demoExpiresAt: null,
-        isValid: true,
-        isAdmin: true,
-        signature: 'SIG-ADMIN-SOFIANE-DZ-ROOT',
-        allowedModules: [
-          'diagnostic',
-          'history',
-          'cameras',
-          'flash',
-          'comfort',
-          'keyless',
-          'chinese_flasher',
-          'smartech',
-          'connection',
-          'apps',
-          'translator',
-          'packaging',
-          'admin',
-        ],
-      },
+      token,
+      message: 'Accès Administrateur authentifié.',
+      license: buildAdminLicenseSessionPayload(resolvedAdminHwid),
     });
   }
 
   // 2. Client / Subscriber / Limited Demo Pass Verification
   if (!key || typeof key !== 'string') {
-    return res.status(400).json({ valid: false, message: 'Clé d\'activation ou Pass Démo manquant.' });
+    return res.status(400).json({ valid: false, message: "Clé d'activation ou Pass Démo manquant." });
   }
 
   const check = saasDatabase.verifyLicenseOrDemo({
@@ -2094,14 +2224,14 @@ app.post('/api/license/verify', (req, res) => {
 
   const tierLabel =
     tier === 'master'
-      ? 'Pack MASTER DZ (Abonné Illimité · Tous Modules)'
+      ? 'Pack MASTER DZ (Abonné Illimité)'
       : tier === 'reprog'
-      ? 'Pack REPROG PRO (Abonné · Flash & Diag)'
+      ? 'Pack REPROG PRO (Abonné)'
       : tier === 'tablette_chinois'
-      ? 'Pack TABLETTE CHINOISE ONLY (Écrans Chinois · Apps · Traducteur)'
+      ? 'Pack TABLETTE CHINOISE (Abonné)'
       : tier === 'demo'
       ? `Pass Démo Limité (${sub.maxDemoMinutes || 10} min max)`
-      : 'Pack DIAGNOSTIC STD (Abonné · Multimarque)';
+      : 'Pack DIAGNOSTIC STD (Abonné)';
 
   const allowedModules =
     tier === 'master'
@@ -2115,31 +2245,35 @@ app.post('/api/license/verify', (req, res) => {
       : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'vault', 'translator', 'workshop_cn', 'transmission'];
 
   const resolvedHwid = sub.boundHwid || hwid || 'HWID-AUTO-DETECTED';
-  const signature = saasDatabase.signLicensePayload(
-    sub.licenseKey,
-    sub.clientName,
-    resolvedHwid
-  );
+  const maskedKey = saasDatabase.maskLicenseKey(sub.licenseKey);
+  const token = saasDatabase.issueAuthToken({
+    role: 'subscriber',
+    subscriberId: sub.id,
+    keyUpper: sub.licenseKey,
+    hwid: resolvedHwid,
+    tier,
+    clientName: sub.clientName,
+  });
 
   saasDatabase.logActivity({
     clientName: sub.clientName,
-    hwid: sub.boundHwid || hwid || 'HWID-AUTO-DETECTED',
+    hwid: resolvedHwid,
     actionType: 'activation',
-    actionDetails: `${tier === 'demo' ? 'Pass Démo Limité' : 'Abonnement'} activé (${sub.licenseKey.substring(0, 14)}...)`,
+    actionDetails: `${tier === 'demo' ? 'Pass Démo Limité' : 'Abonnement'} activé (${maskedKey})`,
     locationCity: 'Algérie (Passerelle DZ)',
     durationMinutes: 1,
   });
 
   return res.json({
     valid: true,
+    token,
     message: check.message,
     license: {
-      key: sub.licenseKey,
+      maskedKey,
       subscriberId: sub.id,
-      phone: sub.phone || '',
       createdAt: sub.createdAt,
       clientName: sub.clientName,
-      hwid: sub.boundHwid || hwid || 'HWID-AUTO-DETECTED',
+      hwid: resolvedHwid,
       tier,
       tierLabel,
       activatedAt: new Date().toISOString(),
@@ -2149,62 +2283,38 @@ app.post('/api/license/verify', (req, res) => {
       demoExpiresAt: sub.demoExpiresAt || null,
       isValid: true,
       isAdmin: false,
-      signature,
       allowedModules,
     },
   });
 });
 
-// API: Real-time Session Heartbeat & Kill-Switch (kicks out blocked clients or expired demos; self-heals paid tiers)
-app.post('/api/license/check-session', (req, res) => {
+app.post('/api/license/logout', requireAuth, (req: AuthenticatedRequest, res) => {
+  if (req.rawAuthToken) {
+    saasDatabase.revokeAuthToken(req.rawAuthToken);
+  }
+  return res.json({ success: true });
+});
+
+// API: Real-time Session Heartbeat & Kill-Switch (validated exclusively against signed Bearer token)
+app.post('/api/license/check-session', requireAuth, (req: AuthenticatedRequest, res) => {
+  const session = req.authSession!;
   const {
-    key,
-    hwid,
-    isAdmin,
-    activatedAt,
-    adminPasscode,
     latencyMs,
     stabilityScore,
     connectionMode,
     wakeLockActive,
     reconnectCount,
-    subscriberId,
-    clientName,
-    tier,
-    phone,
-    signature,
-    createdAt,
   } = req.body || {};
-
-  if (isAdmin && !saasDatabase.verifyAdminPasscode(adminPasscode || key || '')) {
-    return res.status(403).json({
-      valid: false,
-      blocked: true,
-      explicitlyRevoked: true,
-      reason: 'Session Administrateur expirée ou non authentifiée.',
-    });
-  }
 
   const clientIp = (req.ip || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
   const result = saasDatabase.checkSessionHeartbeat({
-    key,
-    hwid,
-    isAdmin,
-    activatedAt,
+    session,
     latencyMs,
     stabilityScore,
     connectionMode,
     wakeLockActive,
     reconnectCount,
     ipAddress: clientIp,
-    sessionMeta: {
-      subscriberId,
-      clientName,
-      tier,
-      phone,
-      signature,
-      createdAt,
-    },
   });
 
   if (!result.valid) {
@@ -2228,32 +2338,19 @@ app.post('/api/license/check-session', (req, res) => {
   });
 });
 
-// API: Public License & Demo Lock Status (shows whether free demo is locked)
+// API: Public License & Demo Lock Status
 app.get('/api/license/status', (_req, res) => {
   const sec = saasDatabase.getPublicSecuritySettings();
   return res.json({
-    system: 'AutoPro Licensing Server v4.0 (Whitelist & Anti-Abus)',
-    status: 'STRICT_WHITELIST_LOCKED',
     demoLinksEnabled: sec.demoLinksEnabled,
     defaultDemoMinutes: sec.defaultDemoMinutes,
-    supportPhone: '05 57 76 78 04',
-    supportContact: 'sofianemascara07@gmail.com',
+    adminSetupRequired: !saasDatabase.isAdminConfigured(),
   });
 });
 
 // ==========================================
-// ADMIN CONSOLE APIS (PROTECTED BY ADMIN PASSCODE)
+// ADMIN CONSOLE APIS (PROTECTED BY BEARER ADMIN TOKEN)
 // ==========================================
-const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const headerPass = req.headers['x-admin-passcode'];
-  const bodyPass = req.body?.adminPasscode;
-  const pass = (typeof headerPass === 'string' ? headerPass : '') || (typeof bodyPass === 'string' ? bodyPass : '');
-  if (!saasDatabase.verifyAdminPasscode(pass)) {
-    return res.status(401).json({ success: false, error: 'Accès Administrateur refusé.' });
-  }
-  return next();
-};
-
 app.get('/api/admin/overview', requireAdmin, (_req, res) => {
   return res.json({
     success: true,
@@ -2330,19 +2427,30 @@ app.post('/api/admin/security/revoke-demos', requireAdmin, (_req, res) => {
   });
 });
 
-app.patch('/api/admin/security', requireAdmin, (req, res) => {
-  const { demoLinksEnabled, defaultDemoMinutes, newAdminPasscode } = req.body;
+app.patch('/api/admin/security', requireAdmin, (req: AuthenticatedRequest, res) => {
+  const { demoLinksEnabled, defaultDemoMinutes, newAdminPasscode } = req.body || {};
+  let rotatedToken: string | undefined;
   if (newAdminPasscode && typeof newAdminPasscode === 'string') {
     const ok = saasDatabase.updateAdminPasscode(newAdminPasscode);
     if (!ok) {
-      return res.status(400).json({ success: false, error: 'Le mot de passe admin doit contenir au moins 4 caractères.' });
+      return res.status(400).json({ success: false, error: 'Le mot de passe admin doit contenir au moins 8 caractères.' });
     }
+    rotatedToken = saasDatabase.issueAuthToken({
+      role: 'admin',
+      hwid: req.authSession?.hwid || 'ADMIN-MASTER',
+      tier: 'admin',
+      clientName: 'Administration AutoPro DZ',
+    });
   }
   const settings = saasDatabase.updateSecuritySettings({
     ...(typeof demoLinksEnabled === 'boolean' ? { demoLinksEnabled } : {}),
     ...(typeof defaultDemoMinutes === 'number' ? { defaultDemoMinutes } : {}),
   });
-  return res.json({ success: true, securitySettings: settings });
+  return res.json({
+    success: true,
+    securitySettings: settings,
+    ...(rotatedToken ? { token: rotatedToken } : {}),
+  });
 });
 
 // ==========================================
@@ -2357,10 +2465,11 @@ const decodeHeaderUtf8 = (val: string | string[] | undefined): string => {
   }
 };
 
-app.get('/api/vault/items', (_req, res) => {
+app.get('/api/vault/items', requireAuth, (req: AuthenticatedRequest, res) => {
+  const session = req.authSession!;
   return res.json({
     success: true,
-    items: saasDatabase.listVaultPackages(false),
+    items: saasDatabase.listVaultPackagesForRole(session.tier, session.role === 'admin'),
   });
 });
 
@@ -2430,30 +2539,11 @@ app.delete('/api/admin/vault/:id', requireAdmin, (req, res) => {
   return res.json({ success: true });
 });
 
-app.post('/api/vault/download/:id', (req, res) => {
-  const {
-    key,
-    hwid,
-    signature,
-    subscriberId,
-    clientName,
-    tier,
-    isAdmin,
-    adminPasscode,
-  } = req.body || {};
-
+app.post('/api/vault/download/:id', requireAuth, (req: AuthenticatedRequest, res) => {
+  const session = req.authSession!;
   const check = saasDatabase.verifyPaidVaultDownloadAccess({
     id: req.params.id,
-    key,
-    hwid,
-    signature,
-    subscriberId,
-    clientName,
-    tier,
-    isAdmin: Boolean(isAdmin),
-    adminPasscode:
-      (typeof req.headers['x-admin-passcode'] === 'string' ? req.headers['x-admin-passcode'] : '') ||
-      (typeof adminPasscode === 'string' ? adminPasscode : ''),
+    session,
   });
 
   if (!check.allowed || !check.filePath || !check.publicItem) {
@@ -2474,9 +2564,570 @@ app.post('/api/vault/download/:id', (req, res) => {
 
   res.setHeader('Content-Type', mimeType);
   res.setHeader('Content-Disposition', `attachment; filename="${check.publicItem.fileName}"`);
-  res.setHeader('X-Vault-Sha256', check.publicItem.sha256);
+  if (session.role === 'admin') {
+    res.setHeader('X-Vault-Sha256', check.publicItem.sha256);
+  }
   res.setHeader('Cache-Control', 'no-store');
   return res.sendFile(check.filePath);
+});
+
+const OFFICIAL_GITHUB_REPOS: OfficialGithubRepoEntry[] = [
+  {
+    repo: 'yuliskov/SmartTube',
+    owner: 'yuliskov',
+    name: 'SmartTube',
+    displayName: 'SmartTube (YouTube Autoradio & TV)',
+    category: 'Autoradio & Média',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Client YouTube sans publicité optimisé pour grands écrans et autoradios Android.',
+    officialHtmlUrl: 'https://github.com/yuliskov/SmartTube/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'TeamNewPipe/NewPipe',
+    owner: 'TeamNewPipe',
+    name: 'NewPipe',
+    displayName: 'NewPipe (YouTube Léger sans GMS)',
+    category: 'Autoradio & Média',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Lecteur vidéo léger sans Google Play Services avec lecture en arrière-plan.',
+    officialHtmlUrl: 'https://github.com/TeamNewPipe/NewPipe/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'AndreyPavlenko/Fermata',
+    owner: 'AndreyPavlenko',
+    name: 'Fermata',
+    displayName: 'Fermata Auto (Vidéo & IPTV Android Auto)',
+    category: 'Android Auto',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Lecteur multimédia / IPTV / miroir vidéo open-source compatible Android Auto.',
+    officialHtmlUrl: 'https://github.com/AndreyPavlenko/Fermata/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'fr3ts0n/AndrOBD',
+    owner: 'fr3ts0n',
+    name: 'AndrOBD',
+    displayName: 'AndrOBD (Diagnostic ELM327 Open-Source)',
+    category: 'Diagnostic OBD2',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Application OBD2 complète Bluetooth/USB/Wi-Fi pour lecture DTC et capteurs.',
+    officialHtmlUrl: 'https://github.com/fr3ts0n/AndrOBD/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'Foadsf/OpenOBD',
+    owner: 'Foadsf',
+    name: 'OpenOBD',
+    displayName: 'OpenOBD (ELM327 Minimaliste)',
+    category: 'Diagnostic OBD2',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Lecteur OBD2 Bluetooth léger sans autorisation réseau intrusive.',
+    officialHtmlUrl: 'https://github.com/Foadsf/OpenOBD/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'andreknieriem/open-headunit',
+    owner: 'andreknieriem',
+    name: 'open-headunit',
+    displayName: 'Open Headunit (Récepteur Android Auto)',
+    category: 'Android Auto',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Transforme une tablette ou un autoradio Android en récepteur Android Auto.',
+    officialHtmlUrl: 'https://github.com/andreknieriem/open-headunit/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'organicmaps/organicmaps',
+    owner: 'organicmaps',
+    name: 'organicmaps',
+    displayName: 'Organic Maps (GPS Hors-Ligne Algérie)',
+    category: 'GPS Hors-Ligne',
+    license: 'Apache-2.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Navigation GPS hors-ligne rapide sans publicité ni pistage (cartes Algérie complètes).',
+    officialHtmlUrl: 'https://github.com/organicmaps/organicmaps/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'shmykelsa/AAAD',
+    owner: 'shmykelsa',
+    name: 'AAAD',
+    displayName: 'AAAD (Android Auto Apps Downloader)',
+    category: 'Android Auto',
+    license: 'MIT (Gratuit avec limite mensuelle)',
+    descriptionFr: 'Outil d’installation d’apps tierces sur Android Auto sans root.',
+    officialHtmlUrl: 'https://github.com/shmykelsa/AAAD/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'ImranR98/Obtainium',
+    owner: 'ImranR98',
+    name: 'Obtainium',
+    displayName: 'Obtainium (Mises à jour directes APK)',
+    category: 'Utilitaires & GMS',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Suit et met à jour les APK directement depuis GitHub/F-Droid sans Play Store.',
+    officialHtmlUrl: 'https://github.com/ImranR98/Obtainium/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'microg/GmsCore',
+    owner: 'microg',
+    name: 'GmsCore',
+    displayName: 'microG GmsCore (Services Google Légers)',
+    category: 'Utilitaires & GMS',
+    license: 'Apache-2.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Remplace Google Play Services pour autoradios chinois sans ralentir la RAM.',
+    officialHtmlUrl: 'https://github.com/microg/GmsCore/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'libre-tube/LibreTube',
+    owner: 'libre-tube',
+    name: 'LibreTube',
+    displayName: 'LibreTube (YouTube Open-Source)',
+    category: 'Autoradio & Média',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Client YouTube alternatif moderne sans pub et respectueux de la vie privée.',
+    officialHtmlUrl: 'https://github.com/libre-tube/LibreTube/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'segler-alex/RadioDroid',
+    owner: 'segler-alex',
+    name: 'RadioDroid',
+    displayName: 'RadioDroid (Radios FM/Web Monde & DZ)',
+    category: 'Autoradio & Média',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Accès gratuit aux milliers de stations radio Web/FM sans publicité.',
+    officialHtmlUrl: 'https://github.com/segler-alex/RadioDroid/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'TeamAmaze/AmazeFileManager',
+    owner: 'TeamAmaze',
+    name: 'AmazeFileManager',
+    displayName: 'Amaze File Manager (Explorateur USB/APK)',
+    category: 'Utilitaires & GMS',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Gestionnaire de fichiers open-source léger pour clés USB FAT32 et APK.',
+    officialHtmlUrl: 'https://github.com/TeamAmaze/AmazeFileManager/releases',
+    extensions: ['.apk'],
+  },
+];
+
+const OFFICIAL_EXTERNAL_SOURCES: OfficialExternalSourceEntry[] = [
+  {
+    id: 'fdroid-osmand',
+    name: 'OsmAnd~ (GPS Hors-Ligne Complet)',
+    platform: 'F-Droid',
+    category: 'GPS Hors-Ligne',
+    descriptionFr: 'Cartes hors-ligne illimitées OpenStreetMap (toutes wilayas d’Algérie gratuites).',
+    officialUrl: 'https://f-droid.org/packages/net.osmand.plus/',
+    recommendedApps: ['OsmAnd~'],
+  },
+  {
+    id: 'fdroid-vlc',
+    name: 'VLC for Android (Lecteur Vidéo/Audio USB)',
+    platform: 'F-Droid',
+    category: 'Autoradio & Média',
+    descriptionFr: 'Lit tous les formats vidéo/audio (MKV, MP4, FLAC) depuis clé USB sans pub.',
+    officialUrl: 'https://f-droid.org/packages/org.videolan.vlc/',
+    recommendedApps: ['VLC'],
+  },
+  {
+    id: 'aurora-store',
+    name: 'Aurora Store (Play Store sans compte Google)',
+    platform: 'Aurora Store',
+    category: 'Utilitaires & GMS',
+    descriptionFr: 'Télécharge Waze, Google Maps, AGAMA, CarWebGuru et AIDA64 sur autoradio sans GMS.',
+    officialUrl: 'https://auroraoss.com/',
+    recommendedApps: ['Waze', 'Google Maps', 'AGAMA Car Launcher', 'CarWebGuru', 'AIDA64'],
+  },
+  {
+    id: 'apkmirror-verified',
+    name: 'APKMirror (Archives Signées Android 8/9/10)',
+    platform: 'APKMirror',
+    category: 'Utilitaires & GMS',
+    descriptionFr: 'Versions anciennes signées cryptographiquement pour tablettes Android 8/9/10.',
+    officialUrl: 'https://www.apkmirror.com/',
+    recommendedApps: ['Google Maps (Android 8/9)', 'Button Mapper', 'Rotation Control'],
+  },
+  {
+    id: 'xda-headunits',
+    name: 'XDA Android Head-Units (Support FYT / Topway)',
+    platform: 'XDA Head-Units',
+    category: 'Technique Atelier',
+    descriptionFr: 'Identification exacte des cartes mères UIS7862 / TS10 / MTK et compatibilité Canbus.',
+    officialUrl: 'https://xdaforums.com/f/android-head-units.4267/',
+    recommendedApps: ['FYT UIS7862', 'Topway TS10/TS18', 'MCU/Canbus Guides'],
+  },
+];
+
+const githubReleasesCache = new Map<
+  string,
+  { cachedAt: string; expiresAtMs: number; assets: GithubReleaseAssetItem[] }
+>();
+
+const extractSha256FromReleaseBody = (body: string, assetName: string): string | null => {
+  if (!body || !assetName) return null;
+  const escaped = assetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const lineMatch = body.match(new RegExp(`([a-fA-F0-9]{64})[^\\n\\r]*${escaped}|${escaped}[^\\n\\r]*([a-fA-F0-9]{64})`, 'i'));
+  const raw = lineMatch?.[1] || lineMatch?.[2];
+  return raw ? raw.toLowerCase() : null;
+};
+
+const isAllowedGithubDownloadHost = (rawUrl: string): boolean => {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return (
+      host === 'github.com' ||
+      host === 'objects.githubusercontent.com' ||
+      host === 'release-assets.githubusercontent.com' ||
+      host === 'github-releases.githubusercontent.com'
+    );
+  } catch {
+    return false;
+  }
+};
+
+async function fetchOfficialGithubReleases(entry: OfficialGithubRepoEntry): Promise<{
+  ok: true;
+  assets: GithubReleaseAssetItem[];
+  cachedAt: string;
+  fromCache: boolean;
+} | {
+  ok: false;
+  statusCode: number;
+  error: string;
+}> {
+  const cached = githubReleasesCache.get(entry.repo);
+  if (cached && Date.now() < cached.expiresAtMs) {
+    return {
+      ok: true,
+      assets: cached.assets,
+      cachedAt: cached.cachedAt,
+      fromCache: true,
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 9000);
+
+  try {
+    const apiEndpoint = `https://api.github.com/repos/${entry.owner}/${entry.name}/releases?per_page=4`;
+    const ghRes = await fetch(apiEndpoint, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'AutoPro-DZ-Vault-Verifier/1.0',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!ghRes.ok) {
+      return {
+        ok: false,
+        statusCode: ghRes.status === 403 ? 429 : 502,
+        error:
+          ghRes.status === 403
+            ? 'Limite API GitHub atteinte temporairement. Réessayez dans quelques minutes ou ouvrez la page Releases officielle.'
+            : `GitHub API a répondu HTTP ${ghRes.status}.`,
+      };
+    }
+
+    const releasesRaw: any[] = await ghRes.json();
+    const assets: GithubReleaseAssetItem[] = [];
+
+    for (const rel of Array.isArray(releasesRaw) ? releasesRaw : []) {
+      const releaseTag = String(rel?.tag_name || '');
+      const releaseName = String(rel?.name || releaseTag || 'Release');
+      const publishedAt = String(rel?.published_at || '');
+      const releaseHtmlUrl =
+        typeof rel?.html_url === 'string' && rel.html_url.startsWith('https://github.com/')
+          ? rel.html_url
+          : entry.officialHtmlUrl;
+      const bodyText = typeof rel?.body === 'string' ? rel.body : '';
+
+      for (const a of Array.isArray(rel?.assets) ? rel.assets : []) {
+        const assetName = String(a?.name || '');
+        const extMatch = assetName.toLowerCase().match(/\.(apk|bin|zip|eep|hex)$/);
+        if (!extMatch) continue;
+
+        const downloadUrl = typeof a?.browser_download_url === 'string' ? a.browser_download_url : '';
+        if (!downloadUrl.startsWith('https://github.com/')) continue;
+
+        let sha256: string | null = null;
+        let sha256Source: GithubReleaseAssetItem['sha256Source'] = 'unavailable';
+
+        if (typeof a?.digest === 'string') {
+          const digestMatch = a.digest.match(/^sha256:([a-fA-F0-9]{64})$/);
+          if (digestMatch) {
+            sha256 = digestMatch[1].toLowerCase();
+            sha256Source = 'github_digest';
+          }
+        }
+        if (!sha256) {
+          const bodyHash = extractSha256FromReleaseBody(bodyText, assetName);
+          if (bodyHash) {
+            sha256 = bodyHash;
+            sha256Source = 'release_notes';
+          }
+        }
+
+        assets.push({
+          id: Number(a?.id) || assets.length + 1,
+          name: assetName,
+          extension: `.${extMatch[1]}`,
+          sizeBytes: Number(a?.size) || 0,
+          downloadUrl,
+          sha256,
+          sha256Source,
+          downloadCount: Number(a?.download_count) || 0,
+          updatedAt: String(a?.updated_at || publishedAt || ''),
+          releaseTag,
+          releaseName,
+          publishedAt,
+          releaseHtmlUrl,
+        });
+      }
+    }
+
+    const cachedAt = new Date().toISOString();
+    githubReleasesCache.set(entry.repo, {
+      cachedAt,
+      expiresAtMs: Date.now() + 5 * 60_000,
+      assets,
+    });
+
+    return {
+      ok: true,
+      assets,
+      cachedAt,
+      fromCache: false,
+    };
+  } catch (err: any) {
+    clearTimeout(timeout);
+    return {
+      ok: false,
+      statusCode: 502,
+      error:
+        err?.name === 'AbortError'
+          ? 'Délai dépassé lors de la connexion à GitHub.'
+          : 'Impossible de joindre GitHub API pour le moment.',
+    };
+  }
+}
+
+app.get('/api/vault/github-sources', requireAdmin, (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+  const repos = q
+    ? OFFICIAL_GITHUB_REPOS.filter(
+        (r) =>
+          r.displayName.toLowerCase().includes(q) ||
+          r.repo.toLowerCase().includes(q) ||
+          r.category.toLowerCase().includes(q) ||
+          r.descriptionFr.toLowerCase().includes(q)
+      )
+    : OFFICIAL_GITHUB_REPOS;
+  const externalSources = q
+    ? OFFICIAL_EXTERNAL_SOURCES.filter(
+        (s) =>
+          s.name.toLowerCase().includes(q) ||
+          s.platform.toLowerCase().includes(q) ||
+          s.descriptionFr.toLowerCase().includes(q) ||
+          s.recommendedApps.some((a) => a.toLowerCase().includes(q))
+      )
+    : OFFICIAL_EXTERNAL_SOURCES;
+  return res.json({ success: true, repos, externalSources });
+});
+
+app.get('/api/vault/github-releases', requireAdmin, async (req, res) => {
+  const repoParam = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
+  const entry = OFFICIAL_GITHUB_REPOS.find(
+    (r) => r.repo.toLowerCase() === repoParam.toLowerCase()
+  );
+  if (!entry) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dépôt non présent dans la liste blanche officielle GitHub.',
+    });
+  }
+
+  const result = await fetchOfficialGithubReleases(entry);
+  if (!result.ok) {
+    return res.status(result.statusCode).json({
+      success: false,
+      error: result.error,
+      officialUrl: entry.officialHtmlUrl,
+    });
+  }
+
+  return res.json({
+    success: true,
+    repo: entry,
+    assets: result.assets,
+    cachedAt: result.cachedAt,
+    fromCache: result.fromCache,
+  });
+});
+
+app.post('/api/admin/vault/import-github', requireAdmin, async (req, res) => {
+  const repoParam = typeof req.body?.repo === 'string' ? req.body.repo.trim() : '';
+  const assetId = Number(req.body?.assetId);
+  const allowedTiers = Array.isArray(req.body?.allowedTiers) ? req.body.allowedTiers : undefined;
+
+  const entry = OFFICIAL_GITHUB_REPOS.find(
+    (r) => r.repo.toLowerCase() === repoParam.toLowerCase()
+  );
+  if (!entry || !Number.isFinite(assetId)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dépôt officiel ou identifiant de fichier invalide.',
+    });
+  }
+
+  const relResult = await fetchOfficialGithubReleases(entry);
+  if (!relResult.ok) {
+    return res.status(relResult.statusCode).json({ success: false, error: relResult.error });
+  }
+
+  const asset = relResult.assets.find((a) => a.id === assetId);
+  if (!asset) {
+    return res.status(404).json({
+      success: false,
+      error: 'Fichier introuvable dans les releases officielles de ce dépôt.',
+    });
+  }
+
+  if (asset.sizeBytes > 100 * 1024 * 1024) {
+    return res.status(400).json({
+      success: false,
+      error: 'Ce fichier dépasse la limite de 100 Mo du Coffre.',
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45_000);
+
+  try {
+    let currentUrl = asset.downloadUrl;
+    let downloadRes: Response | null = null;
+
+    for (let hop = 0; hop < 4; hop++) {
+      if (!isAllowedGithubDownloadHost(currentUrl)) {
+        clearTimeout(timeout);
+        return res.status(403).json({
+          success: false,
+          error: 'Redirection bloquée : hôte non autorisé hors CDN GitHub officiel.',
+        });
+      }
+
+      const resp = await fetch(currentUrl, {
+        redirect: 'manual',
+        headers: { 'User-Agent': 'AutoPro-DZ-Vault-Verifier/1.0' },
+        signal: controller.signal,
+      });
+
+      if (resp.status >= 300 && resp.status < 400) {
+        const loc = resp.headers.get('location');
+        if (!loc) break;
+        currentUrl = new URL(loc, currentUrl).toString();
+        continue;
+      }
+
+      downloadRes = resp;
+      break;
+    }
+
+    clearTimeout(timeout);
+
+    if (!downloadRes || !downloadRes.ok) {
+      return res.status(502).json({
+        success: false,
+        error: `Échec du téléchargement depuis GitHub (HTTP ${downloadRes?.status || 'Redirection'}).`,
+      });
+    }
+
+    const arrayBuf = await downloadRes.arrayBuffer();
+    const buffer = Buffer.from(arrayBuf);
+    if (buffer.length > 100 * 1024 * 1024) {
+      return res.status(400).json({
+        success: false,
+        error: 'Fichier reçu supérieur à 100 Mo.',
+      });
+    }
+
+    const actualSha256 = crypto.createHash('sha256').update(buffer).digest('hex').toLowerCase();
+    if (asset.sha256 && actualSha256 !== asset.sha256.toLowerCase()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Alerte sécurité : le SHA-256 téléchargé ne correspond pas au digest officiel GitHub ! Import annulé.',
+      });
+    }
+
+    const saved = saasDatabase.saveVaultPackageUpload({
+      title: `${entry.displayName.split(' (')[0]} (${asset.releaseTag || 'GitHub'})`,
+      originalFileName: asset.name,
+      version: asset.releaseTag || 'v1.0',
+      category: entry.category === 'Diagnostic OBD2' ? 'APK Android' : 'APK Android',
+      allowedTiers,
+      notes: `Source officielle GitHub (${entry.repo}) · ${entry.license} · SHA-256 vérifié`,
+      buffer,
+    });
+
+    if (!saved.ok) {
+      return res.status(400).json({ success: false, error: saved.error });
+    }
+
+    return res.status(201).json({
+      success: true,
+      item: saved.item,
+      verifiedOfficialHash: Boolean(asset.sha256),
+    });
+  } catch (err: any) {
+    clearTimeout(timeout);
+    return res.status(502).json({
+      success: false,
+      error:
+        err?.name === 'AbortError'
+          ? 'Délai dépassé pendant le téléchargement depuis GitHub.'
+          : 'Erreur réseau lors de l’import depuis GitHub.',
+    });
+  }
+});
+
+app.post('/api/vault/verify-hash', requireAdmin, (req, res) => {
+  const rawHash = typeof req.body?.sha256 === 'string' ? req.body.sha256.trim().toLowerCase() : '';
+  if (!/^[a-f0-9]{64}$/.test(rawHash)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Empreinte SHA-256 invalide (64 caractères hexadécimaux attendus).',
+    });
+  }
+
+  const vaultMatch = saasDatabase
+    .listVaultPackages(false)
+    .find((item) => item.sha256.toLowerCase() === rawHash);
+
+  let githubMatch: { repo: string; asset: GithubReleaseAssetItem } | null = null;
+  for (const [repoName, cacheEntry] of githubReleasesCache.entries()) {
+    const foundAsset = cacheEntry.assets.find((a) => a.sha256?.toLowerCase() === rawHash);
+    if (foundAsset) {
+      githubMatch = { repo: repoName, asset: foundAsset };
+      break;
+    }
+  }
+
+  return res.json({
+    success: true,
+    sha256: rawHash,
+    vaultMatch: vaultMatch || null,
+    githubMatch,
+  });
 });
 
 // ==========================================
@@ -2547,7 +3198,7 @@ app.delete('/api/sdr/prospects/:id', requireAdmin, (req, res) => {
 // ==========================================
 // MODULE 1: CÂBLAGE & PINOUTS CROWDSOURCING
 // ==========================================
-app.get('/api/pinouts', (req, res) => {
+app.get('/api/pinouts', requireAuth, (req, res) => {
   try {
     const brand = String(req.query.brand || '').trim().toLowerCase();
     const moduleType = String(req.query.moduleType || '').trim().toUpperCase();
@@ -2591,7 +3242,7 @@ app.get('/api/pinouts', (req, res) => {
   }
 });
 
-app.post('/api/pinouts', (req, res) => {
+app.post('/api/pinouts', requireAuth, (req, res) => {
   try {
     const {
       brand,
@@ -2644,7 +3295,7 @@ app.post('/api/pinouts', (req, res) => {
   }
 });
 
-app.post('/api/pinouts/:id/vote', (req, res) => {
+app.post('/api/pinouts/:id/vote', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
     const { voterId, action } = req.body || {};
@@ -2668,7 +3319,7 @@ app.post('/api/pinouts/:id/vote', (req, res) => {
 // ==========================================
 // MODULE 5: TRANSMISSION & TCU DIAGNOSTIC SUITE (UDS 0x7E1/0x7E9 + J2534 + IA)
 // ==========================================
-app.post('/api/transmission/uds-exchange', async (req, res) => {
+app.post('/api/transmission/uds-exchange', requireAuth, async (req, res) => {
   try {
     const {
       txId = '0x7E1',
@@ -2765,7 +3416,7 @@ app.post('/api/transmission/uds-exchange', async (req, res) => {
   }
 });
 
-app.post('/api/transmission/ai-diagnose', async (req, res) => {
+app.post('/api/transmission/ai-diagnose', requireAuth, async (req, res) => {
   try {
     const {
       transmissionType = 'BVA',
@@ -2978,7 +3629,7 @@ FORMAT JSON EXACT ATTENDU :
 // ==========================================
 // MODULE 7: GEELY COOLRAY — ANTI-LSPI, FLASH ECU/TCU & SUIVI PRÉVENTIF
 // ==========================================
-app.get('/api/coolray-lspi/records', (req, res) => {
+app.get('/api/coolray-lspi/records', requireAuth, (req, res) => {
   try {
     const vin = String(req.query.vin || '').trim().toUpperCase();
     if (vin) {
@@ -2991,7 +3642,7 @@ app.get('/api/coolray-lspi/records', (req, res) => {
   }
 });
 
-app.post('/api/coolray-lspi/records', (req, res) => {
+app.post('/api/coolray-lspi/records', requireAuth, (req, res) => {
   try {
     const record = req.body?.record;
     if (!record || typeof record.vin !== 'string' || record.vin.trim().length < 6) {
@@ -3007,7 +3658,7 @@ app.post('/api/coolray-lspi/records', (req, res) => {
   }
 });
 
-app.post('/api/coolray-lspi/flash-execute', (req, res) => {
+app.post('/api/coolray-lspi/flash-execute', requireAuth, (req, res) => {
   try {
     const {
       vin = 'L6T7824Z9RZ001540',
@@ -3090,7 +3741,7 @@ app.post('/api/coolray-lspi/flash-execute', (req, res) => {
   }
 });
 
-app.post('/api/coolray-lspi/central-unit-reprog', (req, res) => {
+app.post('/api/coolray-lspi/central-unit-reprog', requireAuth, (req, res) => {
   try {
     const {
       vin = 'L6T7824Z9RZ001540',
@@ -3187,7 +3838,7 @@ app.post('/api/coolray-lspi/central-unit-reprog', (req, res) => {
   }
 });
 
-app.post('/api/coolray-lspi/oem-compat-check', (req, res) => {
+app.post('/api/coolray-lspi/oem-compat-check', requireAuth, (req, res) => {
   try {
     const {
       vin = 'L6T7824Z9RZ001540',
@@ -3231,7 +3882,7 @@ app.post('/api/coolray-lspi/oem-compat-check', (req, res) => {
 });
 
 // POST /api/agent/audit-write - Log local PC agent write authorization & execution
-app.post('/api/agent/audit-write', (req, res) => {
+app.post('/api/agent/audit-write', requireAuth, (req, res) => {
   try {
     const { actionTitle, targetModule, autoExecuted, status, batteryVoltage } = req.body || {};
     const record = saasDatabase.logActivity({
@@ -3314,7 +3965,7 @@ function resolveEcuSeedKeyProfile(ecuModel: string): EcuSeedKeyProfile {
 }
 
 // POST /api/calculate-key - Cloud-only UDS 0x27 Seed/Key derivation (protects IP off the client PC)
-app.post('/api/calculate-key', (req, res) => {
+app.post('/api/calculate-key', requireAuth, (req, res) => {
   try {
     const rawSeed = String(req.body?.seedHex || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
     const ecuModel = String(req.body?.ecuModel || 'BOSCH_MG1US008').trim().slice(0, 64);
@@ -3343,9 +3994,9 @@ app.post('/api/calculate-key', (req, res) => {
 
     saasDatabase.logActivity({
       clientName: 'Cloud Seed/Key Engine',
-      hwid: vin || 'LOCAL-PC-AGENT-38450',
+      hwid: vin || 'LOCAL-PC-AGENT',
       actionType: 'flash_executed',
-      actionDetails: `Cloud UDS 0x27 (${profile.family}) Niveau 0x${levelByte} -> Clé 0x${responseSubFunction} calculée côté serveur (IP protégée).`,
+      actionDetails: `Cloud UDS 0x27 (${profile.family}) Niveau 0x${levelByte} -> Clé 0x${responseSubFunction} calculée côté serveur.`,
       vehicleName: ecuModel,
       locationCity: 'Cloud API',
       durationMinutes: 1,
@@ -3361,9 +4012,6 @@ app.post('/api/calculate-key', (req, res) => {
       udsSendKeyFrameHex: `27 ${responseSubFunction} ${keyHex.match(/.{2}/g)?.join(' ') || keyHex}`,
       ecuFamily: profile.family,
       ipProtectedOnCloud: true,
-      algorithmSource: process.env.AUTOPRO_HMAC_SECRET
-        ? 'CLOUD_HMAC_CONFIGURED_SECRET'
-        : 'CLOUD_EPHEMERAL_SESSION_DERIVATION',
       notes: profile.notes,
       computedAt: new Date().toISOString(),
     });
@@ -3373,7 +4021,7 @@ app.post('/api/calculate-key', (req, res) => {
 });
 
 // POST /api/agent/sign-firmware - Compute server-side firmware integrity attestation (HMAC-SHA256)
-app.post('/api/agent/sign-firmware', (req, res) => {
+app.post('/api/agent/sign-firmware', requireAuth, (req, res) => {
   try {
     const sha256Hex = String(req.body?.sha256Hex || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
     const crc32Hex = String(req.body?.crc32Hex || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
@@ -3481,18 +4129,26 @@ function computeNodeCrc32Hex(buf: Buffer): string {
 }
 
 // GET /api/credits/status
-app.get('/api/credits/status', (_req, res) => {
+app.get('/api/credits/status', requireAuth, (req: AuthenticatedRequest, res) => {
+  const isAdmin = req.authSession?.role === 'admin';
   return res.json({
     success: true,
     balanceTokens: workshopCreditsState.balanceTokens,
     activePacks: workshopCreditsState.activePacks,
-    packsCatalog: PCM_MODULE_PACKS,
-    ledger: workshopCreditsState.ledger.slice(0, 20),
+    ...(isAdmin
+      ? {
+          packsCatalog: PCM_MODULE_PACKS,
+          ledger: workshopCreditsState.ledger.slice(0, 20),
+        }
+      : {
+          packsCatalog: [],
+          ledger: [],
+        }),
   });
 });
 
-// POST /api/credits/purchase - Activate PCMFlash pack or recharge Tokens
-app.post('/api/credits/purchase', (req, res) => {
+// POST /api/credits/purchase - Activate PCMFlash pack or recharge Tokens (Admin Only)
+app.post('/api/credits/purchase', requireAdmin, (req, res) => {
   try {
     const packId = req.body?.packId ? String(req.body.packId) : '';
     const extraTokens = Number(req.body?.extraTokens || 0);
@@ -3539,7 +4195,7 @@ app.post('/api/credits/purchase', (req, res) => {
 });
 
 // POST /api/credits/consume
-app.post('/api/credits/consume', (req, res) => {
+app.post('/api/credits/consume', requireAuth, (req, res) => {
   try {
     const operationName = String(req.body?.operationName || 'Opération Flash / Binaire').slice(0, 100);
     const costTokens = Number(req.body?.costTokens || 1);
@@ -3573,7 +4229,7 @@ app.post('/api/credits/consume', (req, res) => {
 });
 
 // POST /api/binary/process - Swiftec-style 1-click patch builder + CRC32 recalculation
-app.post('/api/binary/process', (req, res) => {
+app.post('/api/binary/process', requireAuth, (req, res) => {
   try {
     const filename = String(req.body?.filename || 'ecu_dump.bin').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80);
     const binaryBase64 = String(req.body?.binaryBase64 || '');
@@ -3661,7 +4317,7 @@ app.post('/api/binary/process', (req, res) => {
 });
 
 // POST /api/copilot/diagnose - AutoPro Copilot FR + Darija Technique (OBD2 / UDS / SAE J1939)
-app.post('/api/copilot/diagnose', async (req, res) => {
+app.post('/api/copilot/diagnose', requireAuth, async (req, res) => {
   try {
     const vehicleLabel = String(req.body?.vehicleLabel || 'Véhicule Atelier').slice(0, 100);
     const ecuModel = String(req.body?.ecuModel || 'ECU Standard').slice(0, 64);
@@ -3754,8 +4410,8 @@ N'invente aucun code DTC absent de l'entrée.`;
 // SAAS HIGH-PERFORMANCE DATABASE & HISTORY APIS
 // ==========================================
 
-// GET /api/db/stats - High performance metrics & health
-app.get('/api/db/stats', (_req, res) => {
+// GET /api/db/stats - High performance metrics & health (Admin Only)
+app.get('/api/db/stats', requireAdmin, (_req, res) => {
   try {
     const stats = saasDatabase.getStats();
     return res.json({ success: true, stats });
@@ -3764,8 +4420,8 @@ app.get('/api/db/stats', (_req, res) => {
   }
 });
 
-// POST /api/db/optimize - In-memory index rebuilder & benchmark
-app.post('/api/db/optimize', (_req, res) => {
+// POST /api/db/optimize - In-memory index rebuilder & benchmark (Admin Only)
+app.post('/api/db/optimize', requireAdmin, (_req, res) => {
   try {
     const result = saasDatabase.optimize();
     const stats = saasDatabase.getStats();
@@ -3781,7 +4437,7 @@ app.post('/api/db/optimize', (_req, res) => {
 });
 
 // GET /api/history - Retrieve all historical scan sessions with filters
-app.get('/api/history', (req, res) => {
+app.get('/api/history', requireAuth, (req, res) => {
   try {
     const { vin, vehicleId, status, search, dtcCode } = req.query;
     const scans = saasDatabase.getAllScans({
@@ -3802,16 +4458,20 @@ app.get('/api/history', (req, res) => {
 });
 
 // POST /api/history - Record a new scan session
-app.post('/api/history', (req, res) => {
+app.post('/api/history', requireAuth, (req: AuthenticatedRequest, res) => {
   try {
     const sessionData = req.body;
     if (!sessionData || !sessionData.vehicleName) {
       return res.status(400).json({ success: false, error: 'Données de session de scan manquantes' });
     }
-    const created = saasDatabase.addScan(sessionData);
+    const authSess = req.authSession!;
+    const created = saasDatabase.addScan({
+      ...sessionData,
+      clientName: authSess.role === 'admin' ? sessionData.clientName || authSess.clientName : authSess.clientName,
+    });
     saasDatabase.logActivity({
-      clientName: created.clientName || 'Atelier AutoPro DZ',
-      hwid: created.vin || 'HWID-SCANNER',
+      clientName: authSess.clientName,
+      hwid: authSess.hwid,
       actionType: 'scan_started',
       actionDetails: `Scan ${created.vehicleName} (${created.dtcCodes.length} DTC détectés · Score ${created.overallHealthScore}%)`,
       vehicleName: created.vehicleName,
@@ -3820,7 +4480,7 @@ app.post('/api/history', (req, res) => {
     });
     return res.status(201).json({
       success: true,
-      message: 'Session de scan enregistrée dans la base de données SaaS avec succès',
+      message: 'Session de scan enregistrée avec succès',
       scan: created,
     });
   } catch (err: any) {
@@ -3829,7 +4489,7 @@ app.post('/api/history', (req, res) => {
 });
 
 // GET /api/history/:id - Single scan session
-app.get('/api/history/:id', (req, res) => {
+app.get('/api/history/:id', requireAuth, (req, res) => {
   try {
     const scan = saasDatabase.getScanById(req.params.id);
     if (!scan) {
@@ -3842,7 +4502,7 @@ app.get('/api/history/:id', (req, res) => {
 });
 
 // PATCH /api/history/:id/resolve - Mark DTCs as repaired
-app.patch('/api/history/:id/resolve', (req, res) => {
+app.patch('/api/history/:id/resolve', requireAuth, (req, res) => {
   try {
     const { notes } = req.body;
     const updated = saasDatabase.resolveScan(req.params.id, notes);
@@ -3859,21 +4519,21 @@ app.patch('/api/history/:id/resolve', (req, res) => {
   }
 });
 
-// DELETE /api/history/:id - Remove a scan session
-app.delete('/api/history/:id', (req, res) => {
+// DELETE /api/history/:id - Remove a scan session (Admin Only)
+app.delete('/api/history/:id', requireAdmin, (req, res) => {
   try {
     const ok = saasDatabase.deleteScan(req.params.id);
     if (!ok) {
       return res.status(404).json({ success: false, error: 'Session introuvable' });
     }
-    return res.json({ success: true, message: 'Session supprimée de l\'historique' });
+    return res.json({ success: true, message: "Session supprimée de l'historique" });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// POST /api/history/seed - Reset to Algerian workshop baseline
-app.post('/api/history/seed', (_req, res) => {
+// POST /api/history/seed - Reset to Algerian workshop baseline (Admin Only)
+app.post('/api/history/seed', requireAdmin, (_req, res) => {
   try {
     const seeded = saasDatabase.resetToSeed();
     return res.json({
@@ -3887,8 +4547,8 @@ app.post('/api/history/seed', (_req, res) => {
   }
 });
 
-// GET /api/clients/activity - Track when clients activate and use the app
-app.get('/api/clients/activity', (req, res) => {
+// GET /api/clients/activity - Track when clients activate and use the app (Admin Only)
+app.get('/api/clients/activity', requireAdmin, (req, res) => {
   try {
     const { clientName, actionType, search } = req.query;
     const activities = saasDatabase.getActivities({
@@ -3907,11 +4567,10 @@ app.get('/api/clients/activity', (req, res) => {
 });
 
 // POST /api/clients/activity - Log client module usage event + remote stability metrics
-app.post('/api/clients/activity', (req, res) => {
+app.post('/api/clients/activity', requireAuth, (req: AuthenticatedRequest, res) => {
   try {
+    const authSess = req.authSession!;
     const {
-      clientName,
-      hwid,
       actionType,
       actionDetails,
       vehicleName,
@@ -3921,10 +4580,10 @@ app.post('/api/clients/activity', (req, res) => {
       stabilityScore,
       reconnectCount,
       wakeLockActive,
-    } = req.body;
+    } = req.body || {};
     const record = saasDatabase.logActivity({
-      clientName: clientName || 'Atelier Client AutoPro DZ',
-      hwid: hwid || 'HWID-TABLETTE',
+      clientName: authSess.clientName || 'Atelier Client AutoPro DZ',
+      hwid: authSess.hwid || 'HWID-TABLETTE',
       actionType: actionType || 'heartbeat',
       actionDetails: actionDetails || 'Utilisation active du logiciel AutoPro DZ',
       vehicleName,
@@ -3941,13 +4600,10 @@ app.post('/api/clients/activity', (req, res) => {
   }
 });
 
-// GET /api/db/backup - Sanitized JSON backup (Admin gets full subscribers, non-admin gets scans & stats only)
-app.get('/api/db/backup', (req, res) => {
+// GET /api/db/backup - Full JSON backup (Admin Only)
+app.get('/api/db/backup', requireAdmin, (_req, res) => {
   try {
-    const headerPass = req.headers['x-admin-passcode'];
-    const pass = typeof headerPass === 'string' ? headerPass : '';
-    const isAdmin = saasDatabase.verifyAdminPasscode(pass);
-    const backup = saasDatabase.exportFullBackup(isAdmin);
+    const backup = saasDatabase.exportFullBackup(true);
     return res.json({ success: true, backup });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -3955,7 +4611,7 @@ app.get('/api/db/backup', (req, res) => {
 });
 
 // POST /api/cameras/command - Control vehicle ADAS / 360 / Reverse / Dashcam cameras via LVDS / CAN-Bus
-app.post('/api/cameras/command', (req, res) => {
+app.post('/api/cameras/command', requireAuth, (req: AuthenticatedRequest, res) => {
   const { cameraChannel, action, steeringAngleDeg, guidelinesActive, nightVisionActive, clientName, vehicleName } = req.body;
   const timestamp = new Date().toLocaleTimeString();
 

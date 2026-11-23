@@ -16,6 +16,7 @@ interface ConnectionManagerProps {
   setIsConnected: (connected: boolean) => void;
   batteryVoltage: number;
   setBatteryVoltage: (volts: number) => void;
+  isAdmin?: boolean;
 }
 
 export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
@@ -25,6 +26,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   setIsConnected,
   batteryVoltage,
   setBatteryVoltage,
+  isAdmin = false,
 }) => {
   const [baudRate, setBaudRate] = useState<string>('38400');
   const [protocol, setProtocol] = useState<string>('ISO 14229 UDS over CAN');
@@ -223,7 +225,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               )}
             </span>
             <span className="text-[10px] font-mono text-slate-400 mt-2 bg-slate-900 px-2 py-0.5 rounded">
-              {connectionMode === 'cable' ? '480 Mbps USB 2.0' : connectionMode === 'wifi' ? '802.11ac Socket 35000' : 'BLE 2.0 Mbps'}
+              {connectionMode === 'cable' ? '480 Mbps USB 2.0' : connectionMode === 'wifi' ? (isAdmin ? '802.11ac Socket 35000' : 'WiFi 802.11ac') : 'BLE 2.0 Mbps'}
             </span>
           </div>
 
@@ -305,7 +307,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           </p>
           <div className="mt-4 pt-3 border-t border-slate-800/80 text-[11px] text-slate-500 flex justify-between">
             <span>Latence : ~ 5-10 ms</span>
-            <span>Port TCP : 35000</span>
+            <span>{isAdmin ? 'Port TCP : 35000' : 'Sans fil local'}</span>
           </div>
         </div>
 
@@ -397,7 +399,9 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
 
             <div className="pt-2 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-800">
               <span>Passerelle Sécurité SGW (Stellantis/Renault/VAG) :</span>
-              <span className="text-emerald-400 font-medium">Bypass Authentifié (Token OK)</span>
+              <span className="text-emerald-400 font-medium">
+                {isAdmin ? 'Bypass Authentifié (Token OK)' : 'Passerelle Active'}
+              </span>
             </div>
           </div>
         </div>
@@ -569,8 +573,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           </div>
         )}
 
-        {/* 4 Live Stability KPIs */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Live Stability KPIs */}
+        <div className={`grid grid-cols-2 ${isAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-2'} gap-3`}>
           <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
             <span className="text-[10px] uppercase font-bold text-slate-400 block">Score Stabilité Client</span>
             <span
@@ -589,25 +593,29 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </span>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block">Latence Cloud (RTT)</span>
-            <span className="text-xl font-extrabold font-mono text-cyan-400 tabular-nums">
-              {remoteSnap.latencyMs !== null ? `${remoteSnap.latencyMs} ms` : '— ms'}
-            </span>
-            <span className="text-[10px] text-slate-500 block mt-0.5">
-              Moyenne : {remoteSnap.avgLatencyMs !== null ? `${remoteSnap.avgLatencyMs} ms` : 'Mesure...'}
-            </span>
-          </div>
+          {isAdmin && (
+            <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Latence Cloud (RTT)</span>
+              <span className="text-xl font-extrabold font-mono text-cyan-400 tabular-nums">
+                {remoteSnap.latencyMs !== null ? `${remoteSnap.latencyMs} ms` : '— ms'}
+              </span>
+              <span className="text-[10px] text-slate-500 block mt-0.5">
+                Moyenne : {remoteSnap.avgLatencyMs !== null ? `${remoteSnap.avgLatencyMs} ms` : 'Mesure...'}
+              </span>
+            </div>
+          )}
 
-          <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block">Keep-Alive Render</span>
-            <span className="text-xl font-extrabold font-mono text-emerald-400 tabular-nums">
-              {remoteSnap.keepAliveActive ? 'ACTIF' : 'VEILLE'}
-            </span>
-            <span className="text-[10px] text-slate-500 block mt-0.5">
-              {remoteSnap.lastKeepAliveAt ? `Dernier ping : ${remoteSnap.lastKeepAliveAt}` : 'Auto toutes les 3 min'}
-            </span>
-          </div>
+          {isAdmin && (
+            <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block">Keep-Alive Render</span>
+              <span className="text-xl font-extrabold font-mono text-emerald-400 tabular-nums">
+                {remoteSnap.keepAliveActive ? 'ACTIF' : 'VEILLE'}
+              </span>
+              <span className="text-[10px] text-slate-500 block mt-0.5">
+                {remoteSnap.lastKeepAliveAt ? `Dernier ping : ${remoteSnap.lastKeepAliveAt}` : 'Auto toutes les 3 min'}
+              </span>
+            </div>
+          )}
 
           <div className="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800">
             <span className="text-[10px] uppercase font-bold text-slate-400 block">Reprises &amp; Micro-coupures</span>
@@ -620,8 +628,8 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
           </div>
         </div>
 
-        {/* Interactive Protection Toggles + ADB Remote Bridge */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
+        {/* Interactive Protection Toggles + ADB Remote Bridge (Admin Only) */}
+        <div className={`grid grid-cols-1 ${isAdmin ? 'lg:grid-cols-2' : ''} gap-4 text-xs`}>
           <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
             <h3 className="font-bold text-white flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -681,59 +689,61 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="font-bold text-white flex items-center gap-2">
-                <Tablet className="w-4 h-4 text-cyan-400" />
-                <span>Passerelle ADB TCP/IP :5555 (Flash Tablette à Distance)</span>
-              </h3>
-              <input
-                type="text"
-                value={remoteTabletIp}
-                onChange={(e) => setRemoteTabletIp(e.target.value)}
-                placeholder="IP Tablette / ZeroTier"
-                className="w-36 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Chez le client : branchez une fois la tablette Android au PC (ou via USB-IP / ZeroTier / RustDesk), ouvrez le port TCP 5555 puis connectez-vous à distance sans perte de liaison :
-            </p>
-            <div className="space-y-1.5 font-mono text-[11px]">
-              {[
-                { id: 'tcpip', cmd: 'adb tcpip 5555' },
-                { id: 'connect', cmd: `adb connect ${remoteTabletIp.trim() || '192.168.1.50'}:5555` },
-                { id: 'stayon', cmd: 'adb shell settings put global stay_on_while_plugged_in 3' },
-              ].map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5"
-                >
-                  <code className="text-emerald-300 truncate">{item.cmd}</code>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(item.cmd);
-                      setCopiedCmd(item.id);
-                      setTimeout(() => setCopiedCmd(null), 1800);
-                    }}
-                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1 shrink-0 cursor-pointer"
+          {isAdmin && (
+            <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-bold text-white flex items-center gap-2">
+                  <Tablet className="w-4 h-4 text-cyan-400" />
+                  <span>Passerelle ADB TCP/IP :5555 (Flash Tablette à Distance)</span>
+                </h3>
+                <input
+                  type="text"
+                  value={remoteTabletIp}
+                  onChange={(e) => setRemoteTabletIp(e.target.value)}
+                  placeholder="IP Tablette / ZeroTier"
+                  className="w-36 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Chez le client : branchez une fois la tablette Android au PC (ou via USB-IP / ZeroTier / RustDesk), ouvrez le port TCP 5555 puis connectez-vous à distance sans perte de liaison :
+              </p>
+              <div className="space-y-1.5 font-mono text-[11px]">
+                {[
+                  { id: 'tcpip', cmd: 'adb tcpip 5555' },
+                  { id: 'connect', cmd: `adb connect ${remoteTabletIp.trim() || '192.168.1.50'}:5555` },
+                  { id: 'stayon', cmd: 'adb shell settings put global stay_on_while_plugged_in 3' },
+                ].map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between gap-2 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5"
                   >
-                    {copiedCmd === item.id ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3 h-3" />
-                    )}
-                    <span>{copiedCmd === item.id ? 'Copié' : 'Copier'}</span>
-                  </button>
-                </div>
-              ))}
+                    <code className="text-emerald-300 truncate">{item.cmd}</code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(item.cmd);
+                        setCopiedCmd(item.id);
+                        setTimeout(() => setCopiedCmd(null), 1800);
+                      }}
+                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1 shrink-0 cursor-pointer"
+                    >
+                      {copiedCmd === item.id ? (
+                        <Check className="w-3 h-3 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3 h-3" />
+                      )}
+                      <span>{copiedCmd === item.id ? 'Copié' : 'Copier'}</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
-      {/* Agent Micro Client PC (Installateur 1-Clic & Exécution Écriture Auto sur Demande) */}
-      <LocalPcAgentPanel batteryVoltage={batteryVoltage} />
+      {/* Agent Micro Client PC */}
+      <LocalPcAgentPanel batteryVoltage={batteryVoltage} isAdmin={isAdmin} />
 
       {/* Guide Pas-à-Pas : Démonstration sur Voiture Réelle & Tablette d'Atelier */}
       <div className="p-6 rounded-2xl bg-gradient-to-r from-cyan-950/40 via-slate-900 to-slate-950 border border-cyan-500/40 space-y-5 shadow-xl">
@@ -831,7 +841,7 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
                 <span>2. Coupe-Circuit Antivol</span>
               </span>
               <p className="text-[11px] text-slate-300 leading-relaxed">
-                Activez le coupe-circuit : moteur immobilisé (Trame CAN 0x1A0). Montrez ensuite le déblocage via le <strong>Code PIN de secours 884926</strong>.
+                Activez le coupe-circuit : moteur immobilisé (Trame CAN 0x1A0). Montrez ensuite le déblocage via le <strong>Code PIN de secours configuré</strong>.
               </p>
             </div>
 

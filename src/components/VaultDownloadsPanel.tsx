@@ -23,11 +23,13 @@ import {
 } from 'lucide-react';
 import {
   LicenseSession,
-  PublicVaultPackage,
+  SubscriberVaultPackage,
   VaultFileCategory,
   VaultPaidTier,
 } from '../types/automotive';
 import { apiFetch, apiUrl } from '../utils/apiBridge';
+import { getAuthToken } from '../utils/authSession';
+import { VaultSecurityLookup } from './VaultSecurityLookup';
 
 interface VaultDownloadsPanelProps {
   licenseSession: LicenseSession;
@@ -55,9 +57,8 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
 }) => {
   const isAdmin = Boolean(licenseSession.isAdmin);
   const isDemo = licenseSession.tier === 'demo';
-  const adminPasscode = typeof window !== 'undefined' ? sessionStorage.getItem('autopro_admin_passcode') || '' : '';
 
-  const [items, setItems] = useState<PublicVaultPackage[]>([]);
+  const [items, setItems] = useState<SubscriberVaultPackage[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -90,10 +91,8 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
     setLoading(true);
     setErrorMsg(null);
     try {
-      const endpoint = isAdmin && adminPasscode ? '/api/admin/vault/items' : '/api/vault/items';
-      const res = await apiFetch(endpoint, {
-        headers: isAdmin && adminPasscode ? { 'x-admin-passcode': adminPasscode } : undefined,
-      });
+      const endpoint = isAdmin ? '/api/admin/vault/items' : '/api/vault/items';
+      const res = await apiFetch(endpoint);
       const data = await res.json();
       if (!res.ok || !data?.success) {
         throw new Error(data?.error || 'Impossible de charger le Coffre Téléchargements.');
@@ -104,7 +103,7 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, adminPasscode]);
+  }, [isAdmin]);
 
   useEffect(() => {
     void fetchItems();
@@ -129,6 +128,32 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
     }
   };
 
+  const handleSelectVerifiedFileForUpload = (
+    file: File,
+    sha256: string,
+    releaseTag?: string
+  ) => {
+    setSelectedFile(file);
+    const lower = file.name.toLowerCase();
+    const baseTitle = file.name.replace(/\.(apk|bin|zip|eep|hex)$/i, '');
+    setUploadTitle(baseTitle);
+    if (lower.endsWith('.apk')) {
+      setUploadCategory('APK Android');
+    } else if (lower.endsWith('.bin') || lower.endsWith('.eep') || lower.endsWith('.hex')) {
+      setUploadCategory('Firmware / .BIN');
+    } else {
+      setUploadCategory('Pack Atelier');
+    }
+    if (releaseTag) {
+      setUploadVersion(releaseTag);
+    }
+    setUploadNotes(`Vérifié SHA-256 : ${sha256.slice(0, 16)}...`);
+    setStatusMsg(
+      `Fichier "${file.name}" chargé dans le formulaire d’import ci-dessus avec son empreinte SHA-256 vérifiée.`
+    );
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const toggleAllowedTier = (tier: VaultPaidTier) => {
     setAllowedTiers((prev) =>
       prev.includes(tier) ? prev.filter((t) => t !== tier) : [...prev, tier]
@@ -137,7 +162,8 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
 
   const handleAdminUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin || !adminPasscode) {
+    const token = getAuthToken();
+    if (!isAdmin || !token) {
       setErrorMsg('Session Administrateur requise pour importer un fichier.');
       return;
     }
@@ -157,11 +183,11 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
 
     try {
       const targetUrl = apiUrl('/api/admin/vault/upload');
-      const resultItem = await new Promise<PublicVaultPackage>((resolve, reject) => {
+      const resultItem = await new Promise<SubscriberVaultPackage>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', targetUrl, true);
         xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-        xhr.setRequestHeader('x-admin-passcode', adminPasscode);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
         xhr.setRequestHeader('X-Vault-File-Name', encodeURIComponent(selectedFile.name));
         xhr.setRequestHeader('X-Vault-Title', encodeURIComponent(uploadTitle.trim() || selectedFile.name));
         xhr.setRequestHeader('X-Vault-Version', encodeURIComponent(uploadVersion.trim() || 'v1.0'));
@@ -207,18 +233,18 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
     }
   };
 
-  const handleToggleItemActive = async (item: PublicVaultPackage) => {
-    if (!isAdmin || !adminPasscode) return;
+  const handleToggleItemActive = async (item: SubscriberVaultPackage) => {
+    if (!isAdmin) return;
     setBusyItemId(item.id);
     setErrorMsg(null);
     try {
+      const nextActive = !(item.isActive ?? true);
       const res = await apiFetch(`/api/admin/vault/${encodeURIComponent(item.id)}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-passcode': adminPasscode,
         },
-        body: JSON.stringify({ isActive: !item.isActive }),
+        body: JSON.stringify({ isActive: nextActive }),
       });
       const data = await res.json();
       if (!res.ok || !data?.success) {
@@ -232,16 +258,13 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
     }
   };
 
-  const handleDeleteItem = async (item: PublicVaultPackage) => {
-    if (!isAdmin || !adminPasscode) return;
+  const handleDeleteItem = async (item: SubscriberVaultPackage) => {
+    if (!isAdmin) return;
     setBusyItemId(item.id);
     setErrorMsg(null);
     try {
       const res = await apiFetch(`/api/admin/vault/${encodeURIComponent(item.id)}`, {
         method: 'DELETE',
-        headers: {
-          'x-admin-passcode': adminPasscode,
-        },
       });
       const data = await res.json();
       if (!res.ok || !data?.success) {
@@ -256,7 +279,7 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
     }
   };
 
-  const handleDownload = async (item: PublicVaultPackage) => {
+  const handleDownload = async (item: SubscriberVaultPackage) => {
     setErrorMsg(null);
     setStatusMsg(null);
 
@@ -274,18 +297,8 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
         timeoutMs: 90_000,
         headers: {
           'Content-Type': 'application/json',
-          ...(isAdmin && adminPasscode ? { 'x-admin-passcode': adminPasscode } : {}),
         },
-        body: JSON.stringify({
-          key: licenseSession.key,
-          hwid: licenseSession.hwid,
-          signature: licenseSession.signature,
-          subscriberId: licenseSession.subscriberId,
-          clientName: licenseSession.clientName,
-          tier: licenseSession.tier,
-          isAdmin,
-          adminPasscode: isAdmin ? adminPasscode : undefined,
-        }),
+        body: JSON.stringify({}),
       });
 
       if (!res.ok) {
@@ -307,9 +320,13 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 5000);
 
-      setItems((prev) =>
-        prev.map((it) => (it.id === item.id ? { ...it, downloadCount: it.downloadCount + 1 } : it))
-      );
+      if (isAdmin) {
+        setItems((prev) =>
+          prev.map((it) =>
+            it.id === item.id ? { ...it, downloadCount: (it.downloadCount ?? 0) + 1 } : it
+          )
+        );
+      }
 
       setStatusMsg(
         item.extension === '.apk'
@@ -651,9 +668,12 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredItems.map((item) => {
+            const itemActive = item.isActive ?? true;
             const tierAllowed =
               isAdmin ||
-              (!isDemo && item.allowedTiers.includes(licenseSession.tier as VaultPaidTier));
+              (item.isEligible !== undefined
+                ? Boolean(item.isEligible)
+                : !isDemo && Boolean(item.allowedTiers?.includes(licenseSession.tier as VaultPaidTier)));
             const isDownloading = downloadingId === item.id;
             const isBusy = busyItemId === item.id;
 
@@ -661,7 +681,7 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
               <div
                 key={item.id}
                 className={`p-4 rounded-2xl bg-slate-900/90 border flex flex-col justify-between gap-4 ${
-                  !item.isActive
+                  !itemActive
                     ? 'border-slate-800 opacity-75'
                     : isDemo || !tierAllowed
                     ? 'border-rose-500/35'
@@ -688,7 +708,7 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
                           <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/30">
                             {item.version}
                           </span>
-                          {!item.isActive && (
+                          {!itemActive && (
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-500/40">
                               EN PAUSE
                             </span>
@@ -700,9 +720,11 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
                       </div>
                     </div>
 
-                    <span className="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-bold text-slate-300 shrink-0">
-                      {item.downloadCount} téléch.
-                    </span>
+                    {isAdmin && typeof item.downloadCount === 'number' && (
+                      <span className="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-bold text-slate-300 shrink-0">
+                        {item.downloadCount} téléch.
+                      </span>
+                    )}
                   </div>
 
                   {item.notes && (
@@ -711,44 +733,48 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
                     </p>
                   )}
 
-                  <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-                    <span className="text-slate-400 font-semibold">Formules autorisées :</span>
-                    {item.allowedTiers.map((t) => {
-                      const info = PAID_TIER_OPTIONS.find((x) => x.id === t);
-                      return (
-                        <span
-                          key={t}
-                          className="px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-700/40 text-emerald-300 font-bold"
-                        >
-                          {info?.short || t}
-                        </span>
-                      );
-                    })}
-                  </div>
+                  {isAdmin && Array.isArray(item.allowedTiers) && item.allowedTiers.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                      <span className="text-slate-400 font-semibold">Formules autorisées :</span>
+                      {item.allowedTiers.map((t) => {
+                        const info = PAID_TIER_OPTIONS.find((x) => x.id === t);
+                        return (
+                          <span
+                            key={t}
+                            className="px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-700/40 text-emerald-300 font-bold"
+                          >
+                            {info?.short || t}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
 
-                  <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-slate-400 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800">
-                    <span className="truncate flex items-center gap-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      <span>SHA-256 : {item.sha256.slice(0, 20)}...</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleCopyHash(item.id, item.sha256)}
-                      className="text-cyan-300 hover:text-cyan-200 flex items-center gap-1 shrink-0 cursor-pointer"
-                    >
-                      {copiedHashId === item.id ? (
-                        <>
-                          <Check className="w-3 h-3 text-emerald-400" />
-                          <span>Copié</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3 h-3" />
-                          <span>Hash</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
+                  {isAdmin && item.sha256 && (
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-slate-400 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                      <span className="truncate flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>SHA-256 : {item.sha256.slice(0, 20)}...</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyHash(item.id, item.sha256!)}
+                        className="text-cyan-300 hover:text-cyan-200 flex items-center gap-1 shrink-0 cursor-pointer"
+                      >
+                        {copiedHashId === item.id ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span>Copié</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Hash</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Action Footer */}
@@ -771,7 +797,7 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
                   ) : (
                     <button
                       type="button"
-                      disabled={isDownloading || (!item.isActive && !isAdmin)}
+                      disabled={isDownloading || (!itemActive && !isAdmin)}
                       onClick={() => void handleDownload(item)}
                       className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 disabled:opacity-50 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-cyan-500/15"
                     >
@@ -796,9 +822,9 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
                         disabled={isBusy}
                         onClick={() => void handleToggleItemActive(item)}
                         className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 cursor-pointer"
-                        title={item.isActive ? 'Mettre en pause' : 'Réactiver'}
+                        title={itemActive ? 'Mettre en pause' : 'Réactiver'}
                       >
-                        {item.isActive ? (
+                        {itemActive ? (
                           <PauseCircle className="w-4 h-4 text-amber-400" />
                         ) : (
                           <PlayCircle className="w-4 h-4 text-emerald-400" />
@@ -820,6 +846,21 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
             );
           })}
         </div>
+      )}
+
+      {/* Recherche Ressources Sécurisées (Admin uniquement) */}
+      {isAdmin && (
+        <VaultSecurityLookup
+          vaultItems={items}
+          isAdmin={isAdmin}
+          onSelectVerifiedFileForUpload={handleSelectVerifiedFileForUpload}
+          onVaultItemImported={(newItem, repoName) => {
+            setItems((prev) => [newItem, ...prev]);
+            setStatusMsg(
+              `"${newItem.fileName}" importé automatiquement depuis ${repoName} dans votre Coffre Payant (SHA-256 vérifié).`
+            );
+          }}
+        />
       )}
     </div>
   );

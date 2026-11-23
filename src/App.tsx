@@ -30,6 +30,7 @@ import { WallpaperDrawerModal } from './components/WallpaperDrawerModal';
 import { INITIAL_DTC_CODES } from './data/mockVehicles';
 import { ShieldCheck, Cpu } from 'lucide-react';
 import { apiFetch } from './utils/apiBridge';
+import { clearAuthToken, purgeLegacySensitiveStorage } from './utils/authSession';
 import { obdHardwareBridge, ObdHardwareStatus } from './utils/obdHardwareBridge';
 import { remoteStabilityManager } from './utils/remoteStability';
 import {
@@ -39,50 +40,16 @@ import {
   saveActiveWallpaperSync,
 } from './utils/wallpaperManager';
 
-const REVOKED_LEGACY_DEMO_KEYS = new Set([
-  'AP-DZ26-MST-9882-7EAB-5A63',
-  'DEMO-FREE',
-  'AUTOPRO-DEMO',
-]);
-
 export default function App() {
   const [blockReason, setBlockReason] = useState<string | null>(null);
-  const [licenseSession, setLicenseSession] = useState<LicenseSession | null>(() => {
-    try {
-      const saved = localStorage.getItem('autopro_license_session');
-      if (saved) {
-        const parsed: LicenseSession = JSON.parse(saved);
-        if (parsed && parsed.isValid) {
-          const upperKey = (parsed.key || '').trim().toUpperCase();
-          if (REVOKED_LEGACY_DEMO_KEYS.has(upperKey)) {
-            localStorage.removeItem('autopro_license_session');
-            return null;
-          }
-          if (parsed.isAdmin && !sessionStorage.getItem('autopro_admin_passcode')) {
-            localStorage.removeItem('autopro_license_session');
-            return null;
-          }
-          if (parsed.tier === 'demo' && parsed.demoExpiresAt && Date.now() > new Date(parsed.demoExpiresAt).getTime()) {
-            localStorage.removeItem('autopro_license_session');
-            return null;
-          }
-          return parsed;
-        }
-      }
-    } catch {
-      // Ignore
-    }
-    return null;
-  });
+  const [licenseSession, setLicenseSession] = useState<LicenseSession | null>(null);
 
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState<boolean>(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
   const [matrixName] = useState<string>(() => {
     return localStorage.getItem('autopro_matrix_name') || 'Jarvis';
   });
-  const [activeTab, setActiveTab] = useState<NavTab>(() => {
-    return licenseSession?.isAdmin ? 'admin' : 'diagnostic';
-  });
+  const [activeTab, setActiveTab] = useState<NavTab>('diagnostic');
   const [atelierMode, setAtelierMode] = useState<boolean>(() => {
     return localStorage.getItem('autopro_atelier_mode') === 'true';
   });
@@ -127,8 +94,11 @@ export default function App() {
   }, []);
 
   const lockSession = useCallback((reason?: string) => {
-    localStorage.removeItem('autopro_license_session');
-    sessionStorage.removeItem('autopro_admin_passcode');
+    void apiFetch('/api/license/logout', { method: 'POST' }).catch(() => {
+      // Ignore logout network failures on lock
+    });
+    clearAuthToken();
+    purgeLegacySensitiveStorage();
     if (reason) {
       setBlockReason(reason);
     }
@@ -188,17 +158,6 @@ export default function App() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            key: licenseSession.key,
-            subscriberId: licenseSession.subscriberId,
-            clientName: licenseSession.clientName,
-            tier: licenseSession.tier,
-            phone: licenseSession.phone,
-            signature: licenseSession.signature,
-            createdAt: licenseSession.createdAt,
-            hwid: licenseSession.hwid,
-            isAdmin: Boolean(licenseSession.isAdmin),
-            activatedAt: licenseSession.activatedAt,
-            adminPasscode: sessionStorage.getItem('autopro_admin_passcode') || '',
             latencyMs: snap.latencyMs ?? undefined,
             stabilityScore: snap.stabilityScore,
             connectionMode,
@@ -207,15 +166,15 @@ export default function App() {
           }),
         });
         const elapsed = Math.round(performance.now() - startMs);
-        remoteStabilityManager.recordRequestOutcome(res.ok || res.status === 403, elapsed);
+        remoteStabilityManager.recordRequestOutcome(res.ok || res.status === 403 || res.status === 401, elapsed);
         const raw = await res.text();
         if (raw.trim().startsWith('<')) return;
         const data = JSON.parse(raw);
-        // Paid subscriptions stay active until explicitly suspended/revoked/deleted by Admin
         const isDemo = licenseSession.tier === 'demo';
         const shouldLock =
+          res.status === 401 ||
           data?.explicitlyRevoked === true ||
-          (isDemo && (res.status === 403 || data?.blocked || data?.valid === false));
+          ((isDemo || res.status === 403) && (data?.blocked || data?.valid === false));
         if (shouldLock) {
           lockSession(data?.reason || 'Votre accès a été désactivé par l\'administrateur.');
         }
@@ -279,8 +238,6 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          clientName: licenseSession.clientName,
-          hwid: licenseSession.hwid,
           actionType: 'heartbeat',
           actionDetails: `Ouverture session AutoPro (${licenseSession.tierLabel}) — Liaison ${connectionMode.toUpperCase()}`,
           vehicleName: `${selectedVehicle.brand} ${selectedVehicle.model}`,
@@ -294,7 +251,7 @@ export default function App() {
         // Silent telemetry ignore
       });
     }
-  }, [licenseSession?.key]);
+  }, [licenseSession?.subscriberId, licenseSession?.activatedAt]);
 
   const handleDeactivateLicense = () => {
     lockSession();
@@ -409,6 +366,7 @@ export default function App() {
             selectedVehicle={selectedVehicle}
             onSelectVehicle={setSelectedVehicle}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
+            isAdmin={isAdmin}
           />
         )}
 
@@ -431,6 +389,7 @@ export default function App() {
             setIsConnected={setIsConnected}
             batteryVoltage={batteryVoltage}
             setBatteryVoltage={setBatteryVoltage}
+            isAdmin={isAdmin}
           />
         )}
 
@@ -544,11 +503,11 @@ export default function App() {
         )}
 
         {activeTab === 'universal_master' && canRenderTab('universal_master') && (
-          <UniversalMasterSuite batteryVoltage={batteryVoltage} />
+          <UniversalMasterSuite batteryVoltage={batteryVoltage} isAdmin={isAdmin} />
         )}
 
         {activeTab === 'copilot' && canRenderTab('copilot') && (
-          <AtelierCopilot />
+          <AtelierCopilot isAdmin={isAdmin} />
         )}
       </main>
 

@@ -211,11 +211,15 @@ function arrayBufferToBase64(bytes: Uint8Array): string {
 // COMPOSANT PRINCIPAL : ATELIER COPILOT
 // ==============================================================================
 
-export const AtelierCopilot: React.FC = () => {
+interface AtelierCopilotProps {
+  isAdmin?: boolean;
+}
+
+export const AtelierCopilot: React.FC<AtelierCopilotProps> = ({ isAdmin = false }) => {
   // Config connexions locales / SaaS
   const [backendUrl, setBackendUrl] = useState<string>(DEFAULT_API_URL);
-  const [hmacSecret, setHmacSecret] = useState<string>('AUTOPRO_DZ_LOCAL_SESSION_KEY_2026');
-  const [loginEmail, setLoginEmail] = useState<string>('atelier@autoprodz.dz');
+  const [hmacSecret, setHmacSecret] = useState<string>('');
+  const [loginEmail, setLoginEmail] = useState<string>('');
   const [loginPassword, setLoginPassword] = useState<string>('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [workshopSession, setWorkshopSession] = useState<WorkshopSession | null>(null);
@@ -275,9 +279,12 @@ export const AtelierCopilot: React.FC = () => {
   );
 
   // ----------------------------------------------------------------------------
-  // CONNEXION WEBSOCKET TEMPS RÉEL AVEC RECONNEXION AUTOMATIQUE (127.0.0.1:8765)
+  // CONNEXION WEBSOCKET TEMPS RÉEL (SUR SESSION AGENT CONFIGURÉE)
   // ----------------------------------------------------------------------------
   const connectWebSocket = useCallback(() => {
+    if (!hmacSecret.trim()) {
+      return;
+    }
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       return;
     }
@@ -356,8 +363,9 @@ export const AtelierCopilot: React.FC = () => {
       setTelemetry((prev) => ({
         ...prev,
         connected: false,
-        reconnecting: true,
+        reconnecting: Boolean(hmacSecret.trim()),
       }));
+      if (!hmacSecret.trim()) return;
       const delayMs = Math.min(10000, 1500 * Math.pow(2, reconnectAttemptRef.current));
       reconnectAttemptRef.current += 1;
       reconnectTimerRef.current = setTimeout(() => {
@@ -371,7 +379,9 @@ export const AtelierCopilot: React.FC = () => {
   }, [hmacSecret, pushLog]);
 
   useEffect(() => {
-    connectWebSocket();
+    if (hmacSecret.trim()) {
+      connectWebSocket();
+    }
     return () => {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (wsRef.current) {
@@ -379,7 +389,7 @@ export const AtelierCopilot: React.FC = () => {
         wsRef.current.close();
       }
     };
-  }, [connectWebSocket]);
+  }, [connectWebSocket, hmacSecret]);
 
   // ----------------------------------------------------------------------------
   // AUTHENTIFICATION JWT SAAS BACKEND
@@ -654,7 +664,7 @@ export const AtelierCopilot: React.FC = () => {
       }
       pushLog(
         'SUCCESS',
-        `Dump ${ecuModel} lié au VIN ${data.vin} (HMAC ${String(data.vin_binding_hmac).slice(0, 12)}...).`,
+        `Dump ${ecuModel} lié au VIN ${data.vin} avec succès.`,
         `تم ربط ملف ${ecuModel} برقم الشاسي ${data.vin} بنجاح.`
       );
     } catch {
@@ -705,9 +715,9 @@ export const AtelierCopilot: React.FC = () => {
               {telemetry.connected ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
               <span>
                 {telemetry.connected
-                  ? `Agent PC Connecté (${telemetry.agentVersion || 'ws://127.0.0.1:8765'})`
+                  ? `Agent PC Connecté (${telemetry.agentVersion || 'Actif'})`
                   : telemetry.reconnecting
-                  ? 'Reconnexion auto ws://127.0.0.1:8765...'
+                  ? 'Reconnexion Agent PC...'
                   : 'Agent PC Hors-Ligne'}
               </span>
             </span>
@@ -716,7 +726,7 @@ export const AtelierCopilot: React.FC = () => {
             Atelier Copilote DZ — Contrôle Temps Réel (Français &amp; الدارجة)
           </h1>
           <p className="text-xs text-slate-400">
-            Pilotage strict via Agent Local <code className="text-cyan-300">AutoPro_DZ_Agent.exe</code> + Pare-feu Anti-Bricking (IHU, Tension 13.5–13.8V, AES-256 RAM, Bench MG1).
+            Pilotage sécurisé via Agent PC Local + Pare-feu Anti-Bricking (Vérification IHU, Tension 13.5–13.8V, Sauvegarde &amp; Diagnostic).
           </p>
         </div>
 
@@ -745,31 +755,37 @@ export const AtelierCopilot: React.FC = () => {
       {/* Connexion SaaS JWT & Solde Crédits */}
       <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800">
         {!workshopSession ? (
-          <form onSubmit={handleLoginWorkshop} className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end text-xs">
-            <div>
-              <label className="block text-slate-400 mb-1 font-semibold">URL Backend API</label>
-              <input
-                type="text"
-                value={backendUrl}
-                onChange={(e) => setBackendUrl(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-400 mb-1 font-semibold">Secret HMAC Agent</label>
-              <input
-                type="password"
-                value={hmacSecret}
-                onChange={(e) => setHmacSecret(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono"
-              />
-            </div>
+          <form onSubmit={handleLoginWorkshop} className={`grid grid-cols-1 ${isAdmin ? 'sm:grid-cols-5' : 'sm:grid-cols-3'} gap-3 items-end text-xs`}>
+            {isAdmin && (
+              <div>
+                <label className="block text-slate-400 mb-1 font-semibold">URL Backend API</label>
+                <input
+                  type="text"
+                  value={backendUrl}
+                  onChange={(e) => setBackendUrl(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono"
+                />
+              </div>
+            )}
+            {isAdmin && (
+              <div>
+                <label className="block text-slate-400 mb-1 font-semibold">Secret Agent</label>
+                <input
+                  type="password"
+                  value={hmacSecret}
+                  onChange={(e) => setHmacSecret(e.target.value)}
+                  placeholder="Clé secrète agent local"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono"
+                />
+              </div>
+            )}
             <div>
               <label className="block text-slate-400 mb-1 font-semibold">Email Atelier</label>
               <input
                 type="email"
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
+                placeholder="email@votre-atelier.dz"
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
               />
             </div>
@@ -779,7 +795,7 @@ export const AtelierCopilot: React.FC = () => {
                 type="password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
-                placeholder="AtelierDZ#2026"
+                placeholder="Mot de passe atelier"
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white"
               />
             </div>
@@ -788,10 +804,10 @@ export const AtelierCopilot: React.FC = () => {
               className="py-2 px-4 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <KeyRound className="w-4 h-4" />
-              <span>Connexion SaaS</span>
+              <span>Connexion Atelier</span>
             </button>
             {authError && (
-              <div className="sm:col-span-5 text-rose-300 bg-rose-950/40 border border-rose-500/40 rounded-lg p-2">
+              <div className={`${isAdmin ? 'sm:col-span-5' : 'sm:col-span-3'} text-rose-300 bg-rose-950/40 border border-rose-500/40 rounded-lg p-2`}>
                 {authError}
               </div>
             )}
@@ -878,7 +894,7 @@ export const AtelierCopilot: React.FC = () => {
             <span>Pare-Feu Anti-Bricking</span>
           </span>
           <div className={`text-sm font-bold ${emergencyHalted ? 'text-rose-400' : 'text-emerald-400'}`}>
-            {emergencyHalted ? 'ARRÊT D’URGENCE ACTIF' : '/system & F190 Verrouillés RO'}
+            {emergencyHalted ? 'ARRÊT D’URGENCE ACTIF' : (isAdmin ? '/system & F190 Verrouillés RO' : 'Partitions Système Protégées')}
           </div>
           {emergencyHalted && (
             <button

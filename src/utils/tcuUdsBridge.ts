@@ -513,7 +513,7 @@ export async function executeTcuUdsCommand(params: {
           direction: 'RX <- 0x7E9',
           serviceHex: '0x7F',
           rawHex: 'AGENT_PC_OFFLINE',
-          label: 'Agent Micro Client PC non démarré sur 127.0.0.1:38450',
+          label: 'Agent Micro Client PC non démarré',
           transport: 'LOCAL_PC_AGENT',
           isNegativeResponse: true,
         };
@@ -521,7 +521,7 @@ export async function executeTcuUdsCommand(params: {
           ok: false,
           txLog,
           rxLog,
-          message: 'Agent PC Client hors ligne. Téléchargez et lancez INSTALL-AUTOPRO-AGENT.bat sur le micro client.',
+          message: 'Agent PC Client hors ligne. Ouvrez le panneau Agent PC pour le démarrer.',
         };
       }
     }
@@ -559,7 +559,7 @@ export async function executeTcuUdsCommand(params: {
         direction: 'RX <- 0x7E9',
         serviceHex: '0x7F',
         rawHex: 'AGENT_PC_OFFLINE',
-        label: 'Agent Micro Client PC non démarré sur 127.0.0.1:38450',
+        label: 'Agent Micro Client PC non démarré en local',
         transport: 'LOCAL_PC_AGENT',
         isNegativeResponse: true,
       };
@@ -567,7 +567,7 @@ export async function executeTcuUdsCommand(params: {
         ok: false,
         txLog,
         rxLog,
-        message: 'Agent PC Client hors ligne (127.0.0.1:38450). Ouvrez le panneau Agent PC pour le lancer.',
+        message: 'Agent PC Client hors ligne. Ouvrez le panneau Agent PC pour le connecter.',
       };
     }
   }

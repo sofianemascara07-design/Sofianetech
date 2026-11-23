@@ -34,6 +34,7 @@ interface AutoTunerFlexWorkflowProps {
   selectedProfile: UniversalControlUnitProfile;
   onSelectProfile: (profile: UniversalControlUnitProfile) => void;
   onCreditsUpdated?: () => void;
+  isAdmin?: boolean;
 }
 
 export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
@@ -45,6 +46,7 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
   selectedProfile,
   onSelectProfile,
   onCreditsUpdated,
+  isAdmin = false,
 }) => {
   const [poleFilter, setPoleFilter] = useState<'ALL' | VehiclePoleId>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -122,7 +124,7 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
       await new Promise((r) => setTimeout(r, 900));
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const safeEcu = selectedProfile.ecuModel.replace(/[^A-Za-z0-9._-]/g, '_');
-      const localPath = `C:\\AutoPro_Backups\\FULL_${safeEcu}_${stamp}.bin`;
+      const localPath = `FULL_${safeEcu}_${stamp}.bin`;
       const hashInput = new TextEncoder().encode(`${detectedVin}|${selectedProfile.id}|${stamp}`);
       const digest = await crypto.subtle.digest('SHA-256', hashInput);
       const shaHex = Array.from(new Uint8Array(digest))
@@ -241,7 +243,7 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
 
       if (agentStatus?.connected && !isDemoStabilizerActive) {
         setWriteProgress(45);
-        setWriteStatusText('Agent PC 127.0.0.1:38450 → Cloud Seed/Key 0x27 + TesterPresent 0x3E 0x80...');
+        setWriteStatusText('Agent PC Connecté → Autorisation Sécurité 0x27 + Maintien 0x3E 0x80...');
         const res = await executeJ2534WriteEcu({
           token: pairToken,
           hmacSecret,
@@ -261,11 +263,11 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
         }
         setWriteProgress(100);
         setWriteLogs([
-          `[OK] Seed/Key Cloud 0x27 validé · Agent 127.0.0.1:38450`,
+          `[OK] Autorisation sécurité 0x27 validée · Agent PC Connecté`,
           `[OK] Transfert & Checksum CRC32 ${res.crc32}`,
-          `[OK] Backup sauvegardé : ${res.backupPath}`,
+          `[OK] Sauvegarde archivée avec succès`,
         ]);
-        setWriteStatusText(`Écriture réussie ! CRC32 ${res.crc32} · Backup : ${res.backupPath}`);
+        setWriteStatusText(`Écriture réussie ! CRC32 ${res.crc32} · Backup validé`);
       } else {
         // Simulation complète de flashage étape par étape (0% -> 100%)
         const simulationSteps = [
@@ -335,8 +337,8 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
         {[
           { step: 1 as const, title: '1. Identification Universelle', sub: `${selectedProfile.brand}` },
           { step: 2 as const, title: '2. Pinout HD & Pré-Contrôle', sub: `${liveVoltage.toFixed(2)}V · ${selectedProfile.pinouts.length} broches` },
-          { step: 3 as const, title: '3. Lecture Full & Auto-Backup', sub: backupRecord ? 'Backup Cloud OK' : 'Flash + EEPROM' },
-          { step: 4 as const, title: '4. Écriture & Checksum', sub: isVoltageUnsafe ? 'Verrouillé < 13.0V' : 'HMAC + CRC32' },
+          { step: 3 as const, title: '3. Lecture Full & Auto-Backup', sub: backupRecord ? 'Backup Local + Cloud OK' : 'Flash + EEPROM' },
+          { step: 4 as const, title: '4. Écriture & Checksum', sub: isVoltageUnsafe ? 'Verrouillé < 13.0V' : 'Vérification Intégrité' },
         ].map((item) => (
           <button
             key={item.step}
@@ -468,9 +470,11 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
                     <span className={`px-2 py-0.5 rounded border text-[10px] font-bold ${POLE_METADATA[prof.pole].badgeColor}`}>
                       {prof.poleLabel}
                     </span>
-                    <span className="px-2 py-0.5 rounded bg-slate-800 text-emerald-300 font-mono text-[10px] font-bold">
-                      {prof.creditCost} Token(s)
-                    </span>
+                    {isAdmin && (
+                      <span className="px-2 py-0.5 rounded bg-slate-800 text-emerald-300 font-mono text-[10px] font-bold">
+                        {prof.creditCost} Token(s)
+                      </span>
+                    )}
                   </div>
 
                   <div>
@@ -636,7 +640,7 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
                 Étape 3 — Lecture Full (Flash + EEPROM) &amp; Auto-Backup Cloud
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Sauvegarde locale dans <code className="text-cyan-300">C:\AutoPro_Backups\</code> et archivage automatique dans l’historique SaaS du compte client.
+                Sauvegarde locale automatique et archivage dans l’historique du véhicule.
               </p>
             </div>
 
@@ -655,15 +659,15 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
             <div className="p-4 rounded-xl bg-emerald-950/35 border border-emerald-500/50 space-y-2 text-xs">
               <div className="flex items-center gap-2 font-bold text-emerald-300">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>Lecture Full &amp; Sauvegarde Double (PC + Cloud SaaS) Terminées ({backupRecord.readAt})</span>
+                <span>Lecture Full &amp; Sauvegarde Double Terminées ({backupRecord.readAt})</span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-mono text-[11px] pt-1">
                 <div className="p-2.5 rounded-lg bg-[#0B1120] border border-slate-800">
-                  <span className="text-slate-500 block">Backup Local PC</span>
+                  <span className="text-slate-500 block">Backup Local</span>
                   <span className="text-cyan-300 break-all">{backupRecord.localPath}</span>
                 </div>
                 <div className="p-2.5 rounded-lg bg-[#0B1120] border border-slate-800">
-                  <span className="text-slate-500 block">Archive Cloud SaaS ID</span>
+                  <span className="text-slate-500 block">Archive Historique ID</span>
                   <span className="text-emerald-300">{backupRecord.cloudHistoryId} · {backupRecord.eepromSize}</span>
                 </div>
                 <div className="p-2.5 rounded-lg bg-[#0B1120] border border-slate-800">
@@ -687,10 +691,10 @@ export const AutoTunerFlexWorkflow: React.FC<AutoTunerFlexWorkflowProps> = ({
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-cyan-400" />
-                Étape 4 — Écriture Sécurisée, HMAC-SHA256 &amp; Recalcul Checksum/RSA
+                Étape 4 — Écriture Sécurisée &amp; Recalcul Checksum
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Déverrouillage Cloud <code className="text-cyan-300">0x27</code>, thread <code className="text-cyan-300">TesterPresent 0x3E 0x80</code> (2s) et reprise automatique sur coupure USB.
+                Déverrouillage sécurité, maintien actif de session et reprise automatique en cas de coupure USB.
               </p>
             </div>
 
