@@ -1,4 +1,4 @@
-export const APP_BUILD_VERSION = '2026.11.20-WALLPAPER-1';
+export const APP_BUILD_VERSION = '2026.11.23-AUTH-FIX-2';
 
 export interface CacheHealthState {
   buildVersion: string;
@@ -18,6 +18,15 @@ export function registerAutoUpdateServiceWorker(
   onUpdateDetected?: (remoteVer: string) => void
 ): () => void {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+    return () => {};
+  }
+
+  const host = window.location?.hostname || '';
+  if (host === 'localhost' || host === '127.0.0.1' || host.startsWith('ais-dev-')) {
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+      .catch(() => undefined);
     return () => {};
   }
 

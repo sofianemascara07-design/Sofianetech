@@ -481,6 +481,9 @@ export class AutoProDatabase {
 
   private sanitizeLoadedSecuritySettings(raw: unknown): StoredSecuritySettings {
     const obj = raw && typeof raw === 'object' ? { ...(raw as Record<string, unknown>) } : {};
+    if (typeof obj.adminPasscode === 'string' && obj.adminPasscode.trim() && !obj.adminPasscodeHash) {
+      obj.adminPasscodeHash = hashPasscode(obj.adminPasscode.trim());
+    }
     if ('adminPasscode' in obj) {
       delete obj.adminPasscode;
     }
@@ -1322,7 +1325,7 @@ export class AutoProDatabase {
   public bootstrapAdminPasscode(newPasscode: string): boolean {
     if (this.isAdminConfigured()) return false;
     const clean = (newPasscode || '').trim();
-    if (clean.length < 8) return false;
+    if (clean.length < 6) return false;
     this.securitySettings.adminPasscodeHash = hashPasscode(clean);
     this.securitySettings.adminPasscodeUpdatedAt = new Date().toISOString();
     this.minAdminIat = Date.now();
@@ -1334,12 +1337,12 @@ export class AutoProDatabase {
     if (!passcode || typeof passcode !== 'string') return false;
     const raw = passcode.trim();
     if (!raw) return false;
-    const envPass = (process.env.ADMIN_PASSCODE || '').trim();
-    if (envPass) {
-      return constantTimeMatch(raw, envPass);
+    if (this.securitySettings.adminPasscodeHash && verifyHashedPasscode(raw, this.securitySettings.adminPasscodeHash)) {
+      return true;
     }
-    if (this.securitySettings.adminPasscodeHash) {
-      return verifyHashedPasscode(raw, this.securitySettings.adminPasscodeHash);
+    const envPass = (process.env.ADMIN_PASSCODE || '').trim();
+    if (envPass && constantTimeMatch(raw, envPass)) {
+      return true;
     }
     return false;
   }
@@ -1565,7 +1568,7 @@ export class AutoProDatabase {
 
   public updateAdminPasscode(newPasscode: string): boolean {
     const clean = newPasscode.trim();
-    if (clean.length < 8) return false;
+    if (clean.length < 6) return false;
     this.securitySettings.adminPasscodeHash = hashPasscode(clean);
     this.securitySettings.adminPasscodeUpdatedAt = new Date().toISOString();
     this.minAdminIat = Date.now();

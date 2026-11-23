@@ -283,8 +283,8 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
 
   const handleUpdateSecurityRules = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newAdminPasscode.trim() && newAdminPasscode.trim().length < 8) {
-      showMsg('error', 'Le nouveau mot de passe Admin doit contenir au moins 8 caractères.');
+    if (newAdminPasscode.trim() && newAdminPasscode.trim().length < 6) {
+      showMsg('error', 'Le nouveau mot de passe Admin doit contenir au moins 6 caractères.');
       return;
     }
     setSavingSecurity(true);
@@ -864,7 +864,7 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
               </label>
               <input
                 type="password"
-                placeholder="Nouveau code secret Admin (min. 8 car.)"
+                placeholder="Nouveau code secret Admin (min. 6 car.)"
                 value={newAdminPasscode}
                 onChange={(e) => setNewAdminPasscode(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-amber-500"

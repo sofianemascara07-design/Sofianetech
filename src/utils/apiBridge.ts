@@ -136,7 +136,7 @@ export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<R
   const timeoutMs = typeof init?.timeoutMs === 'number' ? init.timeoutMs : 22000;
 
   const fallbackTarget = input.startsWith('/api/') ? `${DEFAULT_RENDER_BACKEND_URL}${input}` : null;
-  const canFailoverToRender = Boolean(fallbackTarget && fallbackTarget !== target);
+  const canFailoverToRender = Boolean(!isFullStackSelfHost() && fallbackTarget && fallbackTarget !== target);
 
   let lastError: unknown = null;
 

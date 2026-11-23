@@ -170,7 +170,7 @@ app.use('/api', (req, res, next) => {
   return globalApiLimiter(req, res, next);
 });
 
-app.use(['/api/license/verify', '/api/admin'], authBruteForceLimiter);
+app.use(['/api/license/verify', '/api/admin/bootstrap'], authBruteForceLimiter);
 app.use(
   ['/api/diagnose/ai', '/api/translate/ai', '/api/flash/recommendations', '/api/ai/voice-command', '/api/chinese-tablet/ai-guard', '/api/immo/ai-key-tool', '/api/transmission/ai-diagnose', '/api/copilot/diagnose'],
   aiQuotaLimiter
@@ -2108,11 +2108,11 @@ app.post('/api/admin/bootstrap', (req, res) => {
   }
   const passcode = typeof req.body?.passcode === 'string' ? req.body.passcode.trim() : '';
   const hwid = typeof req.body?.hwid === 'string' ? req.body.hwid.trim() : 'ADMIN-MASTER';
-  if (passcode.length < 8) {
+  if (passcode.length < 6) {
     return res.status(400).json({
       valid: false,
-      error: 'Le mot de passe Administrateur doit contenir au moins 8 caractères.',
-      message: 'Le mot de passe Administrateur doit contenir au moins 8 caractères.',
+      error: 'Le mot de passe Administrateur doit contenir au moins 6 caractères.',
+      message: 'Le mot de passe Administrateur doit contenir au moins 6 caractères.',
     });
   }
 
@@ -2433,7 +2433,7 @@ app.patch('/api/admin/security', requireAdmin, (req: AuthenticatedRequest, res) 
   if (newAdminPasscode && typeof newAdminPasscode === 'string') {
     const ok = saasDatabase.updateAdminPasscode(newAdminPasscode);
     if (!ok) {
-      return res.status(400).json({ success: false, error: 'Le mot de passe admin doit contenir au moins 8 caractères.' });
+      return res.status(400).json({ success: false, error: 'Le mot de passe admin doit contenir au moins 6 caractères.' });
     }
     rotatedToken = saasDatabase.issueAuthToken({
       role: 'admin',
@@ -4682,6 +4682,9 @@ async function startServer() {
         },
       })
     );
+    app.get('/assets/*', (_req, res) => {
+      return res.status(404).end();
+    });
     app.get('*', (_req, res) => {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.sendFile(path.resolve(distDir, 'index.html'));

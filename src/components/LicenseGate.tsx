@@ -14,6 +14,8 @@ import {
   Phone,
   Clock,
   KeyRound,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { LicenseSession } from '../types/automotive';
 import { apiFetch } from '../utils/apiBridge';
@@ -42,6 +44,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
   const [demoLinksEnabled, setDemoLinksEnabled] = useState<boolean>(false);
   const [defaultDemoMinutes, setDefaultDemoMinutes] = useState<number>(10);
   const [serverStatus, setServerStatus] = useState<'waking' | 'online' | 'offline'>('waking');
+  const [showAdminPass, setShowAdminPass] = useState(false);
 
   useEffect(() => {
     let savedHwid = localStorage.getItem('autopro_machine_hwid');
@@ -110,8 +113,8 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
     if (authTab === 'admin') {
       const pass = adminPasscode.trim();
       if (adminSetupRequired) {
-        if (pass.length < 8) {
-          setErrorMessage('Le mot de passe Administrateur initial doit contenir au moins 8 caractères.');
+        if (pass.length < 6) {
+          setErrorMessage('Le mot de passe Administrateur doit contenir au moins 6 caractères.');
           return;
         }
         if (pass !== adminPasscodeConfirm.trim()) {
@@ -159,7 +162,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
           body: JSON.stringify({
             mode: 'admin',
             adminPasscode: pass,
-            key: '',
+            key: pass,
             hwid,
           }),
         });
@@ -399,25 +402,35 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
               <>
                 {adminSetupRequired && (
                   <div className="p-3 bg-amber-950/30 border border-amber-500/40 rounded-xl text-[11px] text-amber-200 leading-relaxed">
-                    Aucun mot de passe Administrateur n&apos;est encore enregistré sur le serveur. Définissez un mot de passe robuste (minimum 8 caractères) pour initialiser votre console.
+                    Après la mise à jour de sécurité, les anciens mots de passe intégrés au code ont été désactivés. Saisissez et confirmez votre propre mot de passe Administrateur ci-dessous (min. 6 caractères) pour enregistrer votre accès sécurisé.
                   </div>
                 )}
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                     {adminSetupRequired
-                      ? 'Nouveau Mot de Passe Administrateur (min. 8 car.) :'
+                      ? 'Nouveau Mot de Passe Administrateur (min. 6 car.) :'
                       : 'Mot de Passe Administrateur :'}
                   </label>
-                  <input
-                    type="password"
-                    placeholder="Saisissez votre mot de passe secret"
-                    value={adminPasscode}
-                    onChange={(e) => setAdminPasscode(e.target.value)}
-                    autoComplete="current-password"
-                    spellCheck={false}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-amber-300 font-mono font-bold placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showAdminPass ? 'text' : 'password'}
+                      placeholder="Saisissez votre mot de passe secret"
+                      value={adminPasscode}
+                      onChange={(e) => setAdminPasscode(e.target.value)}
+                      autoComplete="current-password"
+                      spellCheck={false}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-amber-300 font-mono font-bold placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAdminPass((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-amber-300 cursor-pointer"
+                      aria-label="Afficher ou masquer le mot de passe"
+                    >
+                      {showAdminPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 {adminSetupRequired && (
@@ -426,8 +439,8 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
                       Confirmer le Mot de Passe Administrateur :
                     </label>
                     <input
-                      type="password"
-                      placeholder="Retapez le mot de passe"
+                      type={showAdminPass ? 'text' : 'password'}
+                      placeholder="Retapez le même mot de passe"
                       value={adminPasscodeConfirm}
                       onChange={(e) => setAdminPasscodeConfirm(e.target.value)}
                       autoComplete="new-password"
