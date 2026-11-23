@@ -52,6 +52,7 @@ interface TabletAppInstallerProps {
   connectionMode: ConnectionMode;
   isConnected: boolean;
   onOpenConnectModal: () => void;
+  onOpenVault?: () => void;
 }
 
 const SMART_PREMIUM_PACK_IDS = [
@@ -71,6 +72,7 @@ export const TabletAppInstaller: React.FC<TabletAppInstallerProps> = ({
   connectionMode,
   isConnected,
   onOpenConnectModal,
+  onOpenVault,
 }) => {
   const [apps, setApps] = useState<TabletApp[]>(TABLET_APPS_CATALOG);
   // File d'attente simultanée : plusieurs apps peuvent télécharger/installer en parallèle
@@ -586,6 +588,17 @@ pause
             <span>APK Perso</span>
             <input type="file" accept=".apk,.zip" onChange={handleCustomApkUpload} className="hidden" />
           </label>
+
+          {onOpenVault && (
+            <button
+              type="button"
+              onClick={onOpenVault}
+              className="px-3.5 py-2 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/50 text-amber-300 text-xs font-extrabold rounded-lg transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <Lock className="w-4 h-4 text-amber-400" />
+              <span>Coffre APK Payants</span>
+            </button>
+          )}
         </div>
       </div>
 

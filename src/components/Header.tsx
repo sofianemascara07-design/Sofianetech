@@ -1,6 +1,6 @@
 import React from 'react';
 import { ConnectionMode, LicenseSession } from '../types/automotive';
-import { ShieldCheck, Mic, Sun, Camera, ShieldAlert, Clock, Wrench, Flame, Wallpaper } from 'lucide-react';
+import { ShieldCheck, Mic, Sun, Camera, ShieldAlert, Clock, Wrench, Flame, Wallpaper, Lock } from 'lucide-react';
 
 export type NavTab =
   | 'diagnostic'
@@ -8,6 +8,7 @@ export type NavTab =
   | 'flash'
   | 'connection'
   | 'apps'
+  | 'vault'
   | 'translator'
   | 'smartech'
   | 'packaging'
@@ -19,6 +20,7 @@ export type NavTab =
   | 'transmission'
   | 'coolray_lspi'
   | 'universal_master'
+  | 'copilot'
   | 'admin';
 
 interface HeaderProps {
@@ -73,6 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
   const canAccess = (tab: NavTab) => {
     if (isAdmin) return true;
     if (tab === 'admin') return false;
+    if (tab === 'vault') return true;
     const mods = licenseSession?.allowedModules;
     if (!mods || mods.length === 0) {
       return tab !== 'packaging';
@@ -96,6 +99,15 @@ export const Header: React.FC<HeaderProps> = ({
         mods.includes('universal_master') ||
         mods.includes('diagnostic') ||
         mods.includes('flash')
+      );
+    }
+    if (tab === 'copilot') {
+      return (
+        mods.includes('copilot') ||
+        mods.includes('diagnostic') ||
+        mods.includes('flash') ||
+        mods.includes('chinese_flasher') ||
+        mods.includes('coolray_lspi')
       );
     }
     return mods.includes(tab);
@@ -385,6 +397,20 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
+          {canAccess('copilot') && (
+            <button
+              onClick={() => onSelectTab('copilot')}
+              className={`whitespace-nowrap transition-colors pb-1 border-b-2 cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'copilot'
+                  ? 'text-cyan-300 border-cyan-400 font-bold'
+                  : 'border-transparent hover:text-cyan-300 text-cyan-400/90'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Copilote Agent PC</span>
+            </button>
+          )}
+
           {canAccess('smartech') && (
             <button
               onClick={() => onSelectTab('smartech')}
@@ -422,6 +448,20 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               Apps
+            </button>
+          )}
+
+          {canAccess('vault') && (
+            <button
+              onClick={() => onSelectTab('vault')}
+              className={`whitespace-nowrap transition-colors pb-1 border-b-2 cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'vault'
+                  ? 'text-amber-300 border-amber-400 font-bold'
+                  : 'border-transparent hover:text-amber-300 text-amber-400/90'
+              }`}
+            >
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+              <span>Coffre Payant (APK/.BIN)</span>
             </button>
           )}
 

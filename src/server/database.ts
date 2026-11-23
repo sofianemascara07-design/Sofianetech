@@ -17,6 +17,10 @@ import {
   EcuPinoutEntry,
   PinoutModuleType,
   CoolrayVehicleFollowUpRecord,
+  VaultPackageRecord,
+  PublicVaultPackage,
+  VaultFileCategory,
+  VaultPaidTier,
 } from '../types/automotive';
 import { SEEDED_ECU_PINOUTS } from '../data/chinaWorkshopSeed';
 import { buildDefaultCoolrayRecord } from '../data/coolrayLspiProfiles';
@@ -42,6 +46,8 @@ const SECURITY_FILE = path.resolve(DATA_DIR, 'autopro_security.json');
 const SDR_PROSPECTS_FILE = path.resolve(DATA_DIR, 'autopro_sdr_prospects.json');
 const PINOUTS_FILE = path.resolve(DATA_DIR, 'autopro_pinouts.json');
 const COOLRAY_LSPI_FILE = path.resolve(DATA_DIR, 'autopro_coolray_lspi.json');
+const VAULT_INDEX_FILE = path.resolve(DATA_DIR, 'autopro_vault_index.json');
+const VAULT_FILES_DIR = path.resolve(DATA_DIR, 'vault_files');
 
 const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || '').trim().replace(/\/+$/, '');
 const UPSTASH_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
@@ -419,6 +425,7 @@ export class AutoProDatabase {
   private sdrProspects: SdrProspect[] = [];
   private pinouts: EcuPinoutEntry[] = [];
   private coolrayLspiRecords: CoolrayVehicleFollowUpRecord[] = [];
+  private vaultPackages: VaultPackageRecord[] = [];
   private securitySettings: SecuritySettings & { adminPasscode: string } = { ...DEFAULT_SECURITY_SETTINGS };
   private vinIndex: Map<string, string[]> = new Map(); // VIN -> array of scan IDs
   private codeIndex: Map<string, string[]> = new Map(); // DTC code -> array of scan IDs
@@ -456,6 +463,19 @@ export class AutoProDatabase {
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      if (!fs.existsSync(VAULT_FILES_DIR)) {
+        fs.mkdirSync(VAULT_FILES_DIR, { recursive: true });
+      }
+      if (fs.existsSync(VAULT_INDEX_FILE)) {
+        try {
+          const rawVault = JSON.parse(fs.readFileSync(VAULT_INDEX_FILE, 'utf-8'));
+          if (Array.isArray(rawVault)) {
+            this.vaultPackages = rawVault;
+          }
+        } catch {
+          this.vaultPackages = [];
+        }
       }
 
       if (fs.existsSync(ACTIVITIES_FILE)) {
@@ -689,6 +709,379 @@ export class AutoProDatabase {
     } catch (err) {
       console.error('[AutoProDatabase] Save Coolray LSPI records error:', err);
     }
+  }
+
+  private saveVaultIndexToFile() {
+    try {
+      if (!fs.existsSync(VAULT_FILES_DIR)) {
+        fs.mkdirSync(VAULT_FILES_DIR, { recursive: true });
+      }
+      const tempFile = `${VAULT_INDEX_FILE}.tmp`;
+      fs.writeFileSync(tempFile, JSON.stringify(this.vaultPackages, null, 2), 'utf-8');
+      fs.renameSync(tempFile, VAULT_INDEX_FILE);
+    } catch (err) {
+      console.error('[AutoProDatabase] Save vault index error:', err);
+    }
+  }
+
+  private resolveVaultFilePath(storedFileName: string): string {
+    if (!/^[A-Za-z0-9_-]+\.(apk|bin|zip|eep|hex)$/.test(storedFileName)) {
+      throw new Error('Nom de fichier Coffre invalide.');
+    }
+    const resolved = path.resolve(VAULT_FILES_DIR, storedFileName);
+    if (!resolved.startsWith(VAULT_FILES_DIR + path.sep)) {
+      throw new Error('Chemin de fichier hors périmètre autorisé.');
+    }
+    return resolved;
+  }
+
+  private toPublicVaultPackage(rec: VaultPackageRecord): PublicVaultPackage {
+    const { storedFileName: _hidden, ...pub } = rec;
+    return pub;
+  }
+
+  public listVaultPackages(includeInactive = false): PublicVaultPackage[] {
+    return this.vaultPackages
+      .filter((item) => (includeInactive ? true : item.isActive))
+      .map((item) => this.toPublicVaultPackage(item))
+      .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+  }
+
+  public saveVaultPackageUpload(params: {
+    title?: string;
+    originalFileName: string;
+    version?: string;
+    category?: string;
+    allowedTiers?: string[];
+    notes?: string;
+    buffer: Buffer;
+  }): { ok: true; item: PublicVaultPackage } | { ok: false; error: string } {
+    if (!Buffer.isBuffer(params.buffer) || params.buffer.length === 0) {
+      return { ok: false, error: 'Le fichier envoyé est vide.' };
+    }
+    if (params.buffer.length > 100 * 1024 * 1024) {
+      return { ok: false, error: 'Taille maximale autorisée : 100 Mo par fichier.' };
+    }
+
+    const baseName = path.basename(params.originalFileName || '').trim();
+    const safeFileName = baseName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+    const extMatch = safeFileName.toLowerCase().match(/\.(apk|bin|zip|eep|hex)$/);
+    if (!extMatch) {
+      return {
+        ok: false,
+        error: 'Extension non autorisée. Formats acceptés : .apk, .bin, .zip, .eep, .hex.',
+      };
+    }
+    const ext = `.${extMatch[1]}` as VaultPackageRecord['extension'];
+
+    // Validate ZIP/APK magic bytes (PK\x03\x04 or PK\x05\x06)
+    if (ext === '.apk' || ext === '.zip') {
+      const hasPkHeader =
+        params.buffer.length >= 4 &&
+        params.buffer[0] === 0x50 &&
+        params.buffer[1] === 0x4b &&
+        ((params.buffer[2] === 0x03 && params.buffer[3] === 0x04) ||
+          (params.buffer[2] === 0x05 && params.buffer[3] === 0x06));
+      if (!hasPkHeader) {
+        return {
+          ok: false,
+          error: `Fichier ${ext.toUpperCase()} invalide ou corrompu (signature ZIP/APK PK absente).`,
+        };
+      }
+    }
+
+    const ALLOWED_PAID_TIERS: VaultPaidTier[] = ['master', 'reprog', 'standard', 'tablette_chinois'];
+    const filteredTiers = (params.allowedTiers || []).filter((t): t is VaultPaidTier =>
+      ALLOWED_PAID_TIERS.includes(t as VaultPaidTier)
+    );
+    const allowedTiers: VaultPaidTier[] =
+      filteredTiers.length > 0 ? filteredTiers : ['master', 'tablette_chinois', 'reprog', 'standard'];
+
+    const validCategories: VaultFileCategory[] = ['APK Android', 'Firmware / .BIN', 'Pack Atelier'];
+    const category: VaultFileCategory = validCategories.includes(params.category as VaultFileCategory)
+      ? (params.category as VaultFileCategory)
+      : ext === '.apk'
+      ? 'APK Android'
+      : ext === '.bin' || ext === '.eep' || ext === '.hex'
+      ? 'Firmware / .BIN'
+      : 'Pack Atelier';
+
+    const id = `VAULT-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
+    const storedFileName = `${id}${ext}`;
+    const destPath = this.resolveVaultFilePath(storedFileName);
+    const tmpPath = `${destPath}.tmp`;
+
+    if (!fs.existsSync(VAULT_FILES_DIR)) {
+      fs.mkdirSync(VAULT_FILES_DIR, { recursive: true });
+    }
+    fs.writeFileSync(tmpPath, params.buffer);
+    fs.renameSync(tmpPath, destPath);
+
+    const sha256 = crypto.createHash('sha256').update(params.buffer).digest('hex');
+    const nowIso = new Date().toISOString();
+    const cleanTitle = (params.title || '').trim() || safeFileName.replace(/\.(apk|bin|zip|eep|hex)$/i, '');
+
+    const record: VaultPackageRecord = {
+      id,
+      title: cleanTitle.slice(0, 100),
+      fileName: safeFileName,
+      storedFileName,
+      extension: ext,
+      category,
+      version: (params.version || 'v1.0').trim().slice(0, 32) || 'v1.0',
+      sizeBytes: params.buffer.length,
+      sha256,
+      allowedTiers,
+      isActive: true,
+      downloadCount: 0,
+      notes: (params.notes || '').trim().slice(0, 300) || undefined,
+      uploadedAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    this.vaultPackages.unshift(record);
+    this.saveVaultIndexToFile();
+
+    return { ok: true, item: this.toPublicVaultPackage(record) };
+  }
+
+  public updateVaultPackage(
+    id: string,
+    patch: {
+      isActive?: boolean;
+      title?: string;
+      version?: string;
+      notes?: string;
+      allowedTiers?: string[];
+    }
+  ): PublicVaultPackage | null {
+    const idx = this.vaultPackages.findIndex((v) => v.id === id);
+    if (idx === -1) return null;
+    const current = this.vaultPackages[idx];
+    const ALLOWED_PAID_TIERS: VaultPaidTier[] = ['master', 'reprog', 'standard', 'tablette_chinois'];
+
+    let nextTiers = current.allowedTiers;
+    if (Array.isArray(patch.allowedTiers)) {
+      const cleaned = patch.allowedTiers.filter((t): t is VaultPaidTier =>
+        ALLOWED_PAID_TIERS.includes(t as VaultPaidTier)
+      );
+      if (cleaned.length > 0) nextTiers = cleaned;
+    }
+
+    const updated: VaultPackageRecord = {
+      ...current,
+      ...(typeof patch.isActive === 'boolean' ? { isActive: patch.isActive } : {}),
+      ...(typeof patch.title === 'string' && patch.title.trim() ? { title: patch.title.trim().slice(0, 100) } : {}),
+      ...(typeof patch.version === 'string' && patch.version.trim() ? { version: patch.version.trim().slice(0, 32) } : {}),
+      ...(typeof patch.notes === 'string' ? { notes: patch.notes.trim().slice(0, 300) || undefined } : {}),
+      allowedTiers: nextTiers,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.vaultPackages[idx] = updated;
+    this.saveVaultIndexToFile();
+    return this.toPublicVaultPackage(updated);
+  }
+
+  public deleteVaultPackage(id: string): boolean {
+    const idx = this.vaultPackages.findIndex((v) => v.id === id);
+    if (idx === -1) return false;
+    const item = this.vaultPackages[idx];
+    try {
+      const filePath = this.resolveVaultFilePath(item.storedFileName);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch {
+      // Ignore missing disk file cleanup
+    }
+    this.vaultPackages.splice(idx, 1);
+    this.saveVaultIndexToFile();
+    return true;
+  }
+
+  public verifyPaidVaultDownloadAccess(params: {
+    id: string;
+    key?: string;
+    hwid?: string;
+    signature?: string;
+    subscriberId?: string;
+    clientName?: string;
+    tier?: LicenseTier;
+    isAdmin?: boolean;
+    adminPasscode?: string;
+  }): {
+    allowed: boolean;
+    statusCode: number;
+    message: string;
+    filePath?: string;
+    publicItem?: PublicVaultPackage;
+  } {
+    const idx = this.vaultPackages.findIndex((v) => v.id === params.id);
+    if (idx === -1) {
+      return {
+        allowed: false,
+        statusCode: 404,
+        message: 'Fichier introuvable dans le Coffre.',
+      };
+    }
+
+    const item = this.vaultPackages[idx];
+    let filePath: string;
+    try {
+      filePath = this.resolveVaultFilePath(item.storedFileName);
+    } catch {
+      return {
+        allowed: false,
+        statusCode: 404,
+        message: 'Chemin de fichier invalide.',
+      };
+    }
+
+    if (!fs.existsSync(filePath)) {
+      return {
+        allowed: false,
+        statusCode: 404,
+        message: 'Fichier binaire absent du stockage serveur. Demandez à l’administrateur de le ré-importer.',
+      };
+    }
+
+    // 1. Admin bypass with server passcode verification
+    if (params.isAdmin && params.adminPasscode && this.verifyAdminPasscode(params.adminPasscode)) {
+      item.downloadCount += 1;
+      item.updatedAt = new Date().toISOString();
+      this.vaultPackages[idx] = item;
+      this.saveVaultIndexToFile();
+      return {
+        allowed: true,
+        statusCode: 200,
+        message: 'Accès Administrateur autorisé.',
+        filePath,
+        publicItem: this.toPublicVaultPackage(item),
+      };
+    }
+
+    if (!item.isActive) {
+      return {
+        allowed: false,
+        statusCode: 403,
+        message: 'Ce fichier est temporairement suspendu par l’administrateur.',
+      };
+    }
+
+    // 2. Strictly reject Demo / unauthenticated attempts
+    const cleanKey = (params.key || '').trim().toUpperCase();
+    if (!cleanKey || params.tier === 'demo') {
+      return {
+        allowed: false,
+        statusCode: 403,
+        message:
+          'Téléchargement bloqué : un abonnement payant actif est obligatoire. Les comptes Démo ne peuvent pas télécharger. Contactez Sofiane au 05 57 76 78 04.',
+      };
+    }
+
+    if (this.securitySettings.blockedDemoKeys.includes(cleanKey)) {
+      return {
+        allowed: false,
+        statusCode: 403,
+        message: 'Clé bloquée par l’administrateur.',
+      };
+    }
+
+    const tombstone = this.findRevocationTombstone(params.subscriberId, cleanKey);
+    if (tombstone) {
+      return {
+        allowed: false,
+        statusCode: 403,
+        message: 'Votre abonnement a été révoqué par l’administrateur.',
+      };
+    }
+
+    let sub = this.subscribers.find((s) => s.licenseKey.toUpperCase() === cleanKey);
+
+    // Support HMAC-verified paid subscribers across ephemeral server restarts if not revoked
+    if (!sub) {
+      const isPaidMetaTier = Boolean(params.tier && params.tier !== 'admin');
+      if (
+        isPaidMetaTier &&
+        params.clientName &&
+        params.signature &&
+        this.verifySignedLicensePayload(cleanKey, params.clientName, params.hwid || 'HWID', params.signature)
+      ) {
+        sub = {
+          id: params.subscriberId || 'SUB-HMAC',
+          clientName: params.clientName,
+          licenseKey: cleanKey,
+          boundHwid: params.hwid || null,
+          tier: params.tier!,
+          status: 'active',
+          createdAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    if (!sub) {
+      return {
+        allowed: false,
+        statusCode: 403,
+        message: 'Licence payante introuvable. Activez une clé abonné valide.',
+      };
+    }
+
+    if (sub.tier === 'demo') {
+      return {
+        allowed: false,
+        statusCode: 403,
+        message:
+          'Téléchargement refusé : les Pass Démo gratuits n’ont pas accès au Coffre. Passez à une licence payante.',
+      };
+    }
+
+    if (sub.status !== 'active') {
+      return {
+        allowed: false,
+        statusCode: 403,
+        message: 'Téléchargement refusé : votre abonnement est suspendu ou révoqué.',
+      };
+    }
+
+    if (sub.boundHwid && params.hwid && sub.boundHwid !== params.hwid) {
+      return {
+        allowed: false,
+        statusCode: 403,
+        message: 'Partage refusé : cette clé payante est verrouillée sur un autre appareil.',
+      };
+    }
+
+    if (!item.allowedTiers.includes(sub.tier as VaultPaidTier)) {
+      return {
+        allowed: false,
+        statusCode: 403,
+        message: `Votre formule actuelle (${sub.tier}) n’inclut pas ce fichier. Formules autorisées : ${item.allowedTiers.join(', ')}.`,
+      };
+    }
+
+    item.downloadCount += 1;
+    item.updatedAt = new Date().toISOString();
+    this.vaultPackages[idx] = item;
+    this.saveVaultIndexToFile();
+
+    this.logActivity({
+      clientName: sub.clientName,
+      hwid: params.hwid || sub.boundHwid || 'HWID-CLIENT',
+      actionType: 'vault_download',
+      actionDetails: `Téléchargement Coffre Payant : ${item.fileName} (${item.version})`,
+      locationCity: 'Algérie (Abonné Payant)',
+      durationMinutes: 1,
+    });
+
+    return {
+      allowed: true,
+      statusCode: 200,
+      message: 'Abonnement payant vérifié.',
+      filePath,
+      publicItem: this.toPublicVaultPackage(item),
+    };
   }
 
   public getCoolrayLspiRecords(): CoolrayVehicleFollowUpRecord[] {

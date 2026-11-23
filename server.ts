@@ -75,8 +75,9 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
   res.header(
     'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-passcode, X-AutoPro-Token, X-AutoPro-Signature'
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-passcode, X-AutoPro-Token, X-AutoPro-Signature, X-Vault-File-Name, X-Vault-Title, X-Vault-Version, X-Vault-Category, X-Vault-Tiers, X-Vault-Notes'
   );
+  res.header('Access-Control-Expose-Headers', 'Content-Disposition, X-Vault-Sha256');
 
   // Production HTTP Security Headers
   res.header('X-Content-Type-Options', 'nosniff');
@@ -2104,14 +2105,14 @@ app.post('/api/license/verify', (req, res) => {
 
   const allowedModules =
     tier === 'master'
-      ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'smartech', 'connection', 'apps', 'translator', 'workshop_cn', 'transmission']
+      ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'smartech', 'connection', 'apps', 'vault', 'translator', 'workshop_cn', 'transmission']
       : tier === 'reprog'
-      ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'connection', 'translator', 'workshop_cn', 'transmission']
+      ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'connection', 'vault', 'translator', 'workshop_cn', 'transmission']
       : tier === 'tablette_chinois'
-      ? ['chinese_flasher', 'apps', 'translator', 'connection']
+      ? ['chinese_flasher', 'apps', 'vault', 'translator', 'connection']
       : tier === 'demo'
-      ? ['diagnostic', 'cameras', 'history', 'workshop_cn', 'transmission']
-      : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'translator', 'workshop_cn', 'transmission'];
+      ? ['diagnostic', 'cameras', 'history', 'workshop_cn', 'transmission', 'vault']
+      : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'vault', 'translator', 'workshop_cn', 'transmission'];
 
   const resolvedHwid = sub.boundHwid || hwid || 'HWID-AUTO-DETECTED';
   const signature = saasDatabase.signLicensePayload(
@@ -2342,6 +2343,140 @@ app.patch('/api/admin/security', requireAdmin, (req, res) => {
     ...(typeof defaultDemoMinutes === 'number' ? { defaultDemoMinutes } : {}),
   });
   return res.json({ success: true, securitySettings: settings });
+});
+
+// ==========================================
+// COFFRE TÉLÉCHARGEMENTS ABONNÉS PAYANTS (APK / .BIN / PACKS)
+// ==========================================
+const decodeHeaderUtf8 = (val: string | string[] | undefined): string => {
+  if (typeof val !== 'string' || !val) return '';
+  try {
+    return decodeURIComponent(val);
+  } catch {
+    return val;
+  }
+};
+
+app.get('/api/vault/items', (_req, res) => {
+  return res.json({
+    success: true,
+    items: saasDatabase.listVaultPackages(false),
+  });
+});
+
+app.get('/api/admin/vault/items', requireAdmin, (_req, res) => {
+  return res.json({
+    success: true,
+    items: saasDatabase.listVaultPackages(true),
+  });
+});
+
+app.post(
+  '/api/admin/vault/upload',
+  requireAdmin,
+  express.raw({ type: '*/*', limit: '100mb' }),
+  (req, res) => {
+    const fileName = decodeHeaderUtf8(req.headers['x-vault-file-name']);
+    const title = decodeHeaderUtf8(req.headers['x-vault-title']);
+    const version = decodeHeaderUtf8(req.headers['x-vault-version']);
+    const category = decodeHeaderUtf8(req.headers['x-vault-category']);
+    const tiersRaw = decodeHeaderUtf8(req.headers['x-vault-tiers']);
+    const notes = decodeHeaderUtf8(req.headers['x-vault-notes']);
+
+    const allowedTiers = tiersRaw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (!fileName) {
+      return res.status(400).json({ success: false, error: 'Nom de fichier manquant (X-Vault-File-Name).' });
+    }
+
+    const buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const saved = saasDatabase.saveVaultPackageUpload({
+      title,
+      originalFileName: fileName,
+      version,
+      category,
+      allowedTiers,
+      notes,
+      buffer,
+    });
+
+    if (!saved.ok) {
+      return res.status(400).json({ success: false, error: saved.error });
+    }
+
+    return res.status(201).json({
+      success: true,
+      item: saved.item,
+    });
+  }
+);
+
+app.patch('/api/admin/vault/:id', requireAdmin, (req, res) => {
+  const updated = saasDatabase.updateVaultPackage(req.params.id, req.body || {});
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Fichier Coffre introuvable.' });
+  }
+  return res.json({ success: true, item: updated });
+});
+
+app.delete('/api/admin/vault/:id', requireAdmin, (req, res) => {
+  const ok = saasDatabase.deleteVaultPackage(req.params.id);
+  if (!ok) {
+    return res.status(404).json({ success: false, error: 'Fichier Coffre introuvable.' });
+  }
+  return res.json({ success: true });
+});
+
+app.post('/api/vault/download/:id', (req, res) => {
+  const {
+    key,
+    hwid,
+    signature,
+    subscriberId,
+    clientName,
+    tier,
+    isAdmin,
+    adminPasscode,
+  } = req.body || {};
+
+  const check = saasDatabase.verifyPaidVaultDownloadAccess({
+    id: req.params.id,
+    key,
+    hwid,
+    signature,
+    subscriberId,
+    clientName,
+    tier,
+    isAdmin: Boolean(isAdmin),
+    adminPasscode:
+      (typeof req.headers['x-admin-passcode'] === 'string' ? req.headers['x-admin-passcode'] : '') ||
+      (typeof adminPasscode === 'string' ? adminPasscode : ''),
+  });
+
+  if (!check.allowed || !check.filePath || !check.publicItem) {
+    return res.status(check.statusCode).json({
+      success: false,
+      paywallRequired: check.statusCode === 403,
+      error: check.message,
+      message: check.message,
+    });
+  }
+
+  const mimeType =
+    check.publicItem.extension === '.apk'
+      ? 'application/vnd.android.package-archive'
+      : check.publicItem.extension === '.zip'
+      ? 'application/zip'
+      : 'application/octet-stream';
+
+  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Content-Disposition', `attachment; filename="${check.publicItem.fileName}"`);
+  res.setHeader('X-Vault-Sha256', check.publicItem.sha256);
+  res.setHeader('Cache-Control', 'no-store');
+  return res.sendFile(check.filePath);
 });
 
 // ==========================================

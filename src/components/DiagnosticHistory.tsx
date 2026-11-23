@@ -833,6 +833,7 @@ export const DiagnosticHistory: React.FC<DiagnosticHistoryProps> = ({
                   keyless_toggle: 'Clé 3m / Antivol',
                   camera_view: 'Caméras & ADAS',
                   app_installed: 'App Tablette',
+                  vault_download: 'Coffre Payant',
                   heartbeat: 'Session Active',
                 };
 

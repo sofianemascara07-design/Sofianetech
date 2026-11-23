@@ -97,6 +97,30 @@ export interface SmartechDzConfig {
 
 export type LicenseTier = 'admin' | 'master' | 'reprog' | 'standard' | 'tablette_chinois' | 'demo';
 
+export type VaultPaidTier = 'master' | 'reprog' | 'standard' | 'tablette_chinois';
+
+export type VaultFileCategory = 'APK Android' | 'Firmware / .BIN' | 'Pack Atelier';
+
+export interface VaultPackageRecord {
+  id: string;
+  title: string;
+  fileName: string;
+  storedFileName: string;
+  extension: '.apk' | '.bin' | '.zip' | '.eep' | '.hex';
+  category: VaultFileCategory;
+  version: string;
+  sizeBytes: number;
+  sha256: string;
+  allowedTiers: VaultPaidTier[];
+  isActive: boolean;
+  downloadCount: number;
+  notes?: string;
+  uploadedAt: string;
+  updatedAt: string;
+}
+
+export type PublicVaultPackage = Omit<VaultPackageRecord, 'storedFileName'>;
+
 export type ConnectionPresenceStatus = 'online' | 'unstable' | 'offline' | 'never_connected';
 
 export interface LicenseSession {
@@ -274,7 +298,7 @@ export interface ClientActivityRecord {
   id: string;
   clientName: string;
   hwid: string;
-  actionType: 'activation' | 'scan_started' | 'flash_executed' | 'dtc_cleared' | 'keyless_toggle' | 'camera_view' | 'app_installed' | 'heartbeat';
+  actionType: 'activation' | 'scan_started' | 'flash_executed' | 'dtc_cleared' | 'keyless_toggle' | 'camera_view' | 'app_installed' | 'vault_download' | 'heartbeat';
   actionDetails: string;
   timestamp: string;
   vehicleName?: string;

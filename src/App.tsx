@@ -18,6 +18,8 @@ import { ChinaWorkshopToolsHub } from './components/ChinaWorkshopToolsHub';
 import { TransmissionTcuSuite } from './components/TransmissionTcuSuite';
 import { CoolrayAntiLspiModule } from './components/CoolrayAntiLspiModule';
 import { UniversalMasterSuite } from './components/UniversalMasterSuite';
+import { AtelierCopilot } from './components/AtelierCopilot';
+import { VaultDownloadsPanel } from './components/VaultDownloadsPanel';
 import { AdminSubscribersPanel } from './components/AdminSubscribersPanel';
 import { ConnectModal } from './components/ConnectModal';
 import { LicenseGate } from './components/LicenseGate';
@@ -148,6 +150,7 @@ export default function App() {
     if (licenseSession.isAdmin) return;
     const allowed = licenseSession.allowedModules || [];
     const isPermitted =
+      activeTab === 'vault' ||
       allowed.includes(activeTab) ||
       (activeTab === 'workshop_cn' &&
         (allowed.includes('diagnostic') || allowed.includes('cameras'))) ||
@@ -156,7 +159,13 @@ export default function App() {
       (activeTab === 'coolray_lspi' &&
         (allowed.includes('diagnostic') || allowed.includes('flash') || allowed.includes('workshop_cn'))) ||
       (activeTab === 'universal_master' &&
-        (allowed.includes('universal_master') || allowed.includes('diagnostic') || allowed.includes('flash')));
+        (allowed.includes('universal_master') || allowed.includes('diagnostic') || allowed.includes('flash'))) ||
+      (activeTab === 'copilot' &&
+        (allowed.includes('copilot') ||
+          allowed.includes('diagnostic') ||
+          allowed.includes('flash') ||
+          allowed.includes('chinese_flasher') ||
+          allowed.includes('coolray_lspi')));
     if (allowed.length > 0 && !isPermitted) {
       setActiveTab((allowed[0] as NavTab) || 'diagnostic');
     }
@@ -317,6 +326,7 @@ export default function App() {
   const canRenderTab = (tab: NavTab) => {
     if (isAdmin) return true;
     if (tab === 'admin' || tab === 'packaging') return false;
+    if (tab === 'vault') return true;
     const allowed = licenseSession.allowedModules;
     if (!allowed) return true;
     if (tab === 'workshop_cn') {
@@ -338,6 +348,15 @@ export default function App() {
         allowed.includes('universal_master') ||
         allowed.includes('diagnostic') ||
         allowed.includes('flash')
+      );
+    }
+    if (tab === 'copilot') {
+      return (
+        allowed.includes('copilot') ||
+        allowed.includes('diagnostic') ||
+        allowed.includes('flash') ||
+        allowed.includes('chinese_flasher') ||
+        allowed.includes('coolray_lspi')
       );
     }
     return allowed.includes(tab);
@@ -368,7 +387,10 @@ export default function App() {
 
       <main className="flex-1 max-w-7xl w-full min-w-0 mx-auto px-3 sm:px-6 py-5 sm:py-8">
         {activeTab === 'admin' && isAdmin && (
-          <AdminSubscribersPanel onAdminSessionInvalid={lockSession} />
+          <AdminSubscribersPanel
+            onAdminSessionInvalid={lockSession}
+            onOpenVault={() => setActiveTab('vault')}
+          />
         )}
 
         {activeTab === 'diagnostic' && canRenderTab('diagnostic') && (
@@ -417,6 +439,14 @@ export default function App() {
             connectionMode={connectionMode}
             isConnected={isConnected}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
+            onOpenVault={() => setActiveTab('vault')}
+          />
+        )}
+
+        {activeTab === 'vault' && canRenderTab('vault') && (
+          <VaultDownloadsPanel
+            licenseSession={licenseSession}
+            onOpenLicenseModal={() => setIsLicenseModalOpen(true)}
           />
         )}
 
@@ -515,6 +545,10 @@ export default function App() {
 
         {activeTab === 'universal_master' && canRenderTab('universal_master') && (
           <UniversalMasterSuite batteryVoltage={batteryVoltage} />
+        )}
+
+        {activeTab === 'copilot' && canRenderTab('copilot') && (
+          <AtelierCopilot />
         )}
       </main>
 

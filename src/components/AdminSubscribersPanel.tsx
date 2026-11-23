@@ -154,10 +154,12 @@ function getPresenceDetails(sub: SubscriberRecord, nowMs: number): {
 
 interface AdminSubscribersPanelProps {
   onAdminSessionInvalid?: (reason: string) => void;
+  onOpenVault?: () => void;
 }
 
 export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
   onAdminSessionInvalid,
+  onOpenVault,
 }) => {
   const [subscribers, setSubscribers] = useState<SubscriberRecord[]>(() => loadAdminMirror());
   const [security, setSecurity] = useState<SecuritySettings>({
@@ -617,6 +619,17 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {onOpenVault && (
+              <button
+                type="button"
+                onClick={onOpenVault}
+                className="px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                <Lock className="w-4 h-4" />
+                <span>Coffre APK &amp; .BIN</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => setLiveAutoRefresh(prev => !prev)}
