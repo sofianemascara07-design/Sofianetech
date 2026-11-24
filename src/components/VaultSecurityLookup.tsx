@@ -302,7 +302,7 @@ export const VaultSecurityLookup: React.FC<VaultSecurityLookupProps> = ({
                 type="text"
                 value={repoQuery}
                 onChange={(e) => setRepoQuery(e.target.value)}
-                placeholder="Chercher F-Auto, Shizuku, Fermata, SmartTube, AndrOBD..."
+                placeholder="Chercher Screen Translator, F-Auto, Shizuku, Fermata, SmartTube..."
                 className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:border-cyan-400 outline-none"
               />
             </div>

@@ -2761,6 +2761,17 @@ const OFFICIAL_GITHUB_REPOS: OfficialGithubRepoEntry[] = [
     extensions: ['.apk'],
   },
   {
+    repo: 'ciddwd/overlay-translator',
+    owner: 'ciddwd',
+    name: 'overlay-translator',
+    displayName: 'Screen Translator (Traducteur Écran & Menus Chinois)',
+    category: 'Utilitaires & GMS',
+    license: 'Apache-2.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Traduit en direct par bulle flottante ou photo les menus chinois d’autoradio/tablette auto sans root (Android 8+).',
+    officialHtmlUrl: 'https://github.com/ciddwd/overlay-translator/releases',
+    extensions: ['.apk'],
+  },
+  {
     repo: 'fr3ts0n/AndrOBD',
     owner: 'fr3ts0n',
     name: 'AndrOBD',
