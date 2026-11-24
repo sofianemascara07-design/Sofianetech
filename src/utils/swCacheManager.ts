@@ -1,4 +1,4 @@
-export const APP_BUILD_VERSION = '2026.11.24-WAKE-FIX-3';
+export const APP_BUILD_VERSION = '2026.11.24-VAULT-250M-4';
 
 export interface CacheHealthState {
   buildVersion: string;

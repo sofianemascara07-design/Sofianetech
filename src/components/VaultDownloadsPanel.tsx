@@ -109,9 +109,16 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
     void fetchItems();
   }, [fetchItems]);
 
+  const MAX_VAULT_BYTES = 250 * 1024 * 1024;
+
   const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > MAX_VAULT_BYTES) {
+      setSelectedFile(null);
+      setErrorMsg('Ce fichier dépasse la limite maximale autorisée de 250 Mo.');
+      return;
+    }
     setSelectedFile(file);
     setErrorMsg(null);
     setStatusMsg(null);
@@ -171,6 +178,10 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
       setErrorMsg('Choisissez d’abord un fichier (.apk, .bin, .zip, .eep ou .hex).');
       return;
     }
+    if (selectedFile.size > MAX_VAULT_BYTES) {
+      setErrorMsg('Taille maximale autorisée : 250 Mo par fichier.');
+      return;
+    }
     if (allowedTiers.length === 0) {
       setErrorMsg('Sélectionnez au moins une formule payante autorisée à télécharger ce fichier.');
       return;
@@ -181,42 +192,120 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
     setErrorMsg(null);
     setStatusMsg(null);
 
+    const cleanTitle = uploadTitle.trim() || selectedFile.name;
+    const cleanVersion = uploadVersion.trim() || 'v1.0';
+    const cleanNotes = uploadNotes.trim();
+    const CHUNK_THRESHOLD = 20 * 1024 * 1024;
+    const CHUNK_SIZE = 16 * 1024 * 1024;
+
     try {
-      const targetUrl = apiUrl('/api/admin/vault/upload');
-      const resultItem = await new Promise<SubscriberVaultPackage>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', targetUrl, true);
-        xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-        xhr.setRequestHeader('X-Vault-File-Name', encodeURIComponent(selectedFile.name));
-        xhr.setRequestHeader('X-Vault-Title', encodeURIComponent(uploadTitle.trim() || selectedFile.name));
-        xhr.setRequestHeader('X-Vault-Version', encodeURIComponent(uploadVersion.trim() || 'v1.0'));
-        xhr.setRequestHeader('X-Vault-Category', encodeURIComponent(uploadCategory));
-        xhr.setRequestHeader('X-Vault-Tiers', encodeURIComponent(allowedTiers.join(',')));
-        xhr.setRequestHeader('X-Vault-Notes', encodeURIComponent(uploadNotes.trim()));
+      let resultItem: SubscriberVaultPackage;
 
-        xhr.upload.onprogress = (evt) => {
-          if (evt.lengthComputable && evt.total > 0) {
-            setUploadProgressPct(Math.round((evt.loaded / evt.total) * 100));
-          }
-        };
+      if (selectedFile.size <= CHUNK_THRESHOLD) {
+        const targetUrl = apiUrl('/api/admin/vault/upload');
+        resultItem = await new Promise<SubscriberVaultPackage>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', targetUrl, true);
+          xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+          xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+          xhr.setRequestHeader('X-Vault-File-Name', encodeURIComponent(selectedFile.name));
+          xhr.setRequestHeader('X-Vault-Title', encodeURIComponent(cleanTitle));
+          xhr.setRequestHeader('X-Vault-Version', encodeURIComponent(cleanVersion));
+          xhr.setRequestHeader('X-Vault-Category', encodeURIComponent(uploadCategory));
+          xhr.setRequestHeader('X-Vault-Tiers', encodeURIComponent(allowedTiers.join(',')));
+          xhr.setRequestHeader('X-Vault-Notes', encodeURIComponent(cleanNotes));
 
-        xhr.onload = () => {
-          try {
-            const parsed = JSON.parse(xhr.responseText || '{}');
-            if (xhr.status >= 200 && xhr.status < 300 && parsed.success && parsed.item) {
-              resolve(parsed.item);
-            } else {
-              reject(new Error(parsed.error || `Échec upload (HTTP ${xhr.status})`));
+          xhr.upload.onprogress = (evt) => {
+            if (evt.lengthComputable && evt.total > 0) {
+              setUploadProgressPct(Math.round((evt.loaded / evt.total) * 100));
             }
-          } catch {
-            reject(new Error(`Réponse serveur invalide (HTTP ${xhr.status})`));
-          }
-        };
+          };
 
-        xhr.onerror = () => reject(new Error('Erreur réseau pendant l’envoi du fichier.'));
-        xhr.send(selectedFile);
-      });
+          xhr.onload = () => {
+            try {
+              const parsed = JSON.parse(xhr.responseText || '{}');
+              if (xhr.status >= 200 && xhr.status < 300 && parsed.success && parsed.item) {
+                resolve(parsed.item);
+              } else {
+                reject(new Error(parsed.error || `Échec upload (HTTP ${xhr.status})`));
+              }
+            } catch {
+              reject(new Error(`Réponse serveur invalide (HTTP ${xhr.status})`));
+            }
+          };
+
+          xhr.onerror = () => reject(new Error('Erreur réseau pendant l’envoi du fichier.'));
+          xhr.send(selectedFile);
+        });
+      } else {
+        const uploadId =
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+        const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
+        const chunkUrl = apiUrl('/api/admin/vault/upload-chunk');
+
+        for (let idx = 0; idx < totalChunks; idx++) {
+          const start = idx * CHUNK_SIZE;
+          const end = Math.min(selectedFile.size, start + CHUNK_SIZE);
+          const slice = selectedFile.slice(start, end);
+
+          await new Promise<void>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', chunkUrl, true);
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+            xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            xhr.setRequestHeader('X-Vault-Upload-Id', uploadId);
+            xhr.setRequestHeader('X-Vault-Chunk-Index', String(idx));
+            xhr.setRequestHeader('X-Vault-Total-Chunks', String(totalChunks));
+
+            xhr.upload.onprogress = (evt) => {
+              if (evt.lengthComputable && evt.total > 0) {
+                const overallLoaded = start + evt.loaded;
+                const pct = Math.min(97, Math.round((overallLoaded / selectedFile.size) * 97));
+                setUploadProgressPct(pct);
+              }
+            };
+
+            xhr.onload = () => {
+              try {
+                const parsed = JSON.parse(xhr.responseText || '{}');
+                if (xhr.status >= 200 && xhr.status < 300 && parsed.success) {
+                  resolve();
+                } else {
+                  reject(new Error(parsed.error || `Échec fragment ${idx + 1}/${totalChunks} (HTTP ${xhr.status})`));
+                }
+              } catch {
+                reject(new Error(`Réponse invalide sur fragment ${idx + 1}/${totalChunks} (HTTP ${xhr.status})`));
+              }
+            };
+
+            xhr.onerror = () => reject(new Error(`Erreur réseau sur le fragment ${idx + 1}/${totalChunks}.`));
+            xhr.send(slice);
+          });
+        }
+
+        setUploadProgressPct(98);
+        const completeRes = await apiFetch('/api/admin/vault/upload-complete', {
+          method: 'POST',
+          timeoutMs: 120_000,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uploadId,
+            fileName: selectedFile.name,
+            title: cleanTitle,
+            version: cleanVersion,
+            category: uploadCategory,
+            allowedTiers,
+            notes: cleanNotes,
+          }),
+        });
+        const completeData = await completeRes.json();
+        if (!completeRes.ok || !completeData?.success || !completeData?.item) {
+          throw new Error(completeData?.error || 'Impossible de finaliser le fichier importé.');
+        }
+        resultItem = completeData.item;
+      }
 
       setItems((prev) => [resultItem, ...prev]);
       setSelectedFile(null);
@@ -488,7 +577,7 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
             <div className="md:col-span-5">
               <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                1. Choisir le fichier (.apk, .bin, .zip, .eep, .hex — max 100 Mo)
+                1. Choisir le fichier (.apk, .bin, .zip, .eep, .hex — max 250 Mo)
               </label>
               <label className="w-full min-h-[42px] px-3 py-2 rounded-xl bg-slate-950 border border-dashed border-cyan-500/50 hover:border-cyan-400 text-xs text-slate-200 flex items-center justify-between gap-2 cursor-pointer">
                 <span className="truncate font-mono">

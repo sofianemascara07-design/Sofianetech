@@ -1,10 +1,11 @@
 import express from 'express';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { saasDatabase, AuthTokenPayload } from './src/server/database';
+import { saasDatabase, AuthTokenPayload, MAX_VAULT_FILE_BYTES } from './src/server/database';
 import type {
   OfficialGithubRepoEntry,
   OfficialExternalSourceEntry,
@@ -81,7 +82,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
   res.header(
     'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Vault-File-Name, X-Vault-Title, X-Vault-Version, X-Vault-Category, X-Vault-Tiers, X-Vault-Notes'
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Vault-File-Name, X-Vault-Title, X-Vault-Version, X-Vault-Category, X-Vault-Tiers, X-Vault-Notes, X-Vault-Upload-Id, X-Vault-Chunk-Index, X-Vault-Total-Chunks'
   );
   res.header('Access-Control-Expose-Headers', 'Content-Disposition, X-Vault-Sha256');
 
@@ -2492,7 +2493,7 @@ app.get('/api/admin/vault/items', requireAdmin, (_req, res) => {
 app.post(
   '/api/admin/vault/upload',
   requireAdmin,
-  express.raw({ type: '*/*', limit: '100mb' }),
+  express.raw({ type: '*/*', limit: '250mb' }),
   (req, res) => {
     const fileName = decodeHeaderUtf8(req.headers['x-vault-file-name']);
     const title = decodeHeaderUtf8(req.headers['x-vault-title']);
@@ -2531,6 +2532,129 @@ app.post(
     });
   }
 );
+
+app.post(
+  '/api/admin/vault/upload-chunk',
+  requireAdmin,
+  express.raw({ type: '*/*', limit: '25mb' }),
+  (req, res) => {
+    const uploadId = decodeHeaderUtf8(req.headers['x-vault-upload-id']).trim();
+    const chunkIndex = Number(req.headers['x-vault-chunk-index']);
+    const totalChunks = Number(req.headers['x-vault-total-chunks']);
+
+    if (!/^[a-f0-9-]{16,64}$/i.test(uploadId)) {
+      return res.status(400).json({ success: false, error: 'Identifiant de transfert invalide.' });
+    }
+    if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || !Number.isInteger(totalChunks) || totalChunks < 1 || totalChunks > 64 || chunkIndex >= totalChunks) {
+      return res.status(400).json({ success: false, error: 'Index de fragment invalide.' });
+    }
+
+    const chunkBuf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (chunkBuf.length === 0) {
+      return res.status(400).json({ success: false, error: 'Fragment vide reçu.' });
+    }
+
+    saasDatabase.pruneStaleVaultChunks();
+    const partPath = saasDatabase.resolveVaultChunkPath(uploadId, '.part');
+    const metaPath = saasDatabase.resolveVaultChunkPath(uploadId, '.meta.json');
+
+    let meta: { nextIndex: number; totalChunks: number; sizeBytes: number } = {
+      nextIndex: 0,
+      totalChunks,
+      sizeBytes: 0,
+    };
+
+    if (chunkIndex === 0) {
+      fs.writeFileSync(partPath, chunkBuf);
+      meta = { nextIndex: 1, totalChunks, sizeBytes: chunkBuf.length };
+      fs.writeFileSync(metaPath, JSON.stringify(meta));
+      return res.json({ success: true, receivedChunk: 0, sizeBytes: meta.sizeBytes });
+    }
+
+    if (!fs.existsSync(metaPath) || !fs.existsSync(partPath)) {
+      return res.status(400).json({ success: false, error: 'Session de transfert introuvable ou expirée.' });
+    }
+
+    try {
+      meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    } catch {
+      return res.status(400).json({ success: false, error: 'Métadonnées de transfert corrompues.' });
+    }
+
+    if (chunkIndex !== meta.nextIndex || totalChunks !== meta.totalChunks) {
+      return res.status(409).json({ success: false, error: 'Ordre de fragment incohérent. Recommencez l’envoi.' });
+    }
+
+    const nextSize = meta.sizeBytes + chunkBuf.length;
+    if (nextSize > MAX_VAULT_FILE_BYTES) {
+      try {
+        fs.unlinkSync(partPath);
+        fs.unlinkSync(metaPath);
+      } catch {
+        // Ignore cleanup failure
+      }
+      return res.status(400).json({ success: false, error: 'Taille maximale autorisée : 250 Mo par fichier.' });
+    }
+
+    fs.appendFileSync(partPath, chunkBuf);
+    meta = { nextIndex: chunkIndex + 1, totalChunks, sizeBytes: nextSize };
+    fs.writeFileSync(metaPath, JSON.stringify(meta));
+
+    return res.json({ success: true, receivedChunk: chunkIndex, sizeBytes: nextSize });
+  }
+);
+
+app.post('/api/admin/vault/upload-complete', requireAdmin, (req, res) => {
+  const { uploadId, fileName, title, version, category, allowedTiers, notes } = req.body || {};
+  const cleanId = typeof uploadId === 'string' ? uploadId.trim() : '';
+  const cleanFileName = typeof fileName === 'string' ? fileName.trim() : '';
+
+  if (!/^[a-f0-9-]{16,64}$/i.test(cleanId) || !cleanFileName) {
+    return res.status(400).json({ success: false, error: 'Paramètres de finalisation invalides.' });
+  }
+
+  const partPath = saasDatabase.resolveVaultChunkPath(cleanId, '.part');
+  const metaPath = saasDatabase.resolveVaultChunkPath(cleanId, '.meta.json');
+
+  try {
+    if (!fs.existsSync(metaPath) || !fs.existsSync(partPath)) {
+      return res.status(400).json({ success: false, error: 'Fichier temporaire expiré ou introuvable.' });
+    }
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    if (!meta || meta.nextIndex !== meta.totalChunks) {
+      return res.status(400).json({ success: false, error: 'Tous les fragments du fichier n’ont pas été reçus.' });
+    }
+
+    const tiers = Array.isArray(allowedTiers) ? allowedTiers.map(String) : [];
+    const saved = saasDatabase.saveVaultPackageFromFile({
+      title: typeof title === 'string' ? title : cleanFileName,
+      originalFileName: cleanFileName,
+      version: typeof version === 'string' ? version : 'v1.0',
+      category: typeof category === 'string' ? category : undefined,
+      allowedTiers: tiers,
+      notes: typeof notes === 'string' ? notes : undefined,
+      sourceFilePath: partPath,
+    });
+
+    if (!saved.ok) {
+      return res.status(400).json({ success: false, error: saved.error });
+    }
+
+    return res.status(201).json({
+      success: true,
+      item: saved.item,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Erreur lors de la finalisation du fichier.' });
+  } finally {
+    try {
+      if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
+      if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+    } catch {
+      // Ignore cleanup failure
+    }
+  }
+});
 
 app.patch('/api/admin/vault/:id', requireAdmin, (req, res) => {
   const updated = saasDatabase.updateVaultPackage(req.params.id, req.body || {});
@@ -3012,15 +3136,17 @@ app.post('/api/admin/vault/import-github', requireAdmin, async (req, res) => {
     });
   }
 
-  if (asset.sizeBytes > 100 * 1024 * 1024) {
+  if (asset.sizeBytes > MAX_VAULT_FILE_BYTES) {
     return res.status(400).json({
       success: false,
-      error: 'Ce fichier dépasse la limite de 100 Mo du Coffre.',
+      error: 'Ce fichier dépasse la limite de 250 Mo du Coffre.',
     });
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45_000);
+  const timeout = setTimeout(() => controller.abort(), 180_000);
+  const tempDownloadPath = saasDatabase.resolveVaultChunkPath(crypto.randomUUID(), '.part');
+  let writeFd: number | null = null;
 
   try {
     let currentUrl = asset.downloadUrl;
@@ -3052,40 +3178,46 @@ app.post('/api/admin/vault/import-github', requireAdmin, async (req, res) => {
       break;
     }
 
-    clearTimeout(timeout);
-
-    if (!downloadRes || !downloadRes.ok) {
+    if (!downloadRes || !downloadRes.ok || !downloadRes.body) {
+      clearTimeout(timeout);
       return res.status(502).json({
         success: false,
         error: `Échec du téléchargement depuis GitHub (HTTP ${downloadRes?.status || 'Redirection'}).`,
       });
     }
 
-    const arrayBuf = await downloadRes.arrayBuffer();
-    const buffer = Buffer.from(arrayBuf);
-    if (buffer.length > 100 * 1024 * 1024) {
-      return res.status(400).json({
-        success: false,
-        error: 'Fichier reçu supérieur à 100 Mo.',
-      });
+    writeFd = fs.openSync(tempDownloadPath, 'w');
+    const reader = downloadRes.body.getReader();
+    let totalBytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0) {
+        totalBytes += value.byteLength;
+        if (totalBytes > MAX_VAULT_FILE_BYTES) {
+          controller.abort();
+          clearTimeout(timeout);
+          return res.status(400).json({
+            success: false,
+            error: 'Fichier reçu supérieur à 250 Mo.',
+          });
+        }
+        fs.writeSync(writeFd, value);
+      }
     }
+    fs.closeSync(writeFd);
+    writeFd = null;
+    clearTimeout(timeout);
 
-    const actualSha256 = crypto.createHash('sha256').update(buffer).digest('hex').toLowerCase();
-    if (asset.sha256 && actualSha256 !== asset.sha256.toLowerCase()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Alerte sécurité : le SHA-256 téléchargé ne correspond pas au digest officiel GitHub ! Import annulé.',
-      });
-    }
-
-    const saved = saasDatabase.saveVaultPackageUpload({
+    const saved = saasDatabase.saveVaultPackageFromFile({
       title: `${entry.displayName.split(' (')[0]} (${asset.releaseTag || 'GitHub'})`,
       originalFileName: asset.name,
       version: asset.releaseTag || 'v1.0',
-      category: entry.category === 'Diagnostic OBD2' ? 'APK Android' : 'APK Android',
+      category: 'APK Android',
       allowedTiers,
       notes: `Source officielle GitHub (${entry.repo}) · ${entry.license} · SHA-256 vérifié`,
-      buffer,
+      sourceFilePath: tempDownloadPath,
+      expectedSha256: asset.sha256 ?? undefined,
     });
 
     if (!saved.ok) {
@@ -3106,6 +3238,21 @@ app.post('/api/admin/vault/import-github', requireAdmin, async (req, res) => {
           ? 'Délai dépassé pendant le téléchargement depuis GitHub.'
           : 'Erreur réseau lors de l’import depuis GitHub.',
     });
+  } finally {
+    if (writeFd !== null) {
+      try {
+        fs.closeSync(writeFd);
+      } catch {
+        // Ignore close failure
+      }
+    }
+    try {
+      if (fs.existsSync(tempDownloadPath)) {
+        fs.unlinkSync(tempDownloadPath);
+      }
+    } catch {
+      // Ignore temp file cleanup failure
+    }
   }
 });
 
@@ -4711,9 +4858,10 @@ async function startServer() {
     console.log(`AutoPro Diagnostic & Flash Hub running on http://0.0.0.0:${port}`);
   });
 
-  // Prevent reverse-proxy 502 HTTP keep-alive races for remote clients
+  // Prevent reverse-proxy 502 HTTP keep-alive races & support large Vault APK streams
   server.keepAliveTimeout = 65_000;
   server.headersTimeout = 66_000;
+  server.requestTimeout = 600_000;
 
   const shutdown = () => {
     server.close(() => {

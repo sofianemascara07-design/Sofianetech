@@ -1,5 +1,5 @@
 {
-  "version": "2026.11.24-WAKE-FIX-3",
+  "version": "2026.11.24-VAULT-250M-4",
   "channel": "production",
-  "minSwVersion": "autopro-v2026-11-24-wake-v3"
+  "minSwVersion": "autopro-v2026-11-24-vault-v4"
 }

@@ -40,10 +40,28 @@ echo "[3/4] Compilation Vite + React (Admin, Verrouillage Démos, Caméras & ADA
 npm run build
 
 echo "[4/4] Deploiement sur Firebase Hosting (autoprodz-a7071)..."
+export NODE_OPTIONS="--dns-result-order=ipv4first ${NODE_OPTIONS:-}"
+
+FIREBASE_CMD="npx firebase-tools"
 if command -v firebase >/dev/null 2>&1; then
-  firebase deploy --only hosting --project autoprodz-a7071
-else
-  npx firebase-tools deploy --only hosting --project autoprodz-a7071
+  FIREBASE_CMD="firebase"
+fi
+
+DEPLOY_OK=0
+for ATTEMPT in 1 2 3; do
+  echo "Tentative Firebase Hosting ($ATTEMPT/3)..."
+  if $FIREBASE_CMD deploy --only hosting --project autoprodz-a7071; then
+    DEPLOY_OK=1
+    break
+  fi
+  echo "⚠️ Echec reseau lors de la publication Firebase. Nouvelle tentative dans 4s..."
+  sleep 4
+done
+
+if [ "$DEPLOY_OK" -ne 1 ]; then
+  echo "❌ Echec apres 3 tentatives. Relancez avec --debug ou 'firebase login --reauth' :"
+  echo "   NODE_OPTIONS=\"--dns-result-order=ipv4first\" $FIREBASE_CMD deploy --only hosting --project autoprodz-a7071 --debug"
+  exit 1
 fi
 
 echo ""

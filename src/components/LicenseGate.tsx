@@ -139,7 +139,12 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ passcode: pass, hwid }),
           });
-          const data = await response.json();
+          const rawText = await response.text();
+          if (rawText.trim().startsWith('<')) {
+            setErrorMessage('Serveur d\'authentification indisponible. Réessayez dans quelques secondes.');
+            return;
+          }
+          const data = JSON.parse(rawText);
           setServerStatus('online');
           if (response.ok && data.valid && data.license) {
             if (typeof data.token === 'string' && data.token) {

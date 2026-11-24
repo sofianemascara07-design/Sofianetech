@@ -2,6 +2,14 @@ import { getAuthToken } from './authSession';
 
 export const DEFAULT_RENDER_BACKEND_URL = 'https://autopro-suitebacken.onrender.com';
 
+let sessionPinnedToRenderFallback = false;
+
+function isAiStudioHost(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location?.hostname || '';
+  return host.endsWith('.run.app');
+}
+
 function isFullStackSelfHost(): boolean {
   if (typeof window === 'undefined') return false;
   const host = window.location?.hostname || '';
@@ -14,6 +22,10 @@ function isFullStackSelfHost(): boolean {
 }
 
 export function getBackendBaseUrl(): string {
+  if (sessionPinnedToRenderFallback && isAiStudioHost()) {
+    return DEFAULT_RENDER_BACKEND_URL;
+  }
+
   // Sur Cloud Run (.run.app), Render (.onrender.com) ou localhost,
   // utiliser le backend Express co-localisé sans lecture URL ni localStorage.
   if (isFullStackSelfHost()) {
@@ -33,7 +45,7 @@ export function setBackendBaseUrl(url: string): string {
 }
 
 export function resetBackendBaseUrl(): void {
-  // No-op: backend base URL is fixed by build/runtime environment
+  sessionPinnedToRenderFallback = false;
 }
 
 export function isStaticFirebaseWithoutBackend(): boolean {
@@ -65,9 +77,9 @@ function sleep(ms: number): Promise<void> {
 async function isHtmlProxyInterception(res: Response): Promise<boolean> {
   const ct = (res.headers.get('content-type') || '').toLowerCase();
   if (ct.includes('text/html')) return true;
-  if (!ct.includes('application/json') && (res.status === 200 || res.status === 404)) {
+  if (!ct.includes('application/json') && (res.status === 200 || res.status === 302 || res.status === 404)) {
     try {
-      const sample = (await res.clone().text()).trim();
+      const sample = (await res.clone().text()).trim().toLowerCase();
       if (sample.startsWith('<!doctype') || sample.startsWith('<html') || sample.startsWith('<')) {
         return true;
       }
@@ -121,8 +133,8 @@ async function fetchWithTimeout(
 }
 
 export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<Response> {
-  const target = apiUrl(input);
-  const isCrossOrigin = target.startsWith('http://') || target.startsWith('https://');
+  let activeTarget = apiUrl(input);
+  let activeCrossOrigin = activeTarget.startsWith('http://') || activeTarget.startsWith('https://');
   const method = (init?.method || 'GET').toUpperCase();
   const defaultRetries =
     method === 'GET' ||
@@ -139,8 +151,12 @@ export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<R
     typeof init?.timeoutMs === 'number' ? init.timeoutMs : isAuthOrWakeRoute ? 45000 : 25000;
 
   const fallbackTarget = input.startsWith('/api/') ? `${DEFAULT_RENDER_BACKEND_URL}${input}` : null;
-  const canFailoverToRender = Boolean(!isFullStackSelfHost() && fallbackTarget && fallbackTarget !== target);
+  const canFailoverToRender = Boolean(!isFullStackSelfHost() && fallbackTarget && fallbackTarget !== activeTarget);
+  const canFailoverOnProxyHtml = Boolean(
+    (!isFullStackSelfHost() || isAiStudioHost()) && fallbackTarget && fallbackTarget !== activeTarget
+  );
 
+  let switchedToRender = false;
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -149,12 +165,19 @@ export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<R
     }
 
     try {
-      const response = await fetchWithTimeout(target, isCrossOrigin, timeoutMs, init);
+      const response = await fetchWithTimeout(activeTarget, activeCrossOrigin, timeoutMs, init);
 
-      // Detect proxy/static HTML interception or Render cold-start HTML page
+      // Detect proxy/static HTML interception (e.g. AI Studio /__cookie_check.html) or Render cold-start HTML page
       if (await isHtmlProxyInterception(response)) {
-        if (canFailoverToRender) {
-          return await fetchWithTimeout(fallbackTarget!, true, timeoutMs, init);
+        if (!switchedToRender && canFailoverOnProxyHtml && fallbackTarget) {
+          if (isAiStudioHost()) {
+            sessionPinnedToRenderFallback = true;
+          }
+          switchedToRender = true;
+          activeTarget = fallbackTarget;
+          activeCrossOrigin = true;
+          attempt = -1; // Fresh retry budget against Render backend
+          continue;
         }
         if (attempt < maxRetries) {
           await sleep(2500 * (attempt + 1));
@@ -172,8 +195,12 @@ export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<R
           await sleep(waitMs);
           continue;
         }
-        if (canFailoverToRender) {
-          return await fetchWithTimeout(fallbackTarget!, true, timeoutMs, init);
+        if (!switchedToRender && canFailoverToRender && fallbackTarget) {
+          switchedToRender = true;
+          activeTarget = fallbackTarget;
+          activeCrossOrigin = true;
+          attempt = -1;
+          continue;
         }
       }
 
@@ -186,8 +213,15 @@ export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<R
       }
 
       if (attempt >= maxRetries) {
-        if (canFailoverToRender) {
-          return await fetchWithTimeout(fallbackTarget!, true, timeoutMs, init);
+        if (!switchedToRender && canFailoverOnProxyHtml && fallbackTarget) {
+          if (isAiStudioHost()) {
+            sessionPinnedToRenderFallback = true;
+          }
+          switchedToRender = true;
+          activeTarget = fallbackTarget;
+          activeCrossOrigin = true;
+          attempt = -1;
+          continue;
         }
         throw lastError;
       }

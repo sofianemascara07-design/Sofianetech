@@ -160,7 +160,7 @@ export const VaultSecurityLookup: React.FC<VaultSecurityLookupProps> = ({
     try {
       const res = await apiFetch('/api/admin/vault/import-github', {
         method: 'POST',
-        timeoutMs: 60_000,
+        timeoutMs: 180_000,
         headers: {
           'Content-Type': 'application/json',
         },

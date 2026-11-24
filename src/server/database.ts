@@ -82,6 +82,8 @@ const PINOUTS_FILE = path.resolve(DATA_DIR, 'autopro_pinouts.json');
 const COOLRAY_LSPI_FILE = path.resolve(DATA_DIR, 'autopro_coolray_lspi.json');
 const VAULT_INDEX_FILE = path.resolve(DATA_DIR, 'autopro_vault_index.json');
 const VAULT_FILES_DIR = path.resolve(DATA_DIR, 'vault_files');
+const VAULT_CHUNKS_DIR = path.resolve(VAULT_FILES_DIR, '.chunks');
+export const MAX_VAULT_FILE_BYTES = 250 * 1024 * 1024;
 
 const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || '').trim().replace(/\/+$/, '');
 const UPSTASH_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
@@ -870,8 +872,8 @@ export class AutoProDatabase {
     if (!Buffer.isBuffer(params.buffer) || params.buffer.length === 0) {
       return { ok: false, error: 'Le fichier envoyé est vide.' };
     }
-    if (params.buffer.length > 100 * 1024 * 1024) {
-      return { ok: false, error: 'Taille maximale autorisée : 100 Mo par fichier.' };
+    if (params.buffer.length > MAX_VAULT_FILE_BYTES) {
+      return { ok: false, error: 'Taille maximale autorisée : 250 Mo par fichier.' };
     }
 
     const baseName = path.basename(params.originalFileName || '').trim();
@@ -941,6 +943,191 @@ export class AutoProDatabase {
       category,
       version: (params.version || 'v1.0').trim().slice(0, 32) || 'v1.0',
       sizeBytes: params.buffer.length,
+      sha256,
+      allowedTiers,
+      isActive: true,
+      downloadCount: 0,
+      notes: (params.notes || '').trim().slice(0, 300) || undefined,
+      uploadedAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    this.vaultPackages.unshift(record);
+    this.saveVaultIndexToFile();
+
+    return { ok: true, item: this.toPublicVaultPackage(record) };
+  }
+
+  public getVaultChunksDir(): string {
+    if (!fs.existsSync(VAULT_CHUNKS_DIR)) {
+      fs.mkdirSync(VAULT_CHUNKS_DIR, { recursive: true });
+    }
+    return VAULT_CHUNKS_DIR;
+  }
+
+  public resolveVaultChunkPath(uploadId: string, suffix: '.part' | '.meta.json' = '.part'): string {
+    const clean = (uploadId || '').trim();
+    if (!/^[a-f0-9-]{16,64}$/i.test(clean)) {
+      throw new Error('Identifiant de transfert invalide.');
+    }
+    const dir = this.getVaultChunksDir();
+    const resolved = path.resolve(dir, `${clean}${suffix}`);
+    if (!resolved.startsWith(dir + path.sep)) {
+      throw new Error('Chemin temporaire non autorisé.');
+    }
+    return resolved;
+  }
+
+  public pruneStaleVaultChunks(maxAgeMs = 30 * 60_000): void {
+    try {
+      const dir = this.getVaultChunksDir();
+      const now = Date.now();
+      for (const entry of fs.readdirSync(dir)) {
+        const p = path.resolve(dir, entry);
+        if (!p.startsWith(dir + path.sep)) continue;
+        try {
+          const st = fs.statSync(p);
+          if (now - st.mtimeMs > maxAgeMs) {
+            fs.unlinkSync(p);
+          }
+        } catch {
+          // Ignore single entry error
+        }
+      }
+    } catch {
+      // Ignore prune error
+    }
+  }
+
+  public saveVaultPackageFromFile(params: {
+    title?: string;
+    originalFileName: string;
+    version?: string;
+    category?: string;
+    allowedTiers?: string[];
+    notes?: string;
+    sourceFilePath: string;
+    expectedSha256?: string;
+  }): { ok: true; item: PublicVaultPackage } | { ok: false; error: string } {
+    if (!params.sourceFilePath || !fs.existsSync(params.sourceFilePath)) {
+      return { ok: false, error: 'Fichier temporaire introuvable.' };
+    }
+
+    const stat = fs.statSync(params.sourceFilePath);
+    if (!stat.isFile() || stat.size <= 0) {
+      return { ok: false, error: 'Le fichier envoyé est vide.' };
+    }
+    if (stat.size > MAX_VAULT_FILE_BYTES) {
+      return { ok: false, error: 'Taille maximale autorisée : 250 Mo par fichier.' };
+    }
+
+    const baseName = path.basename(params.originalFileName || '').trim();
+    const safeFileName = baseName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+    const extMatch = safeFileName.toLowerCase().match(/\.(apk|bin|zip|eep|hex)$/);
+    if (!extMatch) {
+      return {
+        ok: false,
+        error: 'Extension non autorisée. Formats acceptés : .apk, .bin, .zip, .eep, .hex.',
+      };
+    }
+    const ext = `.${extMatch[1]}` as VaultPackageRecord['extension'];
+
+    // Stream-validate header + compute SHA-256 without loading entire file into RAM
+    const hash = crypto.createHash('sha256');
+    const headerBuf = Buffer.alloc(4);
+    const readBuf = Buffer.alloc(64 * 1024);
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(params.sourceFilePath, 'r');
+      let totalRead = 0;
+      let bytesRead = 0;
+      while ((bytesRead = fs.readSync(fd, readBuf, 0, readBuf.length, null)) > 0) {
+        if (totalRead === 0) {
+          readBuf.copy(headerBuf, 0, 0, Math.min(4, bytesRead));
+        }
+        hash.update(bytesRead === readBuf.length ? readBuf : readBuf.subarray(0, bytesRead));
+        totalRead += bytesRead;
+      }
+      if (ext === '.apk' || ext === '.zip') {
+        const hasPkHeader =
+          totalRead >= 4 &&
+          headerBuf[0] === 0x50 &&
+          headerBuf[1] === 0x4b &&
+          ((headerBuf[2] === 0x03 && headerBuf[3] === 0x04) ||
+            (headerBuf[2] === 0x05 && headerBuf[3] === 0x06));
+        if (!hasPkHeader) {
+          return {
+            ok: false,
+            error: `Fichier ${ext.toUpperCase()} invalide ou corrompu (signature ZIP/APK PK absente).`,
+          };
+        }
+      }
+    } finally {
+      if (fd !== null) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // Ignore close error
+        }
+      }
+    }
+
+    const sha256 = hash.digest('hex').toLowerCase();
+    if (params.expectedSha256 && sha256 !== params.expectedSha256.toLowerCase()) {
+      return {
+        ok: false,
+        error: 'Alerte sécurité : le SHA-256 téléchargé ne correspond pas au digest officiel GitHub ! Import annulé.',
+      };
+    }
+
+    const ALLOWED_PAID_TIERS: VaultPaidTier[] = ['master', 'reprog', 'standard', 'tablette_chinois'];
+    const filteredTiers = (params.allowedTiers || []).filter((t): t is VaultPaidTier =>
+      ALLOWED_PAID_TIERS.includes(t as VaultPaidTier)
+    );
+    const allowedTiers: VaultPaidTier[] =
+      filteredTiers.length > 0 ? filteredTiers : ['master', 'tablette_chinois', 'reprog', 'standard'];
+
+    const validCategories: VaultFileCategory[] = ['APK Android', 'Firmware / .BIN', 'Pack Atelier'];
+    const category: VaultFileCategory = validCategories.includes(params.category as VaultFileCategory)
+      ? (params.category as VaultFileCategory)
+      : ext === '.apk'
+      ? 'APK Android'
+      : ext === '.bin' || ext === '.eep' || ext === '.hex'
+      ? 'Firmware / .BIN'
+      : 'Pack Atelier';
+
+    const id = `VAULT-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
+    const storedFileName = `${id}${ext}`;
+    const destPath = this.resolveVaultFilePath(storedFileName);
+    const tmpPath = `${destPath}.tmp`;
+
+    if (!fs.existsSync(VAULT_FILES_DIR)) {
+      fs.mkdirSync(VAULT_FILES_DIR, { recursive: true });
+    }
+    try {
+      fs.renameSync(params.sourceFilePath, tmpPath);
+    } catch {
+      fs.copyFileSync(params.sourceFilePath, tmpPath);
+      try {
+        fs.unlinkSync(params.sourceFilePath);
+      } catch {
+        // Ignore cleanup failure
+      }
+    }
+    fs.renameSync(tmpPath, destPath);
+
+    const nowIso = new Date().toISOString();
+    const cleanTitle = (params.title || '').trim() || safeFileName.replace(/\.(apk|bin|zip|eep|hex)$/i, '');
+
+    const record: VaultPackageRecord = {
+      id,
+      title: cleanTitle.slice(0, 100),
+      fileName: safeFileName,
+      storedFileName,
+      extension: ext,
+      category,
+      version: (params.version || 'v1.0').trim().slice(0, 32) || 'v1.0',
+      sizeBytes: stat.size,
       sha256,
       allowedTiers,
       isActive: true,
@@ -1342,8 +1529,19 @@ export class AutoProDatabase {
   // =========================================================
   // ADMIN SECURITY, BEARER SESSIONS & SUBSCRIBER WHITELIST
   // =========================================================
+  private getConfiguredEnvAdminPasscode(): string {
+    let raw = (process.env.ADMIN_PASSCODE || process.env.ADMIN_PASSWORD || '').trim();
+    if (
+      raw.length >= 2 &&
+      ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")))
+    ) {
+      raw = raw.slice(1, -1).trim();
+    }
+    return raw;
+  }
+
   public isAdminConfigured(): boolean {
-    const envPass = (process.env.ADMIN_PASSCODE || '').trim();
+    const envPass = this.getConfiguredEnvAdminPasscode();
     return Boolean(envPass) || Boolean(this.securitySettings.adminPasscodeHash);
   }
 
@@ -1365,7 +1563,7 @@ export class AutoProDatabase {
     if (this.securitySettings.adminPasscodeHash && verifyHashedPasscode(raw, this.securitySettings.adminPasscodeHash)) {
       return true;
     }
-    const envPass = (process.env.ADMIN_PASSCODE || '').trim();
+    const envPass = this.getConfiguredEnvAdminPasscode();
     if (envPass && constantTimeMatch(raw, envPass)) {
       return true;
     }

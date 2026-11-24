@@ -1,5 +1,5 @@
 /* AutoPro Flash & Diagnostic Hub — Service Worker Anti-Blocage, PWA & Cache Fonds d'Écran */
-const CACHE_VERSION = 'autopro-v2026-11-24-wake-v3';
+const CACHE_VERSION = 'autopro-v2026-11-24-vault-v4';
 const WALLPAPER_CACHE = 'autopro-wallpapers-v1';
 
 const DEFAULT_WALLPAPER_ASSETS = [
