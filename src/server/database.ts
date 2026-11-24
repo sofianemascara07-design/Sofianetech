@@ -493,6 +493,31 @@ export class AutoProDatabase {
     };
   }
 
+  private lastKvSecurityRefreshMs = 0;
+
+  public async refreshSecurityFromCloudKv(force = false): Promise<boolean> {
+    if (!UPSTASH_URL || !UPSTASH_TOKEN) return false;
+    const now = Date.now();
+    if (!force && now - this.lastKvSecurityRefreshMs < 10_000) {
+      return false;
+    }
+    this.lastKvSecurityRefreshMs = now;
+    try {
+      const kvSec = await kvGetJson<Record<string, unknown>>('autopro_security_v2');
+      if (kvSec && typeof kvSec === 'object') {
+        this.securitySettings = this.sanitizeLoadedSecuritySettings({
+          ...this.securitySettings,
+          ...kvSec,
+        });
+        this.saveSecurityToFile(true);
+        return true;
+      }
+    } catch {
+      // Ignore transient KV error
+    }
+    return false;
+  }
+
   private async hydrateFromCloudKv() {
     if (!UPSTASH_URL || !UPSTASH_TOKEN) return;
     try {

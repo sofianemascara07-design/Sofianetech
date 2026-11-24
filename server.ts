@@ -47,6 +47,9 @@ const isAllowedOrigin = (origin: string | undefined): boolean => {
     origin === 'https://autoprodz-a7071.web.app' ||
     origin === 'https://autoprodz-a7071.firebaseapp.com' ||
     origin === 'https://autopro-suitebacken.onrender.com' ||
+    origin === 'http://localhost' ||
+    origin === 'https://localhost' ||
+    origin === 'capacitor://localhost' ||
     origin.startsWith('http://localhost:') ||
     origin.startsWith('http://127.0.0.1:') ||
     EXTRA_ORIGINS.includes(origin)
@@ -2150,7 +2153,7 @@ app.post('/api/admin/bootstrap', (req, res) => {
 });
 
 // API: Cryptographic License & Admin Verification (Strict Subscriber Whitelist + Limited Demo)
-app.post('/api/license/verify', (req, res) => {
+app.post('/api/license/verify', async (req, res) => {
   const { key, clientName, hwid, adminPasscode, mode } = req.body || {};
 
   // 1. Admin Direct Access (verified exclusively server-side)
@@ -2163,11 +2166,17 @@ app.post('/api/license/verify', (req, res) => {
 
   if (mode === 'admin') {
     if (!saasDatabase.isAdminConfigured()) {
+      await saasDatabase.refreshSecurityFromCloudKv();
+    }
+    if (!saasDatabase.isAdminConfigured()) {
       return res.status(403).json({
         valid: false,
         adminSetupRequired: true,
         message: 'Première installation requise : définissez d’abord votre mot de passe Administrateur.',
       });
+    }
+    if (!saasDatabase.verifyAdminPasscode(candidateAdminSecret)) {
+      await saasDatabase.refreshSecurityFromCloudKv();
     }
     if (!saasDatabase.verifyAdminPasscode(candidateAdminSecret)) {
       return res.status(403).json({
