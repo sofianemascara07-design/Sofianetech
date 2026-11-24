@@ -383,7 +383,7 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
     try {
       const res = await apiFetch(`/api/vault/download/${encodeURIComponent(item.id)}`, {
         method: 'POST',
-        timeoutMs: 90_000,
+        timeoutMs: 300_000,
         headers: {
           'Content-Type': 'application/json',
         },
@@ -399,7 +399,31 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
         );
       }
 
+      const contentType = (res.headers.get('content-type') || '').toLowerCase();
+      if (contentType.includes('text/html') || contentType.includes('application/json')) {
+        throw new Error(
+          'Réponse invalide reçue au lieu du fichier APK/.BIN. Vérifiez votre connexion et réessayez.'
+        );
+      }
+
       const blob = await res.blob();
+      if (blob.size < 4) {
+        throw new Error('Fichier téléchargé vide ou incomplet. Réessayez.');
+      }
+      if (item.extension === '.apk' || item.extension === '.zip') {
+        const headBytes = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+        const hasPkHeader =
+          headBytes[0] === 0x50 &&
+          headBytes[1] === 0x4b &&
+          ((headBytes[2] === 0x03 && headBytes[3] === 0x04) ||
+            (headBytes[2] === 0x05 && headBytes[3] === 0x06));
+        if (!hasPkHeader) {
+          throw new Error(
+            'Le fichier APK reçu est corrompu ou incomplet (en-tête PK absent). Relancez le téléchargement.'
+          );
+        }
+      }
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
