@@ -46,6 +46,35 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
   const [serverStatus, setServerStatus] = useState<'waking' | 'online' | 'offline'>('waking');
   const [showAdminPass, setShowAdminPass] = useState(false);
 
+  const runServerStatusCheck = React.useCallback(async (attempt = 1, cancelledRef?: { current: boolean }) => {
+    try {
+      const res = await apiFetch('/api/license/status');
+      const text = await res.text();
+      if (text.trim().startsWith('<')) throw new Error('HTML response');
+      const data = JSON.parse(text);
+      if (cancelledRef?.current) return;
+      setServerStatus('online');
+      if (typeof data?.demoLinksEnabled === 'boolean') {
+        setDemoLinksEnabled(data.demoLinksEnabled);
+      }
+      if (typeof data?.defaultDemoMinutes === 'number') {
+        setDefaultDemoMinutes(data.defaultDemoMinutes);
+      }
+      if (typeof data?.adminSetupRequired === 'boolean') {
+        setAdminSetupRequired(data.adminSetupRequired);
+      }
+    } catch {
+      if (cancelledRef?.current) return;
+      if (attempt < 5) {
+        setServerStatus('waking');
+        setTimeout(() => void runServerStatusCheck(attempt + 1, cancelledRef), 4500);
+      } else {
+        setServerStatus('offline');
+        setDemoLinksEnabled(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     let savedHwid = localStorage.getItem('autopro_machine_hwid');
     if (!savedHwid) {
@@ -56,41 +85,23 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
     }
     setHwid(savedHwid);
 
-    let cancelled = false;
-    const checkStatus = async (attempt = 1) => {
-      try {
-        const res = await apiFetch('/api/license/status');
-        const text = await res.text();
-        if (text.trim().startsWith('<')) throw new Error('HTML response');
-        const data = JSON.parse(text);
-        if (cancelled) return;
-        setServerStatus('online');
-        if (typeof data?.demoLinksEnabled === 'boolean') {
-          setDemoLinksEnabled(data.demoLinksEnabled);
-        }
-        if (typeof data?.defaultDemoMinutes === 'number') {
-          setDefaultDemoMinutes(data.defaultDemoMinutes);
-        }
-        if (typeof data?.adminSetupRequired === 'boolean') {
-          setAdminSetupRequired(data.adminSetupRequired);
-        }
-      } catch {
-        if (cancelled) return;
-        if (attempt < 3) {
-          setServerStatus('waking');
-          setTimeout(() => void checkStatus(attempt + 1), 3500);
-        } else {
-          setServerStatus('offline');
-          setDemoLinksEnabled(false);
-        }
+    const cancelledRef = { current: false };
+    void runServerStatusCheck(1, cancelledRef);
+    const offlinePoll = setInterval(() => {
+      if (!cancelledRef.current) {
+        setServerStatus((curr) => {
+          if (curr === 'offline') {
+            void runServerStatusCheck(5, cancelledRef);
+          }
+          return curr;
+        });
       }
-    };
-
-    void checkStatus();
+    }, 10_000);
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
+      clearInterval(offlinePoll);
     };
-  }, []);
+  }, [runServerStatusCheck]);
 
   const handleCopyHwid = () => {
     if (!hwid) return;
@@ -129,6 +140,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
             body: JSON.stringify({ passcode: pass, hwid }),
           });
           const data = await response.json();
+          setServerStatus('online');
           if (response.ok && data.valid && data.license) {
             if (typeof data.token === 'string' && data.token) {
               setAuthToken(data.token);
@@ -172,6 +184,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
           return;
         }
         const data = JSON.parse(rawText);
+        setServerStatus('online');
         if (data?.adminSetupRequired) {
           setAdminSetupRequired(true);
           setErrorMessage(data.message || 'Configuration initiale requise : définissez votre mot de passe Administrateur.');
@@ -187,8 +200,11 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
         } else {
           setErrorMessage(data.message || 'Mot de passe Administrateur incorrect.');
         }
-      } catch {
-        setErrorMessage('Connexion au serveur d\'authentification impossible. Vérifiez votre connexion internet.');
+      } catch (err) {
+        const detail = err instanceof Error && err.message ? ` (${err.message})` : '';
+        setErrorMessage(
+          `Connexion au serveur d'authentification impossible${detail}. Vérifiez votre connexion ou réveillez le serveur.`
+        );
       } finally {
         setIsVerifying(false);
       }
@@ -220,6 +236,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
       }
 
       const data = JSON.parse(rawText);
+      setServerStatus('online');
       if (response.ok && data.valid && data.license) {
         if (typeof data.token === 'string' && data.token) {
           setAuthToken(data.token);
@@ -272,21 +289,36 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
                 : 'Démonstrations publiques verrouillées · Clé Abonné requise'}
             </span>
           </div>
-          <span
-            className={`text-[10px] font-mono px-2 py-0.5 rounded border shrink-0 ${
-              serverStatus === 'online'
-                ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/60'
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className={`text-[10px] font-mono px-2 py-0.5 rounded border shrink-0 ${
+                serverStatus === 'online'
+                  ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/60'
+                  : serverStatus === 'waking'
+                  ? 'bg-amber-950/70 text-amber-300 border-amber-700/60'
+                  : 'bg-rose-950/70 text-rose-300 border-rose-700/60'
+              }`}
+            >
+              {serverStatus === 'online'
+                ? 'Serveur En Ligne'
                 : serverStatus === 'waking'
-                ? 'bg-amber-950/70 text-amber-300 border-amber-700/60'
-                : 'bg-rose-950/70 text-rose-300 border-rose-700/60'
-            }`}
-          >
-            {serverStatus === 'online'
-              ? 'Serveur En Ligne'
-              : serverStatus === 'waking'
-              ? 'Connexion...'
-              : 'Hors Ligne'}
-          </span>
+                ? 'Réveil serveur...'
+                : 'Hors Ligne'}
+            </span>
+            {serverStatus === 'offline' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setServerStatus('waking');
+                  void runServerStatusCheck(1);
+                }}
+                className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 cursor-pointer flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>Réveiller</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {blockReason && (

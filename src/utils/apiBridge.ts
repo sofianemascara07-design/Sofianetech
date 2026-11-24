@@ -132,8 +132,11 @@ export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<R
     input.includes('/license/status')
       ? 2
       : 1;
+  const isAuthOrWakeRoute =
+    input.includes('/license/') || input.includes('/health') || input.includes('/admin/bootstrap');
   const maxRetries = typeof init?.retries === 'number' ? init.retries : defaultRetries;
-  const timeoutMs = typeof init?.timeoutMs === 'number' ? init.timeoutMs : 22000;
+  const timeoutMs =
+    typeof init?.timeoutMs === 'number' ? init.timeoutMs : isAuthOrWakeRoute ? 45000 : 25000;
 
   const fallbackTarget = input.startsWith('/api/') ? `${DEFAULT_RENDER_BACKEND_URL}${input}` : null;
   const canFailoverToRender = Boolean(!isFullStackSelfHost() && fallbackTarget && fallbackTarget !== target);
@@ -148,16 +151,24 @@ export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<R
     try {
       const response = await fetchWithTimeout(target, isCrossOrigin, timeoutMs, init);
 
-      // Detect proxy/static HTML interception (e.g. Cloud Run ais-pre or SSO redirect on /api/*)
-      if (canFailoverToRender && (await isHtmlProxyInterception(response))) {
-        return await fetchWithTimeout(fallbackTarget!, true, timeoutMs, init);
+      // Detect proxy/static HTML interception or Render cold-start HTML page
+      if (await isHtmlProxyInterception(response)) {
+        if (canFailoverToRender) {
+          return await fetchWithTimeout(fallbackTarget!, true, timeoutMs, init);
+        }
+        if (attempt < maxRetries) {
+          await sleep(2500 * (attempt + 1));
+          continue;
+        }
       }
 
       if (RETRYABLE_STATUSES.has(response.status)) {
         if (attempt < maxRetries) {
           const retryAfterSec = parseInt(response.headers.get('Retry-After') || '0', 10);
           const waitMs =
-            retryAfterSec > 0 ? Math.min(retryAfterSec * 1000, 5000) : 700 * (attempt + 1);
+            retryAfterSec > 0
+              ? Math.min(retryAfterSec * 1000, 6000)
+              : Math.min(2000 * (attempt + 1), 6000);
           await sleep(waitMs);
           continue;
         }
@@ -181,7 +192,7 @@ export async function apiFetch(input: string, init?: ApiFetchOptions): Promise<R
         throw lastError;
       }
 
-      await sleep(750 * (attempt + 1));
+      await sleep(1500 * (attempt + 1));
     }
   }
 

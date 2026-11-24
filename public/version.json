@@ -1,5 +1,5 @@
 {
-  "version": "2026.11.23-AUTH-FIX-2",
+  "version": "2026.11.24-WAKE-FIX-3",
   "channel": "production",
-  "minSwVersion": "autopro-v2026-11-23-sec-v2"
+  "minSwVersion": "autopro-v2026-11-24-wake-v3"
 }
