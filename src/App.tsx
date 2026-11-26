@@ -11,6 +11,7 @@ import { AppTranslator } from './components/AppTranslator';
 import { SmartechDzBridge } from './components/SmartechDzBridge';
 import { CommercialPackaging } from './components/CommercialPackaging';
 import { ChineseTabletFlasher } from './components/ChineseTabletFlasher';
+import { ChineseAutoDeployer } from './components/ChineseAutoDeployer';
 import { BodyComfortControl } from './components/BodyComfortControl';
 import { KeylessProximitySecurity } from './components/KeylessProximitySecurity';
 import { CameraIntegration } from './components/CameraIntegration';
@@ -135,7 +136,11 @@ export default function App() {
           allowed.includes('diagnostic') ||
           allowed.includes('flash') ||
           allowed.includes('chinese_flasher') ||
-          allowed.includes('coolray_lspi')));
+          allowed.includes('coolray_lspi'))) ||
+      (activeTab === 'aa_cp_deployer' &&
+        (allowed.includes('aa_cp_deployer') ||
+          allowed.includes('chinese_flasher') ||
+          allowed.includes('apps')));
     if (allowed.length > 0 && !isPermitted) {
       setActiveTab((allowed[0] as NavTab) || 'diagnostic');
     }
@@ -316,6 +321,13 @@ export default function App() {
         allowed.includes('coolray_lspi')
       );
     }
+    if (tab === 'aa_cp_deployer') {
+      return (
+        allowed.includes('aa_cp_deployer') ||
+        allowed.includes('chinese_flasher') ||
+        allowed.includes('apps')
+      );
+    }
     return allowed.includes(tab);
   };
 
@@ -445,6 +457,10 @@ export default function App() {
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
             onOpenTranslator={canRenderTab('translator') ? () => setActiveTab('translator') : undefined}
           />
+        )}
+
+        {activeTab === 'aa_cp_deployer' && canRenderTab('aa_cp_deployer') && (
+          <ChineseAutoDeployer />
         )}
 
         {activeTab === 'comfort' && canRenderTab('comfort') && (

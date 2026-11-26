@@ -1,6 +1,6 @@
 import React from 'react';
 import { ConnectionMode, LicenseSession } from '../types/automotive';
-import { ShieldCheck, Mic, Sun, Camera, ShieldAlert, Clock, Wrench, Flame, Wallpaper, Lock } from 'lucide-react';
+import { ShieldCheck, Mic, Sun, Camera, ShieldAlert, Clock, Wrench, Flame, Wallpaper, Lock, Smartphone } from 'lucide-react';
 
 export type NavTab =
   | 'diagnostic'
@@ -13,6 +13,7 @@ export type NavTab =
   | 'smartech'
   | 'packaging'
   | 'chinese_flasher'
+  | 'aa_cp_deployer'
   | 'comfort'
   | 'keyless'
   | 'cameras'
@@ -108,6 +109,13 @@ export const Header: React.FC<HeaderProps> = ({
         mods.includes('flash') ||
         mods.includes('chinese_flasher') ||
         mods.includes('coolray_lspi')
+      );
+    }
+    if (tab === 'aa_cp_deployer') {
+      return (
+        mods.includes('aa_cp_deployer') ||
+        mods.includes('chinese_flasher') ||
+        mods.includes('apps')
       );
     }
     return mods.includes(tab);
@@ -394,6 +402,20 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <span className="w-2 h-2 rounded-full bg-rose-500" />
               <span>Flash Cockpit &amp; Écrans CN</span>
+            </button>
+          )}
+
+          {canAccess('aa_cp_deployer') && (
+            <button
+              onClick={() => onSelectTab('aa_cp_deployer')}
+              className={`whitespace-nowrap transition-colors pb-1 border-b-2 cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'aa_cp_deployer'
+                  ? 'text-cyan-300 border-cyan-400 font-bold'
+                  : 'border-transparent hover:text-cyan-300 text-cyan-400/90'
+              }`}
+            >
+              <Smartphone className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Déploiement AA/CP Chinois</span>
             </button>
           )}
 

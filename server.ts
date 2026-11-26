@@ -2074,6 +2074,7 @@ const ADMIN_ALLOWED_MODULES = [
   'comfort',
   'keyless',
   'chinese_flasher',
+  'aa_cp_deployer',
   'smartech',
   'connection',
   'apps',
@@ -2245,14 +2246,14 @@ app.post('/api/license/verify', async (req, res) => {
 
   const allowedModules =
     tier === 'master'
-      ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'smartech', 'connection', 'apps', 'vault', 'translator', 'workshop_cn', 'transmission']
+      ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'aa_cp_deployer', 'smartech', 'connection', 'apps', 'vault', 'translator', 'workshop_cn', 'transmission']
       : tier === 'reprog'
-      ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'connection', 'vault', 'translator', 'workshop_cn', 'transmission']
+      ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'aa_cp_deployer', 'connection', 'vault', 'translator', 'workshop_cn', 'transmission']
       : tier === 'tablette_chinois'
-      ? ['chinese_flasher', 'apps', 'vault', 'translator', 'connection']
+      ? ['chinese_flasher', 'aa_cp_deployer', 'apps', 'vault', 'translator', 'connection']
       : tier === 'demo'
       ? ['diagnostic', 'cameras', 'history', 'workshop_cn', 'transmission', 'vault']
-      : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'vault', 'translator', 'workshop_cn', 'transmission'];
+      : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'aa_cp_deployer', 'vault', 'translator', 'workshop_cn', 'transmission'];
 
   const resolvedHwid = sub.boundHwid || hwid || 'HWID-AUTO-DETECTED';
   const maskedKey = saasDatabase.maskLicenseKey(sub.licenseKey);
