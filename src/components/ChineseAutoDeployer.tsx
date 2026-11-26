@@ -285,15 +285,33 @@ export const ChineseAutoDeployer: React.FC = () => {
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 8000);
-        const res = await fetch(`${normalizedBaseUrl}/`, {
+        let res = await fetch(`${normalizedBaseUrl}/`, {
           method: 'GET',
           headers: { Accept: 'application/json' },
           signal: controller.signal,
         });
+        if (res.status === 404) {
+          const fallbackPaths = ['/packs', '/status', '/list'];
+          for (const sub of fallbackPaths) {
+            const alt = await fetch(`${normalizedBaseUrl}${sub}`, {
+              method: 'GET',
+              headers: { Accept: 'application/json' },
+              signal: controller.signal,
+            });
+            if (alt.ok) {
+              res = alt;
+              break;
+            }
+          }
+        }
         clearTimeout(timer);
 
         if (!res.ok) {
-          throw new Error(`HTTP ${res.status} reçu depuis ${normalizedBaseUrl}`);
+          throw new Error(
+            res.status === 404
+              ? `HTTP 404 sur GET ${normalizedBaseUrl}/ : votre script Python Termux répond bien sur le port 8080, mais il manque la route do_GET (et do_OPTIONS CORS) pour renvoyer {"packs": ..., "logs": ...}.`
+              : `HTTP ${res.status} reçu depuis ${normalizedBaseUrl}/`
+          );
         }
 
         const data = await res.json();
@@ -329,6 +347,8 @@ export const ChineseAutoDeployer: React.FC = () => {
         const msg =
           err?.name === 'AbortError'
             ? `Délai dépassé sur ${normalizedBaseUrl}. Vérifiez que le serveur Termux est lancé.`
+            : typeof err?.message === 'string' && err.message.startsWith('HTTP ')
+            ? err.message
             : `Pont Termux inaccessible sur ${normalizedBaseUrl}. Démarrez votre API locale sur le port 8080 (avec CORS autorisé).`;
         setBridgeError(msg);
         appendLog('error', msg);
