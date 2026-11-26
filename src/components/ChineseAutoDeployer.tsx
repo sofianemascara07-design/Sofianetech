@@ -16,6 +16,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   Package,
+  Download,
+  Layers,
 } from 'lucide-react';
 
 const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:8080';
@@ -200,6 +202,217 @@ function extractLogsFromJson(payload: unknown): string[] {
   return [];
 }
 
+interface WorkshopPackRepoSpec {
+  repo: string;
+  folder: string;
+  assetHint?: string;
+  label: string;
+}
+
+interface WorkshopProfitPack {
+  id: string;
+  title: string;
+  priceDzd: string;
+  targetVehicles: string;
+  badgeColor: string;
+  includeStep1: boolean;
+  matchKeywords: string[];
+  summary: string;
+  repos: WorkshopPackRepoSpec[];
+}
+
+const WORKSHOP_PROFIT_PACKS: WorkshopProfitPack[] = [
+  {
+    id: 'pack_essentiel_fr_gps',
+    title: 'Pack 1 · Débridage FR + GPS DZ',
+    priceDzd: '5 000 – 6 000 DA',
+    targetVehicles: 'Tous écrans chinois / Geely / Changan',
+    badgeColor: 'text-amber-300 border-amber-500/40 bg-amber-950/50',
+    includeStep1: true,
+    matchKeywords: [
+      'screen-translator',
+      'screen-trans',
+      'organicmaps',
+      'gnss-client',
+      'one button',
+      'back button',
+    ],
+    summary: 'Étape 1 FR + Traducteur hors-ligne + GPS Algérie hors-ligne.',
+    repos: [
+      {
+        repo: 'ervareza/screen-translator',
+        folder: '01_Pack_FR_GPS',
+        label: 'Screen Translator (32/64-bit)',
+      },
+      {
+        repo: 'Tensorlong/screen-trans',
+        folder: '01_Pack_FR_GPS',
+        assetHint: 'screen-trans',
+        label: 'Screen Trans Android 6+',
+      },
+      {
+        repo: 'organicmaps/organicmaps',
+        folder: '01_Pack_FR_GPS',
+        label: 'Organic Maps (GPS DZ)',
+      },
+    ],
+  },
+  {
+    id: 'pack_aacp_pro',
+    title: 'Pack 2 · Android Auto & CarPlay Pro',
+    priceDzd: '10 000 – 12 000 DA',
+    targetVehicles: 'Geely Coolray / Cityray / Jetour / VW CN',
+    badgeColor: 'text-cyan-300 border-cyan-500/40 bg-cyan-950/50',
+    includeStep1: true,
+    matchKeywords: [
+      'headunitrevived',
+      'f-auto',
+      'shizuku',
+      'fermata',
+      'smarttube',
+      'carplaygate',
+      'androidautoshortcut',
+      'organicmaps',
+      'screen-translator',
+    ],
+    summary: 'Pack 1 + Headunit Revived + F-Auto + Shizuku + Fermata + SmartTube.',
+    repos: [
+      {
+        repo: 'andreknieriem/open-headunit',
+        folder: '02_Pack_AA_CarPlay',
+        assetHint: 'beta2.apk',
+        label: 'Headunit Revived 4.1',
+      },
+      {
+        repo: 'malashhab/F-Auto',
+        folder: '02_Pack_AA_CarPlay',
+        label: 'F-Auto (Sans GMS)',
+      },
+      {
+        repo: 'RikkaApps/Shizuku',
+        folder: '02_Pack_AA_CarPlay',
+        label: 'Shizuku',
+      },
+      {
+        repo: 'AndreyPavlenko/Fermata',
+        folder: '02_Pack_AA_CarPlay',
+        assetHint: 'arm64',
+        label: 'Fermata Auto',
+      },
+      {
+        repo: 'yuliskov/SmartTube',
+        folder: '02_Pack_AA_CarPlay',
+        assetHint: 'universal',
+        label: 'SmartTube Sans Pub',
+      },
+    ],
+  },
+  {
+    id: 'pack_coolray_vip',
+    title: 'Pack 3 · VIP Coolray (Thème + Sono + TPMS)',
+    priceDzd: '15 000 – 20 000 DA',
+    targetVehicles: 'Geely Coolray / Belgee X50 / Postes Android',
+    badgeColor: 'text-emerald-300 border-emerald-500/40 bg-emerald-950/50',
+    includeStep1: true,
+    matchKeywords: [
+      'bg-car-home',
+      'belgee',
+      'openeq',
+      'alleq',
+      'litedash',
+      'dicio',
+      'headunitrevived',
+      'f-auto',
+      'shizuku',
+      'fermata',
+      'smarttube',
+      'organicmaps',
+      'screen-translator',
+    ],
+    summary: 'Pack 2 + Thème Coolray + Égaliseur Sono + TPMS/OBD2 + Voix FR.',
+    repos: [
+      {
+        repo: 'IgnatovichStanislav/belgee-x50-carhome-launcher',
+        folder: '03_Pack_VIP_Coolray',
+        label: 'Coolray CarHome Launcher',
+      },
+      {
+        repo: 'Turbofan3360/OpenEQ',
+        folder: '03_Pack_VIP_Coolray',
+        label: 'OpenEQ Sono',
+      },
+      {
+        repo: 'omixin/allEQ',
+        folder: '03_Pack_VIP_Coolray',
+        label: 'allEQ 10 Bandes',
+      },
+      {
+        repo: 'IrvingGuerra/litedash',
+        folder: '03_Pack_VIP_Coolray',
+        assetHint: 'litedash-',
+        label: 'LiteDash TPMS/OBD2',
+      },
+      {
+        repo: 'DicioTeam/dicio-android',
+        folder: '03_Pack_VIP_Coolray',
+        label: 'Dicio Voix FR Hors-Ligne',
+      },
+    ],
+  },
+];
+
+function buildTermuxPackDownloadCommand(packsToInclude: WorkshopProfitPack[]): string {
+  const specs = packsToInclude.flatMap((p) => p.repos);
+  const uniqueSpecs = Array.from(
+    new Map(specs.map((s) => [`${s.folder}:${s.repo}`, s])).values()
+  );
+  const specJson = JSON.stringify(
+    uniqueSpecs.map((s) => [s.repo, s.folder, s.assetHint || ''])
+  );
+
+  return `python3 - << 'PY'
+import json, os, urllib.request
+
+PACKS_ROOT = os.path.expanduser("~/autopro_packs")
+SPECS = json.loads('${specJson}')
+
+for repo, folder, hint in SPECS:
+    dest_dir = os.path.join(PACKS_ROOT, folder)
+    os.makedirs(dest_dir, exist_ok=True)
+    url = f"https://api.github.com/repos/{repo}/releases?per_page=3"
+    req = urllib.request.Request(url, headers={"User-Agent": "AutoPro-Termux-Pack/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            releases = json.loads(r.read().decode())
+        apks = [
+            a for rel in releases for a in rel.get("assets", [])
+            if a.get("name", "").lower().endswith(".apk")
+            and str(a.get("browser_download_url", "")).startswith("https://github.com/")
+        ]
+        if not apks:
+            print(f"[SKIP] Aucun APK trouve sur {repo}")
+            continue
+        chosen = next((a for a in apks if hint and hint.lower() in a["name"].lower()), apks[0])
+        out_path = os.path.join(dest_dir, chosen["name"])
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 10000:
+            print(f"[OK deja present] {folder}/{chosen['name']}")
+            continue
+        print(f"[DL] {folder}/{chosen['name']}...")
+        dl_req = urllib.request.Request(chosen["browser_download_url"], headers={"User-Agent": "AutoPro-Termux-Pack/1.0"})
+        with urllib.request.urlopen(dl_req, timeout=120) as dl, open(out_path, "wb") as f:
+            while True:
+                chunk = dl.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+        print(f"[OK] {folder}/{chosen['name']}")
+    except Exception as e:
+        print(f"[ERR] {repo}: {e}")
+print("Termine ! Cliquez sur 'Actualiser le pont' dans AutoPro.")
+PY`;
+}
+
+
 export const ChineseAutoDeployer: React.FC = () => {
   const [bridgeUrl, setBridgeUrl] = useState<string>(DEFAULT_BRIDGE_URL);
   const [bridgeConnected, setBridgeConnected] = useState<boolean>(false);
@@ -216,6 +429,8 @@ export const ChineseAutoDeployer: React.FC = () => {
   >(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [copiedLogs, setCopiedLogs] = useState<boolean>(false);
+  const [copiedPackScriptId, setCopiedPackScriptId] = useState<string | null>(null);
+  const [showScriptPackId, setShowScriptPackId] = useState<string | null>(null);
 
   const logsEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -526,6 +741,42 @@ export const ChineseAutoDeployer: React.FC = () => {
     setTimeout(() => setCopiedLogs(false), 1800);
   };
 
+  const handleSelectProfitPack = (pack: WorkshopProfitPack) => {
+    const matched = allApkPaths.filter((p) => {
+      const lower = p.toLowerCase();
+      return pack.matchKeywords.some((kw) => lower.includes(kw.toLowerCase()));
+    });
+
+    if (matched.length === 0) {
+      appendLog(
+        'error',
+        `${pack.title} : aucun APK correspondant trouvé dans Termux. Utilisez "Télécharger dans Termux" ci-dessous puis actualisez le pont.`
+      );
+      setShowScriptPackId(pack.id);
+      return;
+    }
+
+    setSelectedApks(matched);
+    appendLog(
+      'success',
+      `${pack.title} (${pack.priceDzd}) sélectionné : ${matched.length} APK coché(s). ${
+        pack.includeStep1 ? "Pensez à lancer l'Étape 1 FR avant l'Étape 2." : ''
+      }`
+    );
+  };
+
+  const handleCopyPackScript = (packsList: WorkshopProfitPack[], scriptId: string, label: string) => {
+    const cmd = buildTermuxPackDownloadCommand(packsList);
+    navigator.clipboard.writeText(cmd);
+    setCopiedPackScriptId(scriptId);
+    setShowScriptPackId(scriptId);
+    appendLog(
+      'info',
+      `Commande Termux copiée pour "${label}". Collez-la dans Termux puis cliquez sur "Actualiser le pont".`
+    );
+    setTimeout(() => setCopiedPackScriptId((curr) => (curr === scriptId ? null : curr)), 2200);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header & Bridge Status */}
@@ -664,6 +915,126 @@ export const ChineseAutoDeployer: React.FC = () => {
             <span>Étape 1 : Débridage &amp; Langue FR</span>
           </button>
         </div>
+      </div>
+
+      {/* Profitable Workshop Packs (0 DA license cost, 100% workshop margin) */}
+      <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+          <div>
+            <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+              <Layers className="w-4 h-4 text-emerald-400" />
+              <span>Packs Atelier Prêts à Facturer (0 DA de licence · 100 % marge)</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Cochez automatiquement un pack client ou téléchargez les APK officiels GitHub directement dans{' '}
+              <code className="text-cyan-300 font-mono">~/autopro_packs</code> en 1 commande Termux.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              handleCopyPackScript(WORKSHOP_PROFIT_PACKS, 'all_packs', 'Tous les 3 Packs Atelier')
+            }
+            className="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+          >
+            {copiedPackScriptId === 'all_packs' ? (
+              <Check className="w-4 h-4" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+            <span>
+              {copiedPackScriptId === 'all_packs'
+                ? 'Commande 3 Packs copiée !'
+                : 'Télécharger les 3 Packs dans Termux'}
+            </span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {WORKSHOP_PROFIT_PACKS.map((pack) => {
+            const matchedCount = allApkPaths.filter((p) => {
+              const lower = p.toLowerCase();
+              return pack.matchKeywords.some((kw) => lower.includes(kw.toLowerCase()));
+            }).length;
+
+            return (
+              <div
+                key={pack.id}
+                className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col justify-between gap-3"
+              >
+                <div className="space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className="text-sm font-bold text-white leading-snug">{pack.title}</h3>
+                    <span
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap shrink-0 ${pack.badgeColor}`}
+                    >
+                      {pack.priceDzd}
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-medium text-cyan-300">{pack.targetVehicles}</p>
+                  <p className="text-xs text-slate-300 leading-relaxed">{pack.summary}</p>
+                  <div className="text-[11px] font-mono text-slate-400 pt-1">
+                    {matchedCount > 0 ? (
+                      <span className="text-emerald-400">
+                        ● {matchedCount} APK prêt(s) dans votre pont Termux
+                      </span>
+                    ) : (
+                      <span>○ Non encore téléchargé dans ~/autopro_packs</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-800/80">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectProfitPack(pack)}
+                    className="flex-1 min-h-[38px] px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-white whitespace-nowrap cursor-pointer transition-colors"
+                  >
+                    Sélectionner ce Pack
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyPackScript([pack], pack.id, pack.title)}
+                    className="min-h-[38px] px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-cyan-300 flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
+                    title="Copier la commande Termux pour télécharger ce pack"
+                  >
+                    {copiedPackScriptId === pack.id ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                    <span>{copiedPackScriptId === pack.id ? 'Copié' : 'Script Termux'}</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {showScriptPackId && (
+          <div className="p-3.5 rounded-xl bg-slate-950 border border-cyan-500/30 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-cyan-300">
+                Collez cette commande dans Termux (télécharge les APK officiels GitHub dans ~/autopro_packs) :
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowScriptPackId(null)}
+                className="text-xs text-slate-400 hover:text-white cursor-pointer"
+              >
+                Fermer
+              </button>
+            </div>
+            <pre className="max-h-40 overflow-auto text-[11px] font-mono text-slate-300 bg-slate-900/90 p-2.5 rounded-lg border border-slate-800 whitespace-pre-wrap break-all">
+              {buildTermuxPackDownloadCommand(
+                showScriptPackId === 'all_packs'
+                  ? WORKSHOP_PROFIT_PACKS
+                  : WORKSHOP_PROFIT_PACKS.filter((p) => p.id === showScriptPackId)
+              )}
+            </pre>
+          </div>
+        )}
       </div>
 
       {/* Main Split: APK Folders (Left) + Live JSON Terminal Logs (Right) */}
