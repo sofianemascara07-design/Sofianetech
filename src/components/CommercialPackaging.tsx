@@ -44,6 +44,7 @@ import { VEHICLE_PRESETS } from '../data/mockVehicles';
 import { getBackendBaseUrl, setBackendBaseUrl } from '../utils/apiBridge';
 import { downloadCommercialPacksPdf, downloadCommercialPacksExcel } from '../utils/commercialCatalogExport';
 import { SdrProspectsTracker } from './SdrProspectsTracker';
+import promoPosterUrl from '../assets/images/autopro_tablet_ad_1795790860550.jpg';
 
 interface CommercialPackagingProps {
   appUrl: string;
@@ -469,6 +470,38 @@ Support Technique & Activation WhatsApp : 05 57 76 78 04 (+213 557 76 78 04) | s
         )}
       </div>
       )}
+
+      {/* Promotional Android Tablet Poster Card (Direct Preview & Download) */}
+      <div className="p-5 rounded-2xl bg-slate-900/90 border border-cyan-500/35 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+              <Tablet className="w-4 h-4 text-cyan-400" />
+              <span>Affiche Publicitaire HD · Écran Tablette Android (autoprodz-a7071.web.app)</span>
+            </h2>
+            <p className="text-xs text-slate-300">
+              Visuel prêt pour Facebook, Instagram et WhatsApp présentant les 12 modules &amp; applications de la suite AutoPro.
+            </p>
+          </div>
+          <a
+            href={promoPosterUrl}
+            download="AutoPro_Affiche_Tablette_Android.jpg"
+            className="min-h-[40px] px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 shadow-md transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            <span>Télécharger l&apos;Affiche (.jpg)</span>
+          </a>
+        </div>
+
+        <div className="rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
+          <img
+            src={promoPosterUrl}
+            alt="Affiche publicitaire AutoPro Diagnostic & Flash sur tablette Android"
+            referrerPolicy="no-referrer"
+            className="w-full h-auto object-cover block"
+          />
+        </div>
+      </div>
 
       {/* Sub Navigation Bar for Commercial & Feasibility Hub */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
