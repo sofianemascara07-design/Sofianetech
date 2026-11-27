@@ -20,7 +20,13 @@ import {
   Activity,
   Layers,
   Wrench,
-  Radio
+  Radio,
+  Phone,
+  ExternalLink,
+  CheckSquare,
+  Square,
+  Trash2,
+  Globe,
 } from 'lucide-react';
 import { Vehicle } from '../types/automotive';
 import { apiFetch } from '../utils/apiBridge';
@@ -33,6 +39,38 @@ interface VoiceAssistantModalProps {
   onExecuteBcmAction?: (type: string, params: any) => void;
 }
 
+interface VoiceTaskItem {
+  id: string;
+  title: string;
+  done: boolean;
+}
+
+interface PendingLauncherAction {
+  kind: 'call' | 'social';
+  label: string;
+  href: string;
+  target: string;
+}
+
+const VOICE_LANG_OPTIONS: { code: 'fr-FR' | 'ar-DZ' | 'ar-SA' | 'en-US'; label: string }[] = [
+  { code: 'fr-FR', label: 'FR · Français' },
+  { code: 'ar-DZ', label: 'DZ · Darija / عربي' },
+  { code: 'ar-SA', label: 'AR · العربية' },
+  { code: 'en-US', label: 'EN · English' },
+];
+
+const SOCIAL_URLS: Record<string, { label: string; url: string }> = {
+  whatsapp: { label: 'WhatsApp', url: 'https://wa.me/' },
+  facebook: { label: 'Facebook', url: 'https://www.facebook.com/' },
+  instagram: { label: 'Instagram', url: 'https://www.instagram.com/' },
+  tiktok: { label: 'TikTok', url: 'https://www.tiktok.com/' },
+  youtube: { label: 'YouTube', url: 'https://www.youtube.com/' },
+  telegram: { label: 'Telegram', url: 'https://t.me/' },
+  messenger: { label: 'Messenger', url: 'https://www.messenger.com/' },
+  waze: { label: 'Waze', url: 'https://www.waze.com/live-map' },
+  maps: { label: 'Google Maps', url: 'https://maps.google.com/' },
+};
+
 export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   isOpen,
   onClose,
@@ -43,6 +81,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   // Customizable AI Matrix Name (saved in localStorage)
   const [matrixName, setMatrixName] = useState<string>(() => {
     return localStorage.getItem('autopro_matrix_name') || 'Jarvis';
+  });
+  const [voiceLang, setVoiceLang] = useState<'fr-FR' | 'ar-DZ' | 'ar-SA' | 'en-US'>(() => {
+    const saved = localStorage.getItem('autopro_voice_lang');
+    return saved === 'ar-DZ' || saved === 'ar-SA' || saved === 'en-US' ? saved : 'fr-FR';
   });
   const [isEditingName, setIsEditingName] = useState(false);
   const [customNameInput, setCustomNameInput] = useState(matrixName);
@@ -55,20 +97,37 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const [speechEnabled, setSpeechEnabled] = useState(true);
   const [lastResponse, setLastResponse] = useState<string | null>(null);
   const [executedActions, setExecutedActions] = useState<string[]>([]);
+  const [pendingLaunchers, setPendingLaunchers] = useState<PendingLauncherAction[]>([]);
+  const [tasks, setTasks] = useState<VoiceTaskItem[]>(() => {
+    try {
+      const raw = localStorage.getItem('autopro_voice_tasks');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
   const [recognitionError, setRecognitionError] = useState<string | null>(null);
 
   const recognitionRef = useRef<any>(null);
 
   const presetNames = ['Jarvis', 'AutoPro', 'Smartech', 'Matrix DZ', 'Yacine', 'Karim', 'Atlas', 'Titan'];
 
-  // Initialize Web Speech API
+  useEffect(() => {
+    try {
+      localStorage.setItem('autopro_voice_tasks', JSON.stringify(tasks.slice(0, 20)));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [tasks]);
+
+  // Initialize / update Web Speech API language
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
       recognition.continuous = false;
       recognition.interimResults = true;
-      recognition.lang = 'fr-FR';
+      recognition.lang = voiceLang;
 
       recognition.onstart = () => {
         setIsListening(true);
@@ -94,7 +153,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
       recognitionRef.current = recognition;
     }
-  }, []);
+  }, [voiceLang]);
 
   // Text-To-Speech Synthesis helper
   const speakText = (text: string) => {
@@ -102,8 +161,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     try {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'fr-FR';
-      utterance.rate = 1.05;
+      utterance.lang = voiceLang;
+      utterance.rate = 1.02;
       utterance.pitch = 1.0;
       window.speechSynthesis.speak(utterance);
     } catch {
@@ -142,6 +201,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
     setIsProcessing(true);
     setRecognitionError(null);
+    setPendingLaunchers([]);
 
     try {
       const response = await apiFetch('/api/ai/voice-command', {
@@ -150,6 +210,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         body: JSON.stringify({
           transcript: text,
           matrixName,
+          voiceLang,
           vehicle: { brand: selectedVehicle.brand, model: selectedVehicle.model },
         }),
       });
@@ -162,9 +223,53 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
         // Execute returned actions
         const actionsPerformed: string[] = [];
+        const newLaunchers: PendingLauncherAction[] = [];
+
         if (Array.isArray(data.actions)) {
           for (const action of data.actions) {
-            // Send direct BCM command to backend
+            if (action.type === 'make_call') {
+              const target = String(action.params?.target || '').trim();
+              const digits = target.replace(/[^\d+]/g, '');
+              if (target) {
+                newLaunchers.push({
+                  kind: 'call',
+                  label: digits.length >= 4 ? `Appeler ${digits}` : `Composer pour ${target}`,
+                  href: `tel:${digits || ''}`,
+                  target,
+                });
+              }
+              actionsPerformed.push(`make_call:${target}`);
+              continue;
+            }
+
+            if (action.type === 'open_social') {
+              const appKey = String(action.params?.app || '').toLowerCase();
+              const info = SOCIAL_URLS[appKey];
+              if (info) {
+                newLaunchers.push({
+                  kind: 'social',
+                  label: `Ouvrir ${info.label}`,
+                  href: info.url,
+                  target: info.label,
+                });
+              }
+              actionsPerformed.push(`open_social:${appKey}`);
+              continue;
+            }
+
+            if (action.type === 'create_task') {
+              const title = String(action.params?.title || '').trim();
+              if (title) {
+                setTasks((prev) => [
+                  { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, title, done: false },
+                  ...prev,
+                ]);
+              }
+              actionsPerformed.push(`create_task:${title}`);
+              continue;
+            }
+
+            // Send direct BCM command to backend for habitacle actions
             try {
               await apiFetch('/api/bcm/command', {
                 method: 'POST',
@@ -187,10 +292,25 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           }
         }
 
+        setPendingLaunchers(newLaunchers);
         setExecutedActions(actionsPerformed);
 
         // Switch tab if suggested
-        if (data.suggestedTab && ['diagnostic', 'flash', 'comfort', 'chinese_flasher', 'smartech', 'apps', 'cameras', 'keyless'].includes(data.suggestedTab)) {
+        if (
+          data.suggestedTab &&
+          [
+            'diagnostic',
+            'flash',
+            'comfort',
+            'chinese_flasher',
+            'smartech',
+            'apps',
+            'cameras',
+            'keyless',
+            'vault',
+            'aa_cp_deployer',
+          ].includes(data.suggestedTab)
+        ) {
           setTimeout(() => {
             onSelectTab(data.suggestedTab);
           }, 1500);
@@ -217,11 +337,16 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     setIsEditingName(false);
   };
 
+  const handleChangeVoiceLang = (lang: 'fr-FR' | 'ar-DZ' | 'ar-SA' | 'en-US') => {
+    setVoiceLang(lang);
+    localStorage.setItem('autopro_voice_lang', lang);
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-cyan-800/60 rounded-3xl max-w-xl w-full p-6 shadow-2xl relative overflow-hidden space-y-5">
+      <div className="bg-slate-900 border border-cyan-800/60 rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 shadow-2xl relative space-y-4">
         {/* Glowing Background Radial Halo */}
         <div className="absolute top-0 right-1/2 translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-cyan-500/15 rounded-full blur-3xl pointer-events-none" />
 
@@ -245,7 +370,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                 </button>
               </div>
               <span className="text-[11px] text-slate-400">
-                Commande vocale intelligente automobile toutes fonctions
+                Multi-langue (Arabe · Darija · Français · Anglais) · Appels · Tâches · Réseaux · Habitacle
               </span>
             </div>
           </div>
@@ -316,8 +441,32 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           </div>
         )}
 
+        {/* Language Switcher Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 relative z-10">
+          <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+            <Globe className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Langue vocale :</span>
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {VOICE_LANG_OPTIONS.map((opt) => (
+              <button
+                key={opt.code}
+                type="button"
+                onClick={() => handleChangeVoiceLang(opt.code)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors ${
+                  voiceLang === opt.code
+                    ? 'bg-cyan-500 text-slate-950'
+                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Main Microphone Listening Hub */}
-        <div className="flex flex-col items-center justify-center py-5 space-y-4 relative z-10">
+        <div className="flex flex-col items-center justify-center py-3 space-y-3 relative z-10">
           {/* Animated Glowing Mic Button */}
           <div className="relative">
             {isListening && (
@@ -352,8 +501,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           <div className="text-center space-y-1">
             <span className="text-xs font-semibold text-slate-200 block">
               {isListening
-                ? `Matrice « ${matrixName} » vous écoute... Cliquez pour valider`
-                : `Cliquez sur le micro et parlez, ou dites « Dis ${matrixName} »`}
+                ? `Matrice « ${matrixName} » écoute (${voiceLang})... Cliquez pour valider`
+                : `Parlez en Arabe, Darija, Français ou Anglais`}
             </span>
             <span className="text-[11px] text-slate-400 block font-mono">
               Véhicule connecté : {selectedVehicle.model} ({selectedVehicle.ecuType})
@@ -367,14 +516,14 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                 Texte Détecté en Direct :
               </span>
               <p className="text-sm font-medium text-white italic">
-                "{transcript || 'En attente de votre voix...'}"
+                &quot;{transcript || 'En attente de votre voix...'}&quot;
               </p>
             </div>
           )}
 
           {/* AI Response Display */}
           {lastResponse && (
-            <div className="w-full p-3.5 bg-cyan-950/30 rounded-2xl border border-cyan-500/40 text-left space-y-1.5 animate-in fade-in">
+            <div className="w-full p-3.5 bg-cyan-950/30 rounded-2xl border border-cyan-500/40 text-left space-y-2 animate-in fade-in">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] uppercase font-extrabold text-cyan-400 flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5" />
@@ -391,6 +540,31 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               <p className="text-xs font-medium text-slate-100 leading-relaxed">
                 {lastResponse}
               </p>
+              {executedActions.length > 0 && (
+                <p className="text-[10px] font-mono text-emerald-300">
+                  Actions : {executedActions.join(' · ')}
+                </p>
+              )}
+              {pendingLaunchers.length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {pendingLaunchers.map((item, idx) => (
+                    <a
+                      key={`${item.kind}-${idx}`}
+                      href={item.href}
+                      target={item.kind === 'social' ? '_blank' : undefined}
+                      rel={item.kind === 'social' ? 'noopener noreferrer' : undefined}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
+                    >
+                      {item.kind === 'call' ? (
+                        <Phone className="w-3.5 h-3.5" />
+                      ) : (
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      )}
+                      <span>{item.label}</span>
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -413,7 +587,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         >
           <input
             type="text"
-            placeholder={`Ou tapez votre commande pour ${matrixName} (ex: "Ferme les vitres et clim à 21°C")...`}
+            placeholder="Ex: Appelle 0557... / 7el WhatsApp / Fakerni vidange / 7el el male..."
             value={speechText}
             onChange={(e) => setSpeechText(e.target.value)}
             disabled={isProcessing}
@@ -429,65 +603,96 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           </button>
         </form>
 
+        {/* Quick Tasks Created by Voice */}
+        {tasks.length > 0 && (
+          <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 relative z-10">
+            <div className="flex items-center justify-between text-[11px] font-bold text-emerald-300">
+              <span>Tâches vocales enregistrées ({tasks.length})</span>
+              <button
+                type="button"
+                onClick={() => setTasks([])}
+                className="text-slate-400 hover:text-rose-300 cursor-pointer flex items-center gap-1"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Vider</span>
+              </button>
+            </div>
+            <div className="space-y-1 max-h-28 overflow-y-auto">
+              {tasks.map((t) => (
+                <div key={t.id} className="flex items-center justify-between gap-2 text-xs text-slate-200">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, done: !x.done } : x)))
+                    }
+                    className="flex items-center gap-2 text-left cursor-pointer"
+                  >
+                    {t.done ? (
+                      <CheckSquare className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    ) : (
+                      <Square className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                    )}
+                    <span className={t.done ? 'line-through text-slate-500' : ''}>{t.title}</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Quick Suggestion Chips */}
         <div className="space-y-1.5 pt-1 relative z-10">
           <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
-            Exemples de Commandes Prêtes à l'Emploi :
+            Exemples Multi-Langues (Appels · Réseaux · Tâches · Habitacle) :
           </span>
           <div className="flex flex-wrap gap-1.5 text-[11px]">
             <button
-              onClick={() => handleSendVoiceCommand("Ferme toutes les vitres et verrouille les portes")}
+              onClick={() => handleSendVoiceCommand('Appelle 0557767804')}
+              className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-emerald-300 border border-slate-800 transition-colors cursor-pointer"
+            >
+              📞 &quot;Appelle 0557...&quot;
+            </button>
+            <button
+              onClick={() => handleSendVoiceCommand('Ouvre WhatsApp')}
               className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 border border-slate-800 transition-colors cursor-pointer"
             >
-              🔒 "Ferme vitres &amp; verrouille"
+              💬 &quot;Ouvre WhatsApp&quot;
             </button>
             <button
-              onClick={() => handleSendVoiceCommand("Ouvre la mâle du coffre")}
+              onClick={() => handleSendVoiceCommand('افتح فيسبوك')}
               className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 border border-slate-800 transition-colors cursor-pointer"
             >
-              🚗 "Ouvre la mâle"
+              🌐 &quot;افتح فيسبوك&quot;
             </button>
             <button
-              onClick={() => handleSendVoiceCommand("Mets la clim à 20 degrés et active l'AC")}
+              onClick={() => handleSendVoiceCommand('Fakerni vidange Coolray demain')}
+              className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-amber-300 border border-slate-800 transition-colors cursor-pointer"
+            >
+              📝 &quot;Fakerni vidange&quot;
+            </button>
+            <button
+              onClick={() => handleSendVoiceCommand('7el el male w ghlaq zoudjadj')}
               className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 border border-slate-800 transition-colors cursor-pointer"
             >
-              ❄️ "Clim à 20°C"
+              🇩🇿 &quot;7el el male w ghlaq zoudjadj&quot;
             </button>
             <button
-              onClick={() => handleSendVoiceCommand("Ouvre le toit ouvrant panoramique")}
+              onClick={() => handleSendVoiceCommand('Mets la clim à 20 degrés')}
               className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 border border-slate-800 transition-colors cursor-pointer"
             >
-              ☀️ "Ouvre le toit ouvrant"
+              ❄️ &quot;Clim à 20°C&quot;
             </button>
             <button
-              onClick={() => handleSendVoiceCommand("Mode aération été vitres 15 pourcent et tilt toit")}
+              onClick={() => handleSendVoiceCommand('Open sunroof and unlock doors')}
               className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 border border-slate-800 transition-colors cursor-pointer"
             >
-              💨 "Aération été"
+              🇬🇧 &quot;Open sunroof&quot;
             </button>
             <button
-              onClick={() => handleSendVoiceCommand("Lance le scanner diagnostic moteur")}
-              className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 border border-slate-800 transition-colors cursor-pointer"
+              onClick={() => handleSendVoiceCommand('Ouvre les sources Coffre-Fort')}
+              className="px-2.5 py-1 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-800/60 transition-colors cursor-pointer"
             >
-              🔍 "Scanner diagnostic"
-            </button>
-            <button
-              onClick={() => handleSendVoiceCommand("Ouvre la clé 3 mètres et sécurité antivol")}
-              className="px-2.5 py-1 rounded-lg bg-amber-950/60 hover:bg-amber-900/60 text-amber-300 hover:text-amber-200 border border-amber-800/60 transition-colors cursor-pointer"
-            >
-              📡 "Clé 3m &amp; Antivol"
-            </button>
-            <button
-              onClick={() => handleSendVoiceCommand("Ouvre les caméras 360 et ADAS du véhicule")}
-              className="px-2.5 py-1 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 hover:text-cyan-200 border border-cyan-800/60 transition-colors cursor-pointer"
-            >
-              📹 "Caméras 360° &amp; ADAS"
-            </button>
-            <button
-              onClick={() => handleSendVoiceCommand("7el el male w ghlaq zoudjadj")}
-              className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 border border-slate-800 transition-colors cursor-pointer"
-            >
-              🇩🇿 "7el el male w ghlaq zoudjadj"
+              🔐 &quot;Sources Coffre-Fort&quot;
             </button>
           </div>
         </div>

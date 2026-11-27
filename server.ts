@@ -1600,59 +1600,101 @@ app.post('/api/bcm/command', requireAuth, (req, res) => {
   });
 });
 
-// API: Intelligent Voice Command Parsing with Gemini AI & Domain NLP
+// API: Intelligent Voice Command Parsing with Gemini AI & Multilingual Domain NLP (FR / AR / Darija / EN)
 app.post('/api/ai/voice-command', requireAuth, async (req, res) => {
   try {
-    const { transcript, matrixName = 'AutoPro', vehicle } = req.body;
+    const { transcript, matrixName = 'AutoPro', vehicle, voiceLang = 'fr-FR' } = req.body;
     if (!transcript || typeof transcript !== 'string') {
       return res.status(400).json({ error: 'Texte vocal manquant' });
     }
 
+    const safeVoiceLang = ['fr-FR', 'ar-DZ', 'ar-SA', 'en-US'].includes(String(voiceLang))
+      ? String(voiceLang)
+      : 'fr-FR';
+
+    const langInstruction =
+      safeVoiceLang === 'en-US'
+        ? 'Réponds en anglais naturel.'
+        : safeVoiceLang === 'ar-SA'
+        ? 'Réponds en arabe clair (العربية).'
+        : safeVoiceLang === 'ar-DZ'
+        ? 'Réponds en darija algérienne / français simple compréhensible au volant.'
+        : 'Réponds en français naturel.';
+
     const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
     const prompt = `Tu es la Matrice IA Automobile "${matrixName}" intégrée dans un véhicule moderne (${vehicle?.brand || 'Véhicule'} ${vehicle?.model || ''}).
-L'utilisateur vient de donner cette commande vocale (en français, arabe/darija ou anglais) : "${transcript}".
+L'utilisateur vient de donner cette commande vocale (Français, Arabe, Darija algérienne ou Anglais) : "${transcript}".
+${langInstruction}
 
 Analyse la commande et produis un objet JSON strict :
 {
-  "speechReply": "Une réponse courte, polie et dynamique (max 15 mots), adaptée au rôle de ${matrixName}.",
+  "speechReply": "Une réponse courte, polie et dynamique (max 16 mots), adaptée à ${matrixName}.",
   "actions": [
-    { "type": "doors_lock" | "doors_unlock" | "trunk_release" | "windows_set" | "sunroof_set" | "climate_set" | "switch_tab", "params": {} }
+    {
+      "type": "doors_lock" | "doors_unlock" | "trunk_release" | "windows_set" | "sunroof_set" | "climate_set" | "make_call" | "open_social" | "create_task" | "switch_tab",
+      "params": {}
+    }
   ],
-  "suggestedTab": "comfort" | "diagnostic" | "flash" | "chinese_flasher" | "smartech" | "apps"
+  "suggestedTab": "comfort" | "diagnostic" | "flash" | "chinese_flasher" | "smartech" | "apps" | "cameras" | "keyless" | "vault" | "aa_cp_deployer"
 }
 
-Règles de mapping :
-- Verrouiller portes / fermer la voiture / ghlaq lbiban -> type: "doors_lock"
-- Déverrouiller portes / 7el lbiban -> type: "doors_unlock"
-- Ouvrir mâle / coffre / hayon / 7el el male -> type: "trunk_release"
-- Fermer vitres / remonter vitres / ghlaq zoudjadj -> type: "windows_set", params: { fl: 0, fr: 0, rl: 0, rr: 0 }
-- Ouvrir vitres / baisser vitres / 7el zoudjadj -> type: "windows_set", params: { fl: 100, fr: 100, rl: 100, rr: 100 }
-- Aération vitres -> type: "windows_set", params: { fl: 15, fr: 15, rl: 15, rr: 15 }
-- Ouvrir toit ouvrant / toit panoramique -> type: "sunroof_set", params: { position: 100, shade: 100 }
-- Fermer toit ouvrant -> type: "sunroof_set", params: { position: 0 }
-- Aération toit (tilt) -> type: "sunroof_set", params: { position: 15 }
-- Fermer store / rideau -> type: "sunroof_set", params: { shade: 0 }
-- Climatisation (température X degrés, plus froid, plus chaud, AC max, soufflerie Y) -> type: "climate_set", params: { tempDriver: X, tempPass: X, ac: true }
-- Diagnostiquer / scanner / effacer défauts -> type: "switch_tab", params: { tab: "diagnostic" }
-- Reprogrammer / stage 1 / chiptuning -> type: "switch_tab", params: { tab: "flash" }
-- Écran chinois / installer maps / youtube -> type: "switch_tab", params: { tab: "chinese_flasher" }
+Règles de mapping multi-langues (FR / AR / Darija / EN) :
+- Appels téléphoniques ("appelle ...", "اتصل بـ ...", "3ayet l ...", "sonner ...", "call ...") -> type: "make_call", params: { target: "nom ou numéro extrait" }
+- Réseaux sociaux & applis ("ouvre whatsapp/facebook/instagram/tiktok/youtube/telegram/messenger/waze/maps", "افتح واتساب / فيسبوك / تيكتوك / يوتيوب", "7el whatsapp / fb / insta / tiktok") -> type: "open_social", params: { app: "whatsapp" | "facebook" | "instagram" | "tiktok" | "youtube" | "telegram" | "messenger" | "waze" | "maps" }
+- Tâches / rappels ("rappelle-moi ...", "ajoute tâche ...", "فكرني ...", "دير مهمة ...", "fakerni ...", "remind me ...") -> type: "create_task", params: { title: "texte de la tâche" }
+- Habitacle :
+  * Verrouiller portes / fermer voiture / ghlaq lbiban / غلق البيبان / اغلق الابواب / lock doors -> type: "doors_lock"
+  * Déverrouiller portes / 7el lbiban / افتح البيبان / افتح الابواب / unlock doors -> type: "doors_unlock"
+  * Ouvrir mâle / coffre / hayon / 7el el male / افتح الصندوق / الكوفر / open trunk -> type: "trunk_release"
+  * Fermer vitres / ghlaq zoudjadj / اغلق الزجاج / غلق النوافذ / close windows -> type: "windows_set", params: { fl: 0, fr: 0, rl: 0, rr: 0 }
+  * Ouvrir vitres / 7el zoudjadj / افتح الزجاج / open windows -> type: "windows_set", params: { fl: 100, fr: 100, rl: 100, rr: 100 }
+  * Aération vitres -> type: "windows_set", params: { fl: 15, fr: 15, rl: 15, rr: 15 }
+  * Ouvrir toit ouvrant / 7el toit / افتح السقف / open sunroof -> type: "sunroof_set", params: { position: 100, shade: 100 }
+  * Fermer toit ouvrant / ghlaq toit / اغلق السقف / close sunroof -> type: "sunroof_set", params: { position: 0 }
+  * Climatisation / المكيف / كليم / ac X degrees -> type: "climate_set", params: { tempDriver: X, tempPass: X, ac: true }
+- Onglets AutoPro : diagnostic ("diagnostic", "سكانير"), flash ("flash", "reprog"), caméras ("caméra", "كاميرا", "360"), coffre-fort ("coffre", "sources", "apk"), aa_cp_deployer ("carplay", "android auto", "termux") -> type: "switch_tab", params: { tab: "..." }
 
 Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentaire.`;
 
+    const allowedTypes = new Set([
+      'doors_lock',
+      'doors_unlock',
+      'trunk_release',
+      'windows_set',
+      'sunroof_set',
+      'climate_set',
+      'make_call',
+      'open_social',
+      'create_task',
+      'switch_tab',
+    ]);
+    const allowedTabs = new Set([
+      'comfort',
+      'diagnostic',
+      'flash',
+      'chinese_flasher',
+      'smartech',
+      'apps',
+      'cameras',
+      'history',
+      'keyless',
+      'vault',
+      'aa_cp_deployer',
+    ]);
+
     if (hasAi) {
       try {
-        const aiRes = await generateUnifiedAI(prompt, { jsonMode: true, timeoutMs: 3000 });
+        const aiRes = await generateUnifiedAI(prompt, { jsonMode: true, timeoutMs: 3500 });
         if (aiRes.text) {
           const parsed = JSON.parse(aiRes.text);
-          const allowedTypes = new Set(['doors_lock', 'doors_unlock', 'trunk_release', 'windows_set', 'sunroof_set', 'climate_set', 'switch_tab']);
-          const allowedTabs = new Set(['comfort', 'diagnostic', 'flash', 'chinese_flasher', 'smartech', 'apps', 'cameras', 'history', 'keyless']);
           const safeActions = Array.isArray(parsed.actions)
             ? parsed.actions.filter((a: any) => a && allowedTypes.has(String(a.type)))
             : [];
-          const safeTab = allowedTabs.has(String(parsed.suggestedTab)) ? parsed.suggestedTab : 'comfort';
+          const safeTab = allowedTabs.has(String(parsed.suggestedTab)) ? parsed.suggestedTab : undefined;
           return res.json({
             success: true,
             matrixName,
+            voiceLang: safeVoiceLang,
             transcript,
             speechReply: String(parsed.speechReply || `Commande traitée par ${matrixName}.`),
             actions: safeActions,
@@ -1660,7 +1702,9 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
             aiVerification: {
               verified: true,
               provider: aiRes.provider,
-              guardrailsApplied: ['Liste blanche stricte des actions CAN/BCM et onglets'],
+              guardrailsApplied: [
+                'Liste blanche stricte des actions CAN/BCM, Appels, Tâches et Réseaux Sociaux',
+              ],
               blockedHallucinations: [],
               confidenceLevel: 'STRICT_VERIFIED',
               checkedAt: new Date().toISOString(),
@@ -1672,50 +1716,173 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
       }
     }
 
-    // High quality offline fallback NLP matching
-    const lower = transcript.toLowerCase();
+    // High quality offline multilingual fallback NLP (FR / AR / Darija / EN)
+    const cleanText = transcript.trim();
+    const lower = cleanText.toLowerCase();
     const actions: any[] = [];
-    let speechReply = `Bien reçu ! Commande traitée par la matrice ${matrixName}.`;
-    let suggestedTab = 'comfort';
+    let speechReply =
+      safeVoiceLang === 'en-US'
+        ? `Command processed by ${matrixName}.`
+        : safeVoiceLang === 'ar-SA'
+        ? `تم تنفيذ الأمر عبر ${matrixName}.`
+        : safeVoiceLang === 'ar-DZ'
+        ? `C'est bon, ${matrixName} نفّذ الأمر تاعك.`
+        : `Bien reçu ! Commande traitée par la matrice ${matrixName}.`;
+    let suggestedTab: string | undefined = undefined;
 
-    if (lower.includes('verrouill') || lower.includes('ferme les porte') || lower.includes('ghlaq') || lower.includes('lock')) {
+    // 1. Calls (FR / AR / Darija / EN)
+    const callMatch = cleanText.match(
+      /(?:appelle|appeler|téléphone à|telephone a|sonne à|3ayet l|3ayat l|عيط لـ?|اتصل بـ?|كلم|call|dial)\s+(.+)/i
+    );
+    if (callMatch && callMatch[1]) {
+      const target = callMatch[1].trim();
+      actions.push({ type: 'make_call', params: { target } });
+      speechReply =
+        safeVoiceLang === 'en-US'
+          ? `Preparing call to ${target}.`
+          : safeVoiceLang === 'ar-SA' || safeVoiceLang === 'ar-DZ'
+          ? `جاري تحضير الاتصال بـ ${target}.`
+          : `Préparation de l'appel vers ${target}.`;
+    }
+
+    // 2. Social networks & car apps (FR / AR / Darija / EN)
+    const socialMap: { keywords: string[]; app: string; label: string }[] = [
+      { keywords: ['whatsapp', 'watsap', 'واتساب', 'واتس'], app: 'whatsapp', label: 'WhatsApp' },
+      { keywords: ['facebook', 'fb', 'فيسبوك', 'فايسبوك'], app: 'facebook', label: 'Facebook' },
+      { keywords: ['instagram', 'insta', 'انستغرام', 'انستا'], app: 'instagram', label: 'Instagram' },
+      { keywords: ['tiktok', 'tik tok', 'تيكتوك', 'تيك توك'], app: 'tiktok', label: 'TikTok' },
+      { keywords: ['youtube', 'يوتيوب'], app: 'youtube', label: 'YouTube' },
+      { keywords: ['telegram', 'تليغرام', 'تيليغرام'], app: 'telegram', label: 'Telegram' },
+      { keywords: ['messenger', 'ماسنجر'], app: 'messenger', label: 'Messenger' },
+      { keywords: ['waze', 'ويز'], app: 'waze', label: 'Waze' },
+      { keywords: ['maps', 'gps', 'خرائط', 'مابس'], app: 'maps', label: 'Google Maps' },
+    ];
+    for (const s of socialMap) {
+      if (s.keywords.some((kw) => lower.includes(kw))) {
+        actions.push({ type: 'open_social', params: { app: s.app, label: s.label } });
+        speechReply =
+          safeVoiceLang === 'en-US'
+            ? `Opening ${s.label}.`
+            : safeVoiceLang === 'ar-SA' || safeVoiceLang === 'ar-DZ'
+            ? `جاري فتح ${s.label}.`
+            : `Ouverture de ${s.label} prête.`;
+        break;
+      }
+    }
+
+    // 3. Quick Tasks & Reminders (FR / AR / Darija / EN)
+    const taskMatch = cleanText.match(
+      /(?:rappelle[- ]moi de|rappel|ajoute(?:r)?(?: une)? tâche|tâche|tache|note|fakerni|فكرني|دير مهمة|مهمة|تذكير|remind me to|add task)\s+(.+)/i
+    );
+    if (taskMatch && taskMatch[1]) {
+      const title = taskMatch[1].trim();
+      actions.push({ type: 'create_task', params: { title } });
+      speechReply =
+        safeVoiceLang === 'en-US'
+          ? `Task added: ${title}.`
+          : safeVoiceLang === 'ar-SA' || safeVoiceLang === 'ar-DZ'
+          ? `تم تسجيل المهمة: ${title}.`
+          : `Tâche enregistrée : ${title}.`;
+    }
+
+    // 4. Cabin / Habitacle (FR / AR / Darija / EN)
+    if (
+      lower.includes('verrouill') ||
+      lower.includes('ferme les porte') ||
+      lower.includes('ghlaq') ||
+      lower.includes('غلق البيبان') ||
+      lower.includes('اغلق الابواب') ||
+      lower.includes('اقفل') ||
+      lower.includes('lock')
+    ) {
       actions.push({ type: 'doors_lock', params: {} });
-      speechReply = `À vos ordres ! Verrouillage centralisé activé par ${matrixName}.`;
-    } else if (lower.includes('déverrouill') || lower.includes('ouvre les porte') || lower.includes('unlock') || lower.includes('7el lbiban')) {
+      suggestedTab = 'comfort';
+      speechReply = `Verrouillage centralisé activé par ${matrixName}.`;
+    } else if (
+      lower.includes('déverrouill') ||
+      lower.includes('ouvre les porte') ||
+      lower.includes('7el lbiban') ||
+      lower.includes('افتح البيبان') ||
+      lower.includes('افتح الابواب') ||
+      lower.includes('unlock')
+    ) {
       actions.push({ type: 'doors_unlock', params: {} });
-      speechReply = `Compris ! Les portes sont maintenant déverrouillées.`;
+      suggestedTab = 'comfort';
+      speechReply = `Les portes sont maintenant déverrouillées.`;
     }
 
-    if (lower.includes('mâle') || lower.includes('male') || lower.includes('coffre') || lower.includes('hayon') || lower.includes('trunk')) {
+    if (
+      lower.includes('mâle') ||
+      lower.includes('male') ||
+      lower.includes('coffre') ||
+      lower.includes('hayon') ||
+      lower.includes('trunk') ||
+      lower.includes('الصندوق') ||
+      lower.includes('الكوفر')
+    ) {
       actions.push({ type: 'trunk_release', params: {} });
-      speechReply = `Impulsion envoyée à la gâche du coffre. La mâle est ouverte.`;
+      suggestedTab = 'comfort';
+      speechReply = `Impulsion envoyée : la mâle (coffre) est ouverte.`;
     }
 
-    if (lower.includes('vitre') || lower.includes('fenêtre') || lower.includes('window') || lower.includes('zoudjadj')) {
-      if (lower.includes('ferme') || lower.includes('monte') || lower.includes('ghlaq') || lower.includes('close')) {
+    if (
+      lower.includes('vitre') ||
+      lower.includes('fenêtre') ||
+      lower.includes('window') ||
+      lower.includes('zoudjadj') ||
+      lower.includes('الزجاج') ||
+      lower.includes('النوافذ')
+    ) {
+      suggestedTab = 'comfort';
+      if (
+        lower.includes('ferme') ||
+        lower.includes('monte') ||
+        lower.includes('ghlaq') ||
+        lower.includes('غلق') ||
+        lower.includes('اغلق') ||
+        lower.includes('close')
+      ) {
         actions.push({ type: 'windows_set', params: { fl: 0, fr: 0, rl: 0, rr: 0 } });
-        speechReply = `Fermeture complète des 4 vitres électriques en cours.`;
+        speechReply = `Fermeture complète des 4 vitres en cours.`;
       } else if (lower.includes('aération') || lower.includes('aere') || lower.includes('tilt') || lower.includes('15')) {
         actions.push({ type: 'windows_set', params: { fl: 15, fr: 15, rl: 15, rr: 15 } });
         actions.push({ type: 'sunroof_set', params: { position: 15 } });
-        speechReply = `Mode aération activé : vitres entrebâillées à 15% et toit incliné.`;
+        speechReply = `Mode aération activé : vitres à 15% et toit incliné.`;
       } else {
         actions.push({ type: 'windows_set', params: { fl: 100, fr: 100, rl: 100, rr: 100 } });
         speechReply = `Descente des 4 vitres électriques.`;
       }
     }
 
-    if (lower.includes('toit') || lower.includes('sunroof') || lower.includes('panoramique') || lower.includes('saqf')) {
-      if (lower.includes('ferme') || lower.includes('close')) {
+    if (
+      lower.includes('toit') ||
+      lower.includes('sunroof') ||
+      lower.includes('panoramique') ||
+      lower.includes('saqf') ||
+      lower.includes('السقف')
+    ) {
+      suggestedTab = 'comfort';
+      if (lower.includes('ferme') || lower.includes('close') || lower.includes('ghlaq') || lower.includes('اغلق') || lower.includes('غلق')) {
         actions.push({ type: 'sunroof_set', params: { position: 0 } });
         speechReply = `Fermeture du toit ouvrant en cours.`;
       } else {
         actions.push({ type: 'sunroof_set', params: { position: 100, shade: 100 } });
-        speechReply = `Ouverture du toit ouvrant panoramique. Plein ciel activé !`;
+        speechReply = `Ouverture du toit ouvrant panoramique activée.`;
       }
     }
 
-    if (lower.includes('clim') || lower.includes('climatisation') || lower.includes('température') || lower.includes('chauffage') || lower.includes('ac') || lower.includes('froid') || lower.includes('chaud')) {
+    if (
+      lower.includes('clim') ||
+      lower.includes('climatisation') ||
+      lower.includes('température') ||
+      lower.includes('chauffage') ||
+      lower.includes('المكيف') ||
+      lower.includes('كليم') ||
+      /\bac\b/.test(lower) ||
+      lower.includes('froid') ||
+      lower.includes('chaud')
+    ) {
+      suggestedTab = 'comfort';
       let targetTemp = 20.0;
       const numMatch = lower.match(/\b(1[6-9]|2[0-8])\b/);
       if (numMatch) targetTemp = parseFloat(numMatch[1]);
@@ -1727,31 +1894,40 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
       speechReply = `Climatisation réglée sur ${targetTemp}°C par ${matrixName}.`;
     }
 
-    if (lower.includes('caméra') || lower.includes('camera') || lower.includes('recul') || lower.includes('360') || lower.includes('adas') || lower.includes('dashcam')) {
+    if (lower.includes('caméra') || lower.includes('camera') || lower.includes('recul') || lower.includes('360') || lower.includes('adas') || lower.includes('كاميرا')) {
       suggestedTab = 'cameras';
       actions.push({ type: 'switch_tab', params: { tab: 'cameras' } });
-      speechReply = `Affichage des flux caméras ADAS et vue 360° du véhicule sur la tablette.`;
-    } else if (lower.includes('historique') || lower.includes('history') || lower.includes('base de données') || lower.includes('santé') || lower.includes('suivi')) {
+      speechReply = `Affichage des caméras ADAS et vue 360° du véhicule.`;
+    } else if (lower.includes('coffre-fort') || lower.includes('sources') || lower.includes('vault')) {
+      suggestedTab = 'vault';
+      actions.push({ type: 'switch_tab', params: { tab: 'vault' } });
+      speechReply = `Ouverture du Coffre-Fort et Sources Officielles.`;
+    } else if (lower.includes('carplay') || lower.includes('android auto') || lower.includes('termux')) {
+      suggestedTab = 'aa_cp_deployer';
+      actions.push({ type: 'switch_tab', params: { tab: 'aa_cp_deployer' } });
+      speechReply = `Ouverture du Déploiement Android Auto & CarPlay Chinois.`;
+    } else if (lower.includes('historique') || lower.includes('history') || lower.includes('santé') || lower.includes('suivi')) {
       suggestedTab = 'history';
       actions.push({ type: 'switch_tab', params: { tab: 'history' } });
-      speechReply = `Accès à l'historique diagnostic et à la base de données SaaS de suivi santé.`;
-    } else if (lower.includes('antivol') || lower.includes('clé') || lower.includes('cle') || lower.includes('keyless') || lower.includes('proximit') || lower.includes('3m') || lower.includes('3 mètres') || lower.includes('vol') || lower.includes('coupe circuit') || lower.includes('perte')) {
+      speechReply = `Accès à l'historique diagnostic.`;
+    } else if (lower.includes('antivol') || lower.includes('clé') || lower.includes('cle') || lower.includes('keyless') || lower.includes('3m')) {
       suggestedTab = 'keyless';
       actions.push({ type: 'switch_tab', params: { tab: 'keyless' } });
-      speechReply = `Accès au module Clé Numérique 3 Mètres & Protocoles Antivol.`;
-    } else if (lower.includes('diag') || lower.includes('défaut') || lower.includes('dtc')) {
+      speechReply = `Accès au module Clé Numérique 3m & Antivol.`;
+    } else if (lower.includes('diag') || lower.includes('défaut') || lower.includes('dtc') || lower.includes('سكانير')) {
       suggestedTab = 'diagnostic';
       actions.push({ type: 'switch_tab', params: { tab: 'diagnostic' } });
       speechReply = `Ouverture du scanner diagnostic multimarque.`;
-    } else if (lower.includes('flash') || lower.includes('reprog') || lower.includes('stage') || lower.includes('puissance')) {
+    } else if (lower.includes('flash') || lower.includes('reprog') || lower.includes('stage')) {
       suggestedTab = 'flash';
       actions.push({ type: 'switch_tab', params: { tab: 'flash' } });
-      speechReply = `Accès au module de reprogrammation cartographie ECU.`;
+      speechReply = `Accès au module de reprogrammation ECU.`;
     }
 
     return res.json({
       success: true,
       matrixName,
+      voiceLang: safeVoiceLang,
       transcript,
       speechReply,
       actions,
@@ -2842,11 +3018,55 @@ const OFFICIAL_GITHUB_REPOS: OfficialGithubRepoEntry[] = [
     repo: 'DicioTeam/dicio-android',
     owner: 'DicioTeam',
     name: 'dicio-android',
-    displayName: 'Dicio (Commande Vocale Hors-Ligne FR)',
+    displayName: 'Dicio (Assistant Vocal Appels, Tâches & Apps)',
     category: 'Utilitaires & GMS',
     license: 'GPL-3.0 (Gratuit · Open-Source)',
-    descriptionFr: 'Assistant vocal 100 % hors-ligne (moteur Vosk compatible français) pour lancer des applis, appeler et piloter la musique sans Google.',
+    descriptionFr: 'Assistant vocal hors-ligne (FR/EN + modèles Vosk) pour passer des appels, créer des tâches/minuteurs et ouvrir WhatsApp/Facebook/applis.',
     officialHtmlUrl: 'https://github.com/DicioTeam/dicio-android/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'ElishaAz/Sayboard',
+    owner: 'ElishaAz',
+    name: 'Sayboard',
+    displayName: 'Sayboard (Dictée Vocale Arabe · Français · Anglais)',
+    category: 'Utilitaires & GMS',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Clavier vocal 100 % hors-ligne (Vosk Arabe, Français, Anglais) pour dicter dans WhatsApp, Facebook, Téléphone et autoradio sans Google.',
+    officialHtmlUrl: 'https://github.com/ElishaAz/Sayboard/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'kafkasl/phone-whisper',
+    owner: 'kafkasl',
+    name: 'phone-whisper',
+    displayName: 'Phone Whisper (Voix Arabe · FR · EN · Darija)',
+    category: 'Utilitaires & GMS',
+    license: 'MIT (Gratuit · Open-Source)',
+    descriptionFr: 'Bulle vocale flottante multilingue (Whisper local/API gérant Arabe, Français, Anglais & Darija) utilisable dans tous les réseaux sociaux et applis auto.',
+    officialHtmlUrl: 'https://github.com/kafkasl/phone-whisper/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'renyuneyun/Easer',
+    owner: 'renyuneyun',
+    name: 'Easer',
+    displayName: 'Easer (Automatisation Tâches, Appels & Apps)',
+    category: 'Utilitaires & GMS',
+    license: 'GPL-3.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Automatiseur Android open-source sans pub pour déclencher tâches, appels, profils voiture et ouverture automatique de réseaux sociaux/GPS.',
+    officialHtmlUrl: 'https://github.com/renyuneyun/Easer/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'home-assistant/android',
+    owner: 'home-assistant',
+    name: 'android',
+    displayName: 'Home Assistant Auto (Voix, Tâches & Habitacle/Domotique)',
+    category: 'Android Auto',
+    license: 'Apache-2.0 (Gratuit · Open-Source)',
+    descriptionFr: 'Inclut automotive-full-release.apk : assistant vocal, routines automatisées et commandes véhicule/domotique compatibles Android Auto & Automotive.',
+    officialHtmlUrl: 'https://github.com/home-assistant/android/releases',
     extensions: ['.apk'],
   },
   {
@@ -3094,6 +3314,15 @@ const OFFICIAL_EXTERNAL_SOURCES: OfficialExternalSourceEntry[] = [
     descriptionFr: 'Identification exacte des cartes mères UIS7862 / TS10 / MTK et compatibilité Canbus.',
     officialUrl: 'https://xdaforums.com/f/android-head-units.4267/',
     recommendedApps: ['FYT UIS7862', 'Topway TS10/TS18', 'MCU/Canbus Guides'],
+  },
+  {
+    id: 'futo-voice-input',
+    name: 'FUTO Voice Input (Whisper Arabe · FR · EN · Darija)',
+    platform: 'F-Droid',
+    category: 'Voix & Tâches Multi-Langues',
+    descriptionFr: 'Reconnaissance vocale hors-ligne basée sur Whisper pour Arabe, Français, Anglais et dialectes (Darija) sans compte Google.',
+    officialUrl: 'https://voiceinput.futo.org/',
+    recommendedApps: ['FUTO Voice Input', 'Whisper AR/FR/EN'],
   },
 ];
 
