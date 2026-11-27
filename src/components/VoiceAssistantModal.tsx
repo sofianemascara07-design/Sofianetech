@@ -107,8 +107,33 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   });
   const [recognitionError, setRecognitionError] = useState<string | null>(null);
+  const [handsFreeMode, setHandsFreeMode] = useState<boolean>(false);
 
   const recognitionRef = useRef<any>(null);
+  const handsFreeRef = useRef<boolean>(false);
+  const isOpenRef = useRef<boolean>(isOpen);
+  const matrixNameRef = useRef<string>(matrixName);
+  const sendCommandRef = useRef<(txt: string) => void>(() => {});
+
+  useEffect(() => {
+    handsFreeRef.current = handsFreeMode;
+  }, [handsFreeMode]);
+
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+    if (!isOpen && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // Ignore stop errors on close
+      }
+      setHandsFreeMode(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    matrixNameRef.current = matrixName;
+  }, [matrixName]);
 
   const presetNames = ['Jarvis', 'AutoPro', 'Smartech', 'Matrix DZ', 'Yacine', 'Karim', 'Atlas', 'Titan'];
 
@@ -120,12 +145,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   }, [tasks]);
 
-  // Initialize / update Web Speech API language
+  // Initialize / update Web Speech API language & hands-free wake word ("Dis Jarvis")
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
-      recognition.continuous = false;
+      recognition.continuous = handsFreeMode;
       recognition.interimResults = true;
       recognition.lang = voiceLang;
 
@@ -136,24 +161,65 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
       recognition.onresult = (event: any) => {
         const current = event.resultIndex;
-        const resultTranscript = event.results[current][0].transcript;
+        const resultObj = event.results[current];
+        const resultTranscript = String(resultObj?.[0]?.transcript || '');
         setTranscript(resultTranscript);
+
+        if (handsFreeRef.current && resultObj?.isFinal) {
+          const clean = resultTranscript.trim();
+          const wakeName = matrixNameRef.current.trim().toLowerCase() || 'jarvis';
+          const escapedWake = wakeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const wakeRegex = new RegExp(
+            `^(?:(?:dis|hey|ok|salut|salam|ya|يا)\\s+)?(?:${escapedWake}|jarvis|جارفيس)[,\\s:!-]*`,
+            'i'
+          );
+
+          if (wakeRegex.test(clean)) {
+            const stripped = clean.replace(wakeRegex, '').trim();
+            sendCommandRef.current(stripped || matrixNameRef.current);
+            setTranscript('');
+          } else if (clean.length > 2) {
+            // In active modal hands-free mode, also execute direct clear commands
+            sendCommandRef.current(clean);
+            setTranscript('');
+          }
+        }
       };
 
       recognition.onerror = (event: any) => {
         setIsListening(false);
-        if (event.error !== 'no-speech') {
+        if (event.error !== 'no-speech' && event.error !== 'aborted') {
           setRecognitionError(`Erreur micro : ${event.error}`);
         }
       };
 
       recognition.onend = () => {
         setIsListening(false);
+        if (handsFreeRef.current && isOpenRef.current) {
+          setTimeout(() => {
+            if (handsFreeRef.current && isOpenRef.current) {
+              try {
+                recognition.start();
+              } catch {
+                // Ignore if already started
+              }
+            }
+          }, 300);
+        }
       };
 
       recognitionRef.current = recognition;
+
+      return () => {
+        try {
+          recognition.stop();
+        } catch {
+          // Ignore cleanup errors
+        }
+      };
     }
-  }, [voiceLang]);
+    return undefined;
+  }, [voiceLang, handsFreeMode]);
 
   // Text-To-Speech Synthesis helper
   const speakText = (text: string) => {
@@ -330,6 +396,31 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
+  sendCommandRef.current = (txt: string) => {
+    void handleSendVoiceCommand(txt);
+  };
+
+  const toggleHandsFreeMode = () => {
+    const next = !handsFreeMode;
+    setHandsFreeMode(next);
+    handsFreeRef.current = next;
+    if (next) {
+      setTimeout(() => {
+        try {
+          recognitionRef.current?.start();
+        } catch {
+          // Ignore start if already active
+        }
+      }, 150);
+    } else {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore stop error
+      }
+    }
+  };
+
   const handleSaveMatrixName = (name: string) => {
     const clean = name.trim() || 'Jarvis';
     setMatrixName(clean);
@@ -441,19 +532,19 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           </div>
         )}
 
-        {/* Language Switcher Bar */}
+        {/* Language & Hands-Free Jarvis Mode Bar */}
         <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 relative z-10">
-          <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
-            <Globe className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Langue vocale :</span>
-          </span>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1 mr-1">
+              <Globe className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Langue :</span>
+            </span>
             {VOICE_LANG_OPTIONS.map((opt) => (
               <button
                 key={opt.code}
                 type="button"
                 onClick={() => handleChangeVoiceLang(opt.code)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors ${
+                className={`px-2 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors ${
                   voiceLang === opt.code
                     ? 'bg-cyan-500 text-slate-950'
                     : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800'
@@ -463,6 +554,21 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               </button>
             ))}
           </div>
+
+          <button
+            type="button"
+            onClick={toggleHandsFreeMode}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer transition-colors flex items-center gap-1.5 ${
+              handsFreeMode
+                ? 'bg-emerald-500 border-emerald-400 text-slate-950'
+                : 'bg-slate-900 border-slate-700 text-emerald-300 hover:bg-slate-800'
+            }`}
+          >
+            <Radio className={`w-3.5 h-3.5 ${handsFreeMode ? 'animate-pulse' : ''}`} />
+            <span>
+              {handsFreeMode ? `Mains-Libres « ${matrixName} » ACTIF` : `Mode « Dis ${matrixName} »`}
+            </span>
+          </button>
         </div>
 
         {/* Main Microphone Listening Hub */}

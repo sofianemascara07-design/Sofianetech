@@ -1720,29 +1720,23 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
     const cleanText = transcript.trim();
     const lower = cleanText.toLowerCase();
     const actions: any[] = [];
-    let speechReply =
-      safeVoiceLang === 'en-US'
-        ? `Command processed by ${matrixName}.`
-        : safeVoiceLang === 'ar-SA'
-        ? `تم تنفيذ الأمر عبر ${matrixName}.`
-        : safeVoiceLang === 'ar-DZ'
-        ? `C'est bon, ${matrixName} نفّذ الأمر تاعك.`
-        : `Bien reçu ! Commande traitée par la matrice ${matrixName}.`;
+    const replies: string[] = [];
     let suggestedTab: string | undefined = undefined;
 
     // 1. Calls (FR / AR / Darija / EN)
     const callMatch = cleanText.match(
-      /(?:appelle|appeler|téléphone à|telephone a|sonne à|3ayet l|3ayat l|عيط لـ?|اتصل بـ?|كلم|call|dial)\s+(.+)/i
+      /(?:appelle|appeler|téléphone à|telephone a|sonne à|3ayet l|3ayat l|عيط لـ?|اتصل بـ?|كلم|call|dial)\s+([^,.;]+)/i
     );
     if (callMatch && callMatch[1]) {
       const target = callMatch[1].trim();
       actions.push({ type: 'make_call', params: { target } });
-      speechReply =
+      replies.push(
         safeVoiceLang === 'en-US'
           ? `Preparing call to ${target}.`
           : safeVoiceLang === 'ar-SA' || safeVoiceLang === 'ar-DZ'
           ? `جاري تحضير الاتصال بـ ${target}.`
-          : `Préparation de l'appel vers ${target}.`;
+          : `Préparation de l'appel vers ${target}.`
+      );
     }
 
     // 2. Social networks & car apps (FR / AR / Darija / EN)
@@ -1760,29 +1754,30 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
     for (const s of socialMap) {
       if (s.keywords.some((kw) => lower.includes(kw))) {
         actions.push({ type: 'open_social', params: { app: s.app, label: s.label } });
-        speechReply =
+        replies.push(
           safeVoiceLang === 'en-US'
             ? `Opening ${s.label}.`
             : safeVoiceLang === 'ar-SA' || safeVoiceLang === 'ar-DZ'
             ? `جاري فتح ${s.label}.`
-            : `Ouverture de ${s.label} prête.`;
-        break;
+            : `Ouverture de ${s.label} prête.`
+        );
       }
     }
 
     // 3. Quick Tasks & Reminders (FR / AR / Darija / EN)
     const taskMatch = cleanText.match(
-      /(?:rappelle[- ]moi de|rappel|ajoute(?:r)?(?: une)? tâche|tâche|tache|note|fakerni|فكرني|دير مهمة|مهمة|تذكير|remind me to|add task)\s+(.+)/i
+      /(?:rappelle[- ]moi de|rappel|ajoute(?:r)?(?: une)? tâche|tâche|tache|note|fakerni|فكرني|دير مهمة|مهمة|تذكير|remind me to|add task)\s+([^,.;]+)/i
     );
     if (taskMatch && taskMatch[1]) {
       const title = taskMatch[1].trim();
       actions.push({ type: 'create_task', params: { title } });
-      speechReply =
+      replies.push(
         safeVoiceLang === 'en-US'
           ? `Task added: ${title}.`
           : safeVoiceLang === 'ar-SA' || safeVoiceLang === 'ar-DZ'
           ? `تم تسجيل المهمة: ${title}.`
-          : `Tâche enregistrée : ${title}.`;
+          : `Tâche enregistrée : ${title}.`
+      );
     }
 
     // 4. Cabin / Habitacle (FR / AR / Darija / EN)
@@ -1797,7 +1792,7 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
     ) {
       actions.push({ type: 'doors_lock', params: {} });
       suggestedTab = 'comfort';
-      speechReply = `Verrouillage centralisé activé par ${matrixName}.`;
+      replies.push(`Verrouillage centralisé activé.`);
     } else if (
       lower.includes('déverrouill') ||
       lower.includes('ouvre les porte') ||
@@ -1808,7 +1803,7 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
     ) {
       actions.push({ type: 'doors_unlock', params: {} });
       suggestedTab = 'comfort';
-      speechReply = `Les portes sont maintenant déverrouillées.`;
+      replies.push(`Portes déverrouillées.`);
     }
 
     if (
@@ -1822,7 +1817,7 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
     ) {
       actions.push({ type: 'trunk_release', params: {} });
       suggestedTab = 'comfort';
-      speechReply = `Impulsion envoyée : la mâle (coffre) est ouverte.`;
+      replies.push(`Mâle (coffre) ouverte.`);
     }
 
     if (
@@ -1843,14 +1838,14 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
         lower.includes('close')
       ) {
         actions.push({ type: 'windows_set', params: { fl: 0, fr: 0, rl: 0, rr: 0 } });
-        speechReply = `Fermeture complète des 4 vitres en cours.`;
+        replies.push(`Fermeture des 4 vitres.`);
       } else if (lower.includes('aération') || lower.includes('aere') || lower.includes('tilt') || lower.includes('15')) {
         actions.push({ type: 'windows_set', params: { fl: 15, fr: 15, rl: 15, rr: 15 } });
         actions.push({ type: 'sunroof_set', params: { position: 15 } });
-        speechReply = `Mode aération activé : vitres à 15% et toit incliné.`;
+        replies.push(`Aération vitres 15% et toit incliné.`);
       } else {
         actions.push({ type: 'windows_set', params: { fl: 100, fr: 100, rl: 100, rr: 100 } });
-        speechReply = `Descente des 4 vitres électriques.`;
+        replies.push(`Ouverture des 4 vitres.`);
       }
     }
 
@@ -1864,10 +1859,10 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
       suggestedTab = 'comfort';
       if (lower.includes('ferme') || lower.includes('close') || lower.includes('ghlaq') || lower.includes('اغلق') || lower.includes('غلق')) {
         actions.push({ type: 'sunroof_set', params: { position: 0 } });
-        speechReply = `Fermeture du toit ouvrant en cours.`;
+        replies.push(`Fermeture du toit ouvrant.`);
       } else {
         actions.push({ type: 'sunroof_set', params: { position: 100, shade: 100 } });
-        speechReply = `Ouverture du toit ouvrant panoramique activée.`;
+        replies.push(`Ouverture du toit ouvrant.`);
       }
     }
 
@@ -1891,8 +1886,19 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
         type: 'climate_set',
         params: { tempDriver: targetTemp, tempPass: targetTemp, ac: true, auto: true, acMax },
       });
-      speechReply = `Climatisation réglée sur ${targetTemp}°C par ${matrixName}.`;
+      replies.push(`Clim réglée à ${targetTemp}°C.`);
     }
+
+    let speechReply =
+      replies.length > 0
+        ? replies.join(' ')
+        : safeVoiceLang === 'en-US'
+        ? `Yes, ${matrixName} is listening.`
+        : safeVoiceLang === 'ar-SA'
+        ? `نعم، ${matrixName} في خدمتك.`
+        : safeVoiceLang === 'ar-DZ'
+        ? `Oui, ${matrixName} راهو يسمع فيك.`
+        : `Oui, ${matrixName} est à votre écoute.`;
 
     if (lower.includes('caméra') || lower.includes('camera') || lower.includes('recul') || lower.includes('360') || lower.includes('adas') || lower.includes('كاميرا')) {
       suggestedTab = 'cameras';
@@ -3015,13 +3021,35 @@ const OFFICIAL_GITHUB_REPOS: OfficialGithubRepoEntry[] = [
     extensions: ['.apk'],
   },
   {
+    repo: 'AbuZar-Ansarii/Jarvis',
+    owner: 'AbuZar-Ansarii',
+    name: 'Jarvis',
+    displayName: 'JARVIS On-Device Agent (Voix Continue & Tâches Android)',
+    category: 'Utilitaires & GMS',
+    license: 'Open-Source GitHub (Gratuit)',
+    descriptionFr: 'Agent autonome type Jarvis avec écoute continue, mot-clé vocal ("Hey Jarvis") et contrôle complet des applis Android & tâches (LLM local/cloud).',
+    officialHtmlUrl: 'https://github.com/AbuZar-Ansarii/Jarvis/releases',
+    extensions: ['.apk'],
+  },
+  {
+    repo: 'AnaaySampat/jarvis',
+    owner: 'AnaaySampat',
+    name: 'jarvis',
+    displayName: 'JARVIS ("Hey Jarvis" · Appels & Apps sans Serveur)',
+    category: 'Utilitaires & GMS',
+    license: 'Open-Source GitHub (Gratuit)',
+    descriptionFr: 'Dites "Hey Jarvis" en mains-libres : passe des appels, pilote WhatsApp/réseaux sociaux et tâches sur téléphone, autoradio Android ou TV.',
+    officialHtmlUrl: 'https://github.com/AnaaySampat/jarvis/releases',
+    extensions: ['.apk'],
+  },
+  {
     repo: 'DicioTeam/dicio-android',
     owner: 'DicioTeam',
     name: 'dicio-android',
-    displayName: 'Dicio (Assistant Vocal Appels, Tâches & Apps)',
+    displayName: 'Dicio (Mot-Clé openWakeWord · Appels & Apps)',
     category: 'Utilitaires & GMS',
     license: 'GPL-3.0 (Gratuit · Open-Source)',
-    descriptionFr: 'Assistant vocal hors-ligne (FR/EN + modèles Vosk) pour passer des appels, créer des tâches/minuteurs et ouvrir WhatsApp/Facebook/applis.',
+    descriptionFr: 'Assistant vocal hors-ligne (FR/EN + openWakeWord "Hey Dicio" ou modèle Jarvis .tflite) pour appels, tâches et ouverture d’applis.',
     officialHtmlUrl: 'https://github.com/DicioTeam/dicio-android/releases',
     extensions: ['.apk'],
   },
