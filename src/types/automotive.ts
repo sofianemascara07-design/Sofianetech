@@ -95,7 +95,7 @@ export interface SmartechDzConfig {
   tokenStatus: 'Validé' | 'En attente' | 'Non détecté';
 }
 
-export type LicenseTier = 'admin' | 'master' | 'reprog' | 'standard' | 'tablette_chinois' | 'demo';
+export type LicenseTier = 'admin' | 'master' | 'reprog' | 'standard' | 'tablette_chinois' | 'demo' | 'open_source';
 
 export type VaultPaidTier = 'master' | 'reprog' | 'standard' | 'tablette_chinois';
 

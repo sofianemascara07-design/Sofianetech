@@ -10,14 +10,12 @@ import { TabletAppInstaller } from './components/TabletAppInstaller';
 import { AppTranslator } from './components/AppTranslator';
 import { SmartechDzBridge } from './components/SmartechDzBridge';
 import { CommercialPackaging } from './components/CommercialPackaging';
-import { ChineseTabletFlasher } from './components/ChineseTabletFlasher';
 import { ChineseAutoDeployer } from './components/ChineseAutoDeployer';
 import { BodyComfortControl } from './components/BodyComfortControl';
 import { KeylessProximitySecurity } from './components/KeylessProximitySecurity';
 import { CameraIntegration } from './components/CameraIntegration';
 import { ChinaWorkshopToolsHub } from './components/ChinaWorkshopToolsHub';
 import { TransmissionTcuSuite } from './components/TransmissionTcuSuite';
-import { CoolrayAntiLspiModule } from './components/CoolrayAntiLspiModule';
 import { UniversalMasterSuite } from './components/UniversalMasterSuite';
 import { AtelierCopilot } from './components/AtelierCopilot';
 import { VaultDownloadsPanel } from './components/VaultDownloadsPanel';
@@ -41,9 +39,49 @@ import {
   saveActiveWallpaperSync,
 } from './utils/wallpaperManager';
 
+const OPEN_SOURCE_ALLOWED_MODULES: NavTab[] = [
+  'diagnostic',
+  'history',
+  'cameras',
+  'workshop_cn',
+  'transmission',
+  'universal_master',
+  'copilot',
+  'flash',
+  'comfort',
+  'keyless',
+  'aa_cp_deployer',
+  'smartech',
+  'connection',
+  'apps',
+  'vault',
+  'translator',
+];
+
+function createOpenSourceSession(): LicenseSession {
+  const savedHwid =
+    typeof window !== 'undefined'
+      ? localStorage.getItem('autopro_machine_hwid') || 'OPEN-SOURCE-LOCAL'
+      : 'OPEN-SOURCE-LOCAL';
+  return {
+    maskedKey: 'OPEN-SOURCE',
+    clientName: 'Accès Open-Source Libre',
+    hwid: savedHwid,
+    tier: 'open_source',
+    tierLabel: 'Open-Source Libre · Outils Gratuits',
+    activatedAt: new Date().toISOString(),
+    expiresAt: 'Illimité (Open-Source)',
+    demoExpiresAt: null,
+    isValid: true,
+    isAdmin: false,
+    allowedModules: OPEN_SOURCE_ALLOWED_MODULES,
+  };
+}
+
 export default function App() {
   const [blockReason, setBlockReason] = useState<string | null>(null);
-  const [licenseSession, setLicenseSession] = useState<LicenseSession | null>(null);
+  const [licenseSession, setLicenseSession] = useState<LicenseSession>(() => createOpenSourceSession());
+  const [authGateModalTab, setAuthGateModalTab] = useState<'subscriber' | 'admin' | null>(null);
 
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState<boolean>(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
@@ -100,11 +138,12 @@ export default function App() {
     });
     clearAuthToken();
     purgeLegacySensitiveStorage();
+    setDemoRemainingText(null);
+    setLicenseSession(createOpenSourceSession());
     if (reason) {
       setBlockReason(reason);
+      setAuthGateModalTab('subscriber');
     }
-    setDemoRemainingText(null);
-    setLicenseSession(null);
   }, []);
 
   const toggleAtelierMode = () => {
@@ -127,19 +166,14 @@ export default function App() {
         (allowed.includes('diagnostic') || allowed.includes('cameras'))) ||
       (activeTab === 'transmission' &&
         (allowed.includes('diagnostic') || allowed.includes('flash'))) ||
-      (activeTab === 'coolray_lspi' &&
-        (allowed.includes('diagnostic') || allowed.includes('flash') || allowed.includes('workshop_cn'))) ||
       (activeTab === 'universal_master' &&
         (allowed.includes('universal_master') || allowed.includes('diagnostic') || allowed.includes('flash'))) ||
       (activeTab === 'copilot' &&
         (allowed.includes('copilot') ||
           allowed.includes('diagnostic') ||
-          allowed.includes('flash') ||
-          allowed.includes('chinese_flasher') ||
-          allowed.includes('coolray_lspi'))) ||
+          allowed.includes('flash'))) ||
       (activeTab === 'aa_cp_deployer' &&
         (allowed.includes('aa_cp_deployer') ||
-          allowed.includes('chinese_flasher') ||
           allowed.includes('apps')));
     if (allowed.length > 0 && !isPermitted) {
       setActiveTab((allowed[0] as NavTab) || 'diagnostic');
@@ -148,7 +182,7 @@ export default function App() {
 
   // Remote backend keep-alive (prevents Render hibernation mid-session) & 15s presence + Kill-Switch heartbeat
   useEffect(() => {
-    if (!licenseSession?.isValid) {
+    if (!licenseSession?.isValid || licenseSession.tier === 'open_source') {
       remoteStabilityManager.stopKeepAlive();
       return;
     }
@@ -235,9 +269,9 @@ export default function App() {
     return () => clearInterval(interval);
   }, [licenseSession, lockSession]);
 
-  // Log client activity heartbeat with stability metrics
+  // Log client activity heartbeat with stability metrics (authenticated Pass/Admin sessions)
   useEffect(() => {
-    if (licenseSession?.isValid) {
+    if (licenseSession?.isValid && licenseSession.tier !== 'open_source') {
       const snap = remoteStabilityManager.getSnapshot();
       apiFetch('/api/clients/activity', {
         method: 'POST',
@@ -265,24 +299,11 @@ export default function App() {
   const handleLicenseActivated = (session: LicenseSession) => {
     setBlockReason(null);
     setLicenseSession(session);
+    setAuthGateModalTab(null);
     if (session.isAdmin) {
       setActiveTab('admin');
-    } else if (session.tier === 'demo') {
-      setActiveTab('diagnostic');
-    } else {
-      setActiveTab('diagnostic');
     }
   };
-
-  // If no valid license is activated, lock the application behind the License Gate
-  if (!licenseSession || !licenseSession.isValid) {
-    return (
-      <LicenseGate
-        onLicenseActivated={handleLicenseActivated}
-        blockReason={blockReason}
-      />
-    );
-  }
 
   const isAdmin = Boolean(licenseSession.isAdmin);
   const canRenderTab = (tab: NavTab) => {
@@ -297,14 +318,6 @@ export default function App() {
     if (tab === 'transmission') {
       return allowed.includes('transmission') || allowed.includes('diagnostic') || allowed.includes('flash');
     }
-    if (tab === 'coolray_lspi') {
-      return (
-        allowed.includes('coolray_lspi') ||
-        allowed.includes('diagnostic') ||
-        allowed.includes('flash') ||
-        allowed.includes('workshop_cn')
-      );
-    }
     if (tab === 'universal_master') {
       return (
         allowed.includes('universal_master') ||
@@ -316,15 +329,12 @@ export default function App() {
       return (
         allowed.includes('copilot') ||
         allowed.includes('diagnostic') ||
-        allowed.includes('flash') ||
-        allowed.includes('chinese_flasher') ||
-        allowed.includes('coolray_lspi')
+        allowed.includes('flash')
       );
     }
     if (tab === 'aa_cp_deployer') {
       return (
         allowed.includes('aa_cp_deployer') ||
-        allowed.includes('chinese_flasher') ||
         allowed.includes('apps')
       );
     }
@@ -344,7 +354,13 @@ export default function App() {
         hardwareTransport={hardwareStatus.transport}
         onOpenConnectModal={() => setIsConnectModalOpen(true)}
         licenseSession={licenseSession}
-        onOpenLicenseModal={() => setIsLicenseModalOpen(true)}
+        onOpenLicenseModal={() => {
+          if (licenseSession.tier === 'open_source') {
+            setAuthGateModalTab('subscriber');
+          } else {
+            setIsLicenseModalOpen(true);
+          }
+        }}
         matrixName={matrixName}
         onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
         atelierMode={atelierMode}
@@ -417,7 +433,7 @@ export default function App() {
         {activeTab === 'vault' && canRenderTab('vault') && (
           <VaultDownloadsPanel
             licenseSession={licenseSession}
-            onOpenLicenseModal={() => setIsLicenseModalOpen(true)}
+            onOpenLicenseModal={() => setAuthGateModalTab('subscriber')}
           />
         )}
 
@@ -426,7 +442,6 @@ export default function App() {
             connectionMode={connectionMode}
             isConnected={isConnected}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
-            onOpenCockpit={canRenderTab('chinese_flasher') ? () => setActiveTab('chinese_flasher') : undefined}
           />
         )}
 
@@ -446,16 +461,6 @@ export default function App() {
             onSelectTab={setActiveTab}
             onSelectVehicle={setSelectedVehicle}
             isAdmin={isAdmin}
-          />
-        )}
-
-        {activeTab === 'chinese_flasher' && canRenderTab('chinese_flasher') && (
-          <ChineseTabletFlasher
-            connectionMode={connectionMode}
-            isConnected={isConnected}
-            batteryVoltage={batteryVoltage}
-            onOpenConnectModal={() => setIsConnectModalOpen(true)}
-            onOpenTranslator={canRenderTab('translator') ? () => setActiveTab('translator') : undefined}
           />
         )}
 
@@ -504,16 +509,6 @@ export default function App() {
           <TransmissionTcuSuite
             selectedVehicle={selectedVehicle}
             isConnected={isConnected}
-            onOpenConnectModal={() => setIsConnectModalOpen(true)}
-          />
-        )}
-
-        {activeTab === 'coolray_lspi' && canRenderTab('coolray_lspi') && (
-          <CoolrayAntiLspiModule
-            selectedVehicle={selectedVehicle}
-            setSelectedVehicle={setSelectedVehicle}
-            isConnected={isConnected}
-            batteryVoltage={batteryVoltage}
             onOpenConnectModal={() => setIsConnectModalOpen(true)}
           />
         )}
@@ -581,6 +576,18 @@ export default function App() {
         activeWallpaper={activeWallpaper}
         onApplyWallpaper={handleApplyWallpaper}
       />
+
+      {authGateModalTab !== null && (
+        <LicenseGate
+          onLicenseActivated={handleLicenseActivated}
+          blockReason={blockReason}
+          initialTab={authGateModalTab}
+          onClose={() => {
+            setBlockReason(null);
+            setAuthGateModalTab(null);
+          }}
+        />
+      )}
       </div>
     </div>
   );

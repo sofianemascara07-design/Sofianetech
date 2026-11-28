@@ -57,6 +57,8 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
 }) => {
   const isAdmin = Boolean(licenseSession.isAdmin);
   const isDemo = licenseSession.tier === 'demo';
+  const isOpenSource = licenseSession.tier === 'open_source';
+  const requiresPaidPass = (isDemo || isOpenSource) && !isAdmin;
 
   const [items, setItems] = useState<SubscriberVaultPackage[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -372,10 +374,11 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
     setErrorMsg(null);
     setStatusMsg(null);
 
-    if (isDemo && !isAdmin) {
+    if (requiresPaidPass) {
       setErrorMsg(
-        'Téléchargement bloqué : un abonnement payant actif est obligatoire. Les comptes Démo ne peuvent pas télécharger. Contactez Sofiane au 05 57 76 78 04.'
+        'Téléchargement bloqué : l’application est Open-Source gratuite, mais le téléchargement des APK et applications tierces nécessite un Pass à prix symbolique. Contactez Sofiane au 05 57 76 78 04.'
       );
+      onOpenLicenseModal?.();
       return;
     }
 
@@ -473,7 +476,7 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
   }, [items, categoryFilter, searchQuery]);
 
   const paidUnlockWhatsAppUrl = `https://wa.me/213557767804?text=${encodeURIComponent(
-    `Salam Sofiane, je suis sur AutoPro (compte ${licenseSession.clientName || 'Démo'}). Je souhaite payer et activer un abonnement payant pour débloquer les téléchargements APK / .BIN du Coffre.`
+    `Salam Sofiane, j'utilise AutoPro Open-Source (${licenseSession.clientName || 'Atelier'}). Je souhaite obtenir un Pass Téléchargement Apps Tiers (prix symbolique) pour télécharger les APK / packs du Coffre.`
   )}`;
 
   return (
@@ -484,11 +487,15 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/40 flex items-center gap-1.5">
               <Lock className="w-3 h-3" />
-              <span>Coffre Téléchargements Abonnés Payants</span>
+              <span>Coffre Apps Tiers · Prix Symbolique</span>
             </span>
             {isAdmin ? (
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">
                 Mode Admin · Dépôt &amp; Contrôle
+              </span>
+            ) : isOpenSource ? (
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/40">
+                App Open-Source Gratuite · Téléchargements sur Pass
               </span>
             ) : isDemo ? (
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/50">
@@ -497,19 +504,19 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
             ) : (
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
                 <Unlock className="w-3 h-3" />
-                <span>Abonné Payant ({licenseSession.tier.toUpperCase()})</span>
+                <span>Pass Apps Tiers Actif ({licenseSession.tier.toUpperCase()})</span>
               </span>
             )}
           </div>
 
           <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight">
-            Coffre APK Android, Firmwares &amp; Fichiers .BIN
+            Coffre Applications Tierces (APK Android &amp; Packs)
           </h1>
           <p className="text-xs text-slate-300 max-w-3xl leading-relaxed">
-            Espace sécurisé contrôlé par licence serveur : seuls les{' '}
-            <strong className="text-emerald-300">abonnés ayant payé une licence active</strong> peuvent
-            télécharger les fichiers (ex : <code className="text-cyan-300">AA-Bridge.apk</code>, packs autoradio,
-            dumps <code className="text-cyan-300">.bin</code>). Les Pass Démo gratuits sont bloqués côté serveur.
+            La suite AutoPro est <strong className="text-emerald-300">100% Open-Source et accessible gratuitement</strong>.
+            Seul le téléchargement direct des <strong className="text-amber-300">applications tierces</strong>{' '}
+            (launchers, <code className="text-cyan-300">AA-Bridge.apk</code>, utilitaires autoradio, packs) demande un{' '}
+            <strong className="text-emerald-300">Pass Téléchargement à prix symbolique</strong>.
           </p>
         </div>
 
@@ -524,18 +531,18 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
         </button>
       </div>
 
-      {/* Paywall Banner for Demo Accounts */}
-      {isDemo && !isAdmin && (
-        <div className="p-5 rounded-2xl bg-gradient-to-r from-rose-950/75 via-slate-900 to-amber-950/60 border-2 border-rose-500/60 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-lg shadow-rose-950/30">
+      {/* Symbolic Price Paywall Banner for Open-Source / Demo Visitors */}
+      {requiresPaidPass && (
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-950/60 via-slate-900 to-cyan-950/50 border-2 border-amber-500/50 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-lg">
           <div className="space-y-1.5">
-            <div className="flex items-center gap-2 text-rose-300 font-extrabold text-sm">
-              <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0" />
-              <span>Accès Payant Requis pour Télécharger</span>
+            <div className="flex items-center gap-2 text-amber-300 font-extrabold text-sm">
+              <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0" />
+              <span>Pass Téléchargement Apps Tiers (Prix Symbolique)</span>
             </div>
             <p className="text-xs text-slate-200 leading-relaxed max-w-2xl">
-              Vous utilisez actuellement un <strong>Pass Démo gratuit</strong>. Pour télécharger les applications APK
-              (comme <strong>AA-Bridge.apk</strong>) et les fichiers <strong>.BIN</strong>, vous devez activer un
-              abonnement payant (Pack Tablette Chinois, Diagnostic, Reprog ou Master DZ).
+              Tous les modules de diagnostic et d&apos;atelier sont gratuits et ouverts. Pour télécharger directement
+              les applications tierces (<strong>APK Android &amp; packs</strong>) hébergées ici, activez un{' '}
+              <strong>Pass Téléchargement à prix symbolique</strong>.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
@@ -546,7 +553,7 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
               className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold flex items-center gap-2 shadow-lg"
             >
               <Send className="w-4 h-4" />
-              <span>Payer / Commander sur WhatsApp</span>
+              <span>Obtenir Pass Prix Symbolique (WhatsApp)</span>
             </a>
             {onOpenLicenseModal && (
               <button
@@ -555,7 +562,7 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
                 className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-300 text-xs font-bold flex items-center gap-2 cursor-pointer"
               >
                 <KeyRound className="w-4 h-4" />
-                <span>Entrer ma Clé Payée</span>
+                <span>Entrer ma Clé Pass / Admin</span>
               </button>
             )}
           </div>
@@ -784,9 +791,10 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
             const itemActive = item.isActive ?? true;
             const tierAllowed =
               isAdmin ||
-              (item.isEligible !== undefined
-                ? Boolean(item.isEligible)
-                : !isDemo && Boolean(item.allowedTiers?.includes(licenseSession.tier as VaultPaidTier)));
+              (!requiresPaidPass &&
+                (item.isEligible !== undefined
+                  ? Boolean(item.isEligible)
+                  : Boolean(item.allowedTiers?.includes(licenseSession.tier as VaultPaidTier))));
             const isDownloading = downloadingId === item.id;
             const isBusy = busyItemId === item.id;
 
@@ -796,8 +804,8 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
                 className={`p-4 rounded-2xl bg-slate-900/90 border flex flex-col justify-between gap-4 ${
                   !itemActive
                     ? 'border-slate-800 opacity-75'
-                    : isDemo || !tierAllowed
-                    ? 'border-rose-500/35'
+                    : requiresPaidPass || !tierAllowed
+                    ? 'border-amber-500/35'
                     : 'border-slate-700/80 hover:border-cyan-500/50'
                 }`}
               >
@@ -892,16 +900,15 @@ export const VaultDownloadsPanel: React.FC<VaultDownloadsPanelProps> = ({
 
                 {/* Action Footer */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
-                  {isDemo && !isAdmin ? (
-                    <a
-                      href={paidUnlockWhatsAppUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex-1 py-2.5 px-3 rounded-xl bg-rose-950/70 hover:bg-rose-900/70 border border-rose-500/50 text-rose-200 text-xs font-extrabold flex items-center justify-center gap-2"
+                  {requiresPaidPass ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenLicenseModal?.()}
+                      className="flex-1 py-2.5 px-3 rounded-xl bg-amber-950/70 hover:bg-amber-900/70 border border-amber-500/50 text-amber-200 text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer"
                     >
-                      <Lock className="w-3.5 h-3.5 text-rose-400" />
-                      <span>Payer / Activer Abonnement pour Télécharger</span>
-                    </a>
+                      <Lock className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Débloquer Téléchargement (Prix Symbolique)</span>
+                    </button>
                   ) : !tierAllowed ? (
                     <div className="flex-1 py-2.5 px-3 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-200 text-xs font-bold flex items-center justify-center gap-2">
                       <Lock className="w-3.5 h-3.5 text-amber-400" />

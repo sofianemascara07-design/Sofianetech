@@ -12,14 +12,12 @@ export type NavTab =
   | 'translator'
   | 'smartech'
   | 'packaging'
-  | 'chinese_flasher'
   | 'aa_cp_deployer'
   | 'comfort'
   | 'keyless'
   | 'cameras'
   | 'workshop_cn'
   | 'transmission'
-  | 'coolray_lspi'
   | 'universal_master'
   | 'copilot'
   | 'admin';
@@ -75,25 +73,17 @@ export const Header: React.FC<HeaderProps> = ({
 
   const canAccess = (tab: NavTab) => {
     if (isAdmin) return true;
-    if (tab === 'admin') return false;
+    if (tab === 'admin' || tab === 'packaging') return false;
     if (tab === 'vault') return true;
     const mods = licenseSession?.allowedModules;
     if (!mods || mods.length === 0) {
-      return tab !== 'packaging';
+      return true;
     }
     if (tab === 'workshop_cn') {
       return mods.includes('workshop_cn') || mods.includes('diagnostic') || mods.includes('cameras');
     }
     if (tab === 'transmission') {
       return mods.includes('transmission') || mods.includes('diagnostic') || mods.includes('flash');
-    }
-    if (tab === 'coolray_lspi') {
-      return (
-        mods.includes('coolray_lspi') ||
-        mods.includes('diagnostic') ||
-        mods.includes('flash') ||
-        mods.includes('workshop_cn')
-      );
     }
     if (tab === 'universal_master') {
       return (
@@ -106,15 +96,12 @@ export const Header: React.FC<HeaderProps> = ({
       return (
         mods.includes('copilot') ||
         mods.includes('diagnostic') ||
-        mods.includes('flash') ||
-        mods.includes('chinese_flasher') ||
-        mods.includes('coolray_lspi')
+        mods.includes('flash')
       );
     }
     if (tab === 'aa_cp_deployer') {
       return (
         mods.includes('aa_cp_deployer') ||
-        mods.includes('chinese_flasher') ||
         mods.includes('apps')
       );
     }
@@ -194,17 +181,31 @@ export const Header: React.FC<HeaderProps> = ({
                 className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 border flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm ${
                   isAdmin
                     ? 'border-amber-500/60 hover:border-amber-400 text-amber-300'
+                    : licenseSession.tier === 'open_source'
+                    ? 'border-cyan-500/45 hover:border-cyan-400 text-cyan-300'
                     : 'border-emerald-500/40 hover:border-emerald-400 text-emerald-400'
                 }`}
-                title="Cliquer pour afficher les détails de la session active"
+                title={
+                  licenseSession.tier === 'open_source'
+                    ? 'Activer un Pass Téléchargement Apps Tiers (prix symbolique) ou se connecter Admin'
+                    : 'Cliquer pour afficher les détails de la session active'
+                }
               >
                 {isAdmin ? (
                   <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                 ) : (
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <ShieldCheck
+                    className={`w-3.5 h-3.5 shrink-0 ${
+                      licenseSession.tier === 'open_source' ? 'text-cyan-400' : 'text-emerald-400'
+                    }`}
+                  />
                 )}
-                <span className="hidden md:inline font-mono text-[11px] max-w-[140px] truncate">
-                  {isAdmin ? 'Administration' : licenseSession.clientName || 'Abonné Pro'}
+                <span className="hidden md:inline font-mono text-[11px] max-w-[185px] truncate">
+                  {isAdmin
+                    ? 'Administration'
+                    : licenseSession.tier === 'open_source'
+                    ? 'Open-Source · Pass / Admin'
+                    : licenseSession.clientName || 'Pass APK Actif'}
                 </span>
               </button>
             )}
@@ -322,20 +323,6 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {canAccess('coolray_lspi') && (
-            <button
-              onClick={() => onSelectTab('coolray_lspi')}
-              className={`whitespace-nowrap transition-colors pb-1 border-b-2 cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'coolray_lspi'
-                  ? 'text-rose-300 border-rose-400 font-bold'
-                  : 'border-transparent hover:text-rose-300 text-rose-400/90'
-              }`}
-            >
-              <Flame className="w-3.5 h-3.5 text-rose-400" />
-              <span>Coolray DZ &amp; Unité Centrale</span>
-            </button>
-          )}
-
           {canAccess('universal_master') && (
             <button
               onClick={() => onSelectTab('universal_master')}
@@ -388,20 +375,6 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
               <span>Clé 3m &amp; Antivol</span>
-            </button>
-          )}
-
-          {canAccess('chinese_flasher') && (
-            <button
-              onClick={() => onSelectTab('chinese_flasher')}
-              className={`whitespace-nowrap transition-colors pb-1 border-b-2 cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'chinese_flasher'
-                  ? 'text-rose-400 border-rose-400 font-semibold'
-                  : 'border-transparent hover:text-rose-300 text-rose-400/90'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-rose-500" />
-              <span>Flash Cockpit &amp; Écrans CN</span>
             </button>
           )}
 

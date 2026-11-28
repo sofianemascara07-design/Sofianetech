@@ -707,11 +707,11 @@ export const AdminSubscribersPanel: React.FC<AdminSubscribersPanelProps> = ({
                 onChange={(e) => setNewTier(e.target.value as LicenseTier)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-cyan-500"
               >
-                <option value="master">Abonné MASTER DZ (Illimité · Tous Modules)</option>
-                <option value="reprog">Abonné REPROG PRO (Diag + Flash + Caméras)</option>
-                <option value="standard">Abonné STANDARD (Diag + Caméras + Apps)</option>
-                <option value="tablette_chinois">Pack TABLETTE CHINOISE ONLY (Écrans Chinois + Apps + Traducteur)</option>
-                <option value="demo">Pass Démo LIMITÉ (Chrono + 3 Modules Seulement)</option>
+                <option value="master">Pass MASTER DZ (Tous Modules + Coffre APK Complet)</option>
+                <option value="tablette_chinois">Pass Apps Tiers · Prix Symbolique (Coffre APK &amp; Packs)</option>
+                <option value="standard">Pass Standard (Coffre APK + Outils Open-Source)</option>
+                <option value="reprog">Pass REPROG PRO (Coffre APK + Outils Open-Source)</option>
+                <option value="demo">Pass Démo LIMITÉ (Sans Téléchargements Coffre)</option>
               </select>
             </div>
 

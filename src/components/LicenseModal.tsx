@@ -110,7 +110,7 @@ export const LicenseModal: React.FC<LicenseModalProps> = ({
               className="text-xs text-rose-400 hover:text-rose-300 hover:underline flex items-center gap-1.5 cursor-pointer font-medium"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Déconnexion / Verrouiller</span>
+              <span>Déconnexion · Retour Open-Source</span>
             </button>
           ) : (
             <div className="flex items-center gap-2">

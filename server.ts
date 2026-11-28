@@ -228,6 +228,37 @@ const requireAuth = (req: AuthenticatedRequest, res: express.Response, next: exp
   return next();
 };
 
+const openAccessOrAuth = (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+  const token = extractBearerToken(req);
+  if (token) {
+    const check = saasDatabase.verifyAuthToken(token);
+    if (!check.valid) {
+      return res.status(check.explicitlyRevoked ? 403 : 401).json({
+        success: false,
+        valid: false,
+        blocked: Boolean(check.explicitlyRevoked),
+        explicitlyRevoked: Boolean(check.explicitlyRevoked),
+        error: check.reason,
+        message: check.reason,
+      });
+    }
+    req.authSession = check.session;
+    req.rawAuthToken = token;
+    return next();
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  req.authSession = {
+    jti: 'open-source-guest',
+    role: 'subscriber',
+    hwid: 'OPEN-SOURCE',
+    tier: 'open_source',
+    clientName: 'Utilisateur Open-Source',
+    iat: nowSec,
+    exp: nowSec + 3600,
+  };
+  return next();
+};
+
 const requireAdmin = (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
   const token = extractBearerToken(req);
   const check = saasDatabase.verifyAuthToken(token);
@@ -370,7 +401,7 @@ const generateUnifiedAI = async (
 };
 
 // API: AI Diagnostic Expert (with post-generation code & URL anti-hallucination guardrails)
-app.post('/api/diagnose/ai', requireAuth, async (req, res) => {
+app.post('/api/diagnose/ai', openAccessOrAuth, async (req, res) => {
   try {
     const { brand, model, year, engine, dtcCodes, symptoms } = req.body || {};
     const dtcArray: string[] = Array.isArray(dtcCodes) ? dtcCodes.map(String) : [];
@@ -431,7 +462,7 @@ N'invente aucun code DTC inexistant, aucun code PIN et aucune URL externe.`;
 });
 
 // API: Quick Scan Visual Synthesis (Gateway, Moteur, ABS, Airbag)
-app.post('/api/diagnose/quick-scan-summary', requireAuth, async (req, res) => {
+app.post('/api/diagnose/quick-scan-summary', openAccessOrAuth, async (req, res) => {
   try {
     const { vehicleName = 'Véhicule', batteryVoltage = 12.6, ecuResults = [] } = req.body || {};
     const ecus: Array<{
@@ -481,7 +512,7 @@ app.post('/api/diagnose/quick-scan-summary', requireAuth, async (req, res) => {
 });
 
 // API: Traducteur & Dépanneur DTC Brut IA (Valises Launch / Autel : chinois / mauvais anglais -> Français technique)
-app.post('/api/dtc/translate-raw', requireAuth, async (req, res) => {
+app.post('/api/dtc/translate-raw', openAccessOrAuth, async (req, res) => {
   try {
     const {
       rawInput = '',
@@ -749,7 +780,7 @@ ENTRÉE VALISE (${scannerSource}) — VÉHICULE (${brand}) :
 });
 
 // API: AI App & Automotive UI Translator (with 1:1 key & placeholder integrity verification)
-app.post('/api/translate/ai', requireAuth, async (req, res) => {
+app.post('/api/translate/ai', openAccessOrAuth, async (req, res) => {
   try {
     const { targetLanguage, sourceStrings = [], appName } = req.body || {};
     const safeSources: Array<{ key: string; text: string }> = Array.isArray(sourceStrings) ? sourceStrings : [];
@@ -845,7 +876,7 @@ Règles impératives (Zéro Hallucination) :
 });
 
 // API: AI Tuning & Flash Recommendation (with anti-hallucination update & checksum guard)
-app.post('/api/flash/recommendations', requireAuth, async (req, res) => {
+app.post('/api/flash/recommendations', openAccessOrAuth, async (req, res) => {
   try {
     const { brand, model, ecuType, flashStage = 'Stage 1' } = req.body || {};
     const hasAi = Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY);
@@ -1374,7 +1405,7 @@ CONSIGNES STRICTES :
 });
 
 // API: Tablet App Sideload / Smart Premium Bundle Install
-app.post('/api/tablet/install', requireAuth, (req, res) => {
+app.post('/api/tablet/install', openAccessOrAuth, (req, res) => {
   const { appId, appName, packageName, connectionMode = 'wifi', targetDevice, bundleIds, enableMultiWindow } = req.body || {};
   const timestamp = new Date().toISOString();
   const safeMode = String(connectionMode).toUpperCase();
@@ -1404,7 +1435,7 @@ app.post('/api/tablet/install', requireAuth, (req, res) => {
 });
 
 // API: Indirect 1-Button Head-Unit APK Install / Update (ADB Wi-Fi, PC Agent USB, or Browser Relay)
-app.post('/api/tablet/indirect-install', requireAuth, (req, res) => {
+app.post('/api/tablet/indirect-install', openAccessOrAuth, (req, res) => {
   const {
     appId = 'communitypack_market',
     appName = 'CommunityPack Market',
@@ -1473,7 +1504,7 @@ app.post('/api/tablet/indirect-install', requireAuth, (req, res) => {
 });
 
 // API: Smartech DZ DiagAuto - Detection & Status Probe
-app.get('/api/smartech-dz/status', requireAuth, (_req, res) => {
+app.get('/api/smartech-dz/status', openAccessOrAuth, (_req, res) => {
   return res.json({
     isDetected: true,
     packageName: 'dz.smartech.diagauto',
@@ -1494,7 +1525,7 @@ app.get('/api/smartech-dz/status', requireAuth, (_req, res) => {
 });
 
 // API: Smartech DZ DiagAuto - Plugin Injector & Bridge
-app.post('/api/smartech-dz/inject-plugin', requireAuth, (req, res) => {
+app.post('/api/smartech-dz/inject-plugin', openAccessOrAuth, (req, res) => {
   const { pluginId, pluginName, targetPackage } = req.body;
   const timestamp = new Date().toISOString();
 
@@ -1516,7 +1547,7 @@ app.post('/api/smartech-dz/inject-plugin', requireAuth, (req, res) => {
 });
 
 // API: Smartech DZ DiagAuto - Real-time Diagnostic Sync
-app.post('/api/smartech-dz/sync', requireAuth, (req, res) => {
+app.post('/api/smartech-dz/sync', openAccessOrAuth, (req, res) => {
   const { dtcCodes, vehicle, calibration } = req.body;
   return res.json({
     success: true,
@@ -1529,7 +1560,7 @@ app.post('/api/smartech-dz/sync', requireAuth, (req, res) => {
 });
 
 // API: BCM / Habitacle Comfort Controls (Doors, Windows, Sunroof, Trunk, Climate)
-app.post('/api/bcm/command', requireAuth, (req, res) => {
+app.post('/api/bcm/command', openAccessOrAuth, (req, res) => {
   const { vehicleId, commandType, parameters } = req.body;
   const timestamp = new Date().toLocaleTimeString('fr-FR');
 
@@ -1601,7 +1632,7 @@ app.post('/api/bcm/command', requireAuth, (req, res) => {
 });
 
 // API: Intelligent Voice Command Parsing with Gemini AI & Multilingual Domain NLP (FR / AR / Darija / EN)
-app.post('/api/ai/voice-command', requireAuth, async (req, res) => {
+app.post('/api/ai/voice-command', openAccessOrAuth, async (req, res) => {
   try {
     const { transcript, matrixName = 'AutoPro', vehicle, voiceLang = 'fr-FR' } = req.body;
     if (!transcript || typeof transcript !== 'string') {
@@ -1635,7 +1666,7 @@ Analyse la commande et produis un objet JSON strict :
       "params": {}
     }
   ],
-  "suggestedTab": "comfort" | "diagnostic" | "flash" | "chinese_flasher" | "smartech" | "apps" | "cameras" | "keyless" | "vault" | "aa_cp_deployer"
+  "suggestedTab": "comfort" | "diagnostic" | "flash" | "smartech" | "apps" | "cameras" | "keyless" | "vault" | "aa_cp_deployer"
 }
 
 Règles de mapping multi-langues (FR / AR / Darija / EN) :
@@ -1672,7 +1703,6 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
       'comfort',
       'diagnostic',
       'flash',
-      'chinese_flasher',
       'smartech',
       'apps',
       'cameras',
@@ -1945,7 +1975,7 @@ Ne réponds qu'avec le JSON valide, sans balises markdown ni texte supplémentai
 });
 
 // API: Smart Keyless Proximity (3 meters auto lock / unlock)
-app.post('/api/keyless/proximity-update', requireAuth, (req, res) => {
+app.post('/api/keyless/proximity-update', openAccessOrAuth, (req, res) => {
   const { distanceMeters, thresholdMeters = 3.0, currentLockState = true } = req.body;
   const dist = parseFloat(distanceMeters) || 0;
   const threshold = parseFloat(thresholdMeters) || 3.0;
@@ -1977,7 +2007,7 @@ app.post('/api/keyless/proximity-update', requireAuth, (req, res) => {
 });
 
 // API: Security & Emergency Handling (Panne, Perte, Vol, Vente)
-app.post('/api/keyless/emergency-action', requireAuth, (req, res) => {
+app.post('/api/keyless/emergency-action', openAccessOrAuth, (req, res) => {
   const { actionType, vehicleId, pinCode, newOwnerName, newOwnerPhone } = req.body;
   const timestamp = new Date().toLocaleTimeString('fr-FR');
 
@@ -2054,7 +2084,7 @@ app.post('/api/keyless/emergency-action', requireAuth, (req, res) => {
 });
 
 // API: Outil IA Clonage Clés, Transpondeurs & Extraction Code PIN (IMMO Atelier)
-app.post('/api/immo/ai-key-tool', requireAuth, async (req, res) => {
+app.post('/api/immo/ai-key-tool', openAccessOrAuth, async (req, res) => {
   try {
     const {
       brand = 'Fiat',
@@ -2186,7 +2216,7 @@ Sois concis, structuré en français professionnel d'atelier.`;
 });
 
 // API: Server-side AKL Dump Integrity Verification & Modular OEM Crypto Table Hook
-app.post('/api/immo/akl/verify-dump', requireAuth, (req, res) => {
+app.post('/api/immo/akl/verify-dump', openAccessOrAuth, (req, res) => {
   try {
     const {
       procedureId,
@@ -2255,7 +2285,6 @@ const ADMIN_ALLOWED_MODULES = [
   'flash',
   'comfort',
   'keyless',
-  'chinese_flasher',
   'aa_cp_deployer',
   'smartech',
   'connection',
@@ -2266,6 +2295,8 @@ const ADMIN_ALLOWED_MODULES = [
   'admin',
   'workshop_cn',
   'transmission',
+  'universal_master',
+  'copilot',
 ];
 
 function buildAdminLicenseSessionPayload(hwid: string) {
@@ -2417,25 +2448,38 @@ app.post('/api/license/verify', async (req, res) => {
 
   const tierLabel =
     tier === 'master'
-      ? 'Pack MASTER DZ (Abonné Illimité)'
+      ? 'Pack MASTER DZ · Pass Apps Tiers Illimité'
       : tier === 'reprog'
-      ? 'Pack REPROG PRO (Abonné)'
+      ? 'Pack REPROG PRO · Pass Apps Tiers'
       : tier === 'tablette_chinois'
-      ? 'Pack TABLETTE CHINOISE (Abonné)'
+      ? 'Pass Apps Tiers · Prix Symbolique (Coffre APK)'
       : tier === 'demo'
       ? `Pass Démo Limité (${sub.maxDemoMinutes || 10} min max)`
-      : 'Pack DIAGNOSTIC STD (Abonné)';
+      : 'Pass Standard · Apps Tiers (Coffre APK)';
+
+  const ALL_USER_MODULES = [
+    'diagnostic',
+    'history',
+    'cameras',
+    'flash',
+    'comfort',
+    'keyless',
+    'aa_cp_deployer',
+    'smartech',
+    'connection',
+    'apps',
+    'vault',
+    'translator',
+    'workshop_cn',
+    'transmission',
+    'universal_master',
+    'copilot',
+  ];
 
   const allowedModules =
-    tier === 'master'
-      ? ['diagnostic', 'history', 'cameras', 'flash', 'comfort', 'keyless', 'chinese_flasher', 'aa_cp_deployer', 'smartech', 'connection', 'apps', 'vault', 'translator', 'workshop_cn', 'transmission']
-      : tier === 'reprog'
-      ? ['diagnostic', 'history', 'cameras', 'flash', 'chinese_flasher', 'aa_cp_deployer', 'connection', 'vault', 'translator', 'workshop_cn', 'transmission']
-      : tier === 'tablette_chinois'
-      ? ['chinese_flasher', 'aa_cp_deployer', 'apps', 'vault', 'translator', 'connection']
-      : tier === 'demo'
+    tier === 'demo'
       ? ['diagnostic', 'cameras', 'history', 'workshop_cn', 'transmission', 'vault']
-      : ['diagnostic', 'history', 'cameras', 'connection', 'apps', 'aa_cp_deployer', 'vault', 'translator', 'workshop_cn', 'transmission'];
+      : ALL_USER_MODULES;
 
   const resolvedHwid = sub.boundHwid || hwid || 'HWID-AUTO-DETECTED';
   const maskedKey = saasDatabase.maskLicenseKey(sub.licenseKey);
@@ -2658,7 +2702,7 @@ const decodeHeaderUtf8 = (val: string | string[] | undefined): string => {
   }
 };
 
-app.get('/api/vault/items', requireAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/vault/items', openAccessOrAuth, (req: AuthenticatedRequest, res) => {
   const session = req.authSession!;
   return res.json({
     success: true,
@@ -3876,7 +3920,7 @@ app.delete('/api/sdr/prospects/:id', requireAdmin, (req, res) => {
 // ==========================================
 // MODULE 1: CÂBLAGE & PINOUTS CROWDSOURCING
 // ==========================================
-app.get('/api/pinouts', requireAuth, (req, res) => {
+app.get('/api/pinouts', openAccessOrAuth, (req, res) => {
   try {
     const brand = String(req.query.brand || '').trim().toLowerCase();
     const moduleType = String(req.query.moduleType || '').trim().toUpperCase();
@@ -3920,7 +3964,7 @@ app.get('/api/pinouts', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/pinouts', requireAuth, (req, res) => {
+app.post('/api/pinouts', openAccessOrAuth, (req, res) => {
   try {
     const {
       brand,
@@ -3973,7 +4017,7 @@ app.post('/api/pinouts', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/pinouts/:id/vote', requireAuth, (req, res) => {
+app.post('/api/pinouts/:id/vote', openAccessOrAuth, (req, res) => {
   try {
     const { id } = req.params;
     const { voterId, action } = req.body || {};
@@ -3997,7 +4041,7 @@ app.post('/api/pinouts/:id/vote', requireAuth, (req, res) => {
 // ==========================================
 // MODULE 5: TRANSMISSION & TCU DIAGNOSTIC SUITE (UDS 0x7E1/0x7E9 + J2534 + IA)
 // ==========================================
-app.post('/api/transmission/uds-exchange', requireAuth, async (req, res) => {
+app.post('/api/transmission/uds-exchange', openAccessOrAuth, async (req, res) => {
   try {
     const {
       txId = '0x7E1',
@@ -4094,7 +4138,7 @@ app.post('/api/transmission/uds-exchange', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/transmission/ai-diagnose', requireAuth, async (req, res) => {
+app.post('/api/transmission/ai-diagnose', openAccessOrAuth, async (req, res) => {
   try {
     const {
       transmissionType = 'BVA',
@@ -4560,7 +4604,7 @@ app.post('/api/coolray-lspi/oem-compat-check', requireAuth, (req, res) => {
 });
 
 // POST /api/agent/audit-write - Log local PC agent write authorization & execution
-app.post('/api/agent/audit-write', requireAuth, (req, res) => {
+app.post('/api/agent/audit-write', openAccessOrAuth, (req, res) => {
   try {
     const { actionTitle, targetModule, autoExecuted, status, batteryVoltage } = req.body || {};
     const record = saasDatabase.logActivity({
@@ -4643,7 +4687,7 @@ function resolveEcuSeedKeyProfile(ecuModel: string): EcuSeedKeyProfile {
 }
 
 // POST /api/calculate-key - Cloud-only UDS 0x27 Seed/Key derivation (protects IP off the client PC)
-app.post('/api/calculate-key', requireAuth, (req, res) => {
+app.post('/api/calculate-key', openAccessOrAuth, (req, res) => {
   try {
     const rawSeed = String(req.body?.seedHex || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
     const ecuModel = String(req.body?.ecuModel || 'BOSCH_MG1US008').trim().slice(0, 64);
@@ -4699,7 +4743,7 @@ app.post('/api/calculate-key', requireAuth, (req, res) => {
 });
 
 // POST /api/agent/sign-firmware - Compute server-side firmware integrity attestation (HMAC-SHA256)
-app.post('/api/agent/sign-firmware', requireAuth, (req, res) => {
+app.post('/api/agent/sign-firmware', openAccessOrAuth, (req, res) => {
   try {
     const sha256Hex = String(req.body?.sha256Hex || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
     const crc32Hex = String(req.body?.crc32Hex || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
@@ -4807,7 +4851,7 @@ function computeNodeCrc32Hex(buf: Buffer): string {
 }
 
 // GET /api/credits/status
-app.get('/api/credits/status', requireAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/credits/status', openAccessOrAuth, (req: AuthenticatedRequest, res) => {
   const isAdmin = req.authSession?.role === 'admin';
   return res.json({
     success: true,
@@ -4873,7 +4917,7 @@ app.post('/api/credits/purchase', requireAdmin, (req, res) => {
 });
 
 // POST /api/credits/consume
-app.post('/api/credits/consume', requireAuth, (req, res) => {
+app.post('/api/credits/consume', openAccessOrAuth, (req, res) => {
   try {
     const operationName = String(req.body?.operationName || 'Opération Flash / Binaire').slice(0, 100);
     const costTokens = Number(req.body?.costTokens || 1);
@@ -4907,7 +4951,7 @@ app.post('/api/credits/consume', requireAuth, (req, res) => {
 });
 
 // POST /api/binary/process - Swiftec-style 1-click patch builder + CRC32 recalculation
-app.post('/api/binary/process', requireAuth, (req, res) => {
+app.post('/api/binary/process', openAccessOrAuth, (req, res) => {
   try {
     const filename = String(req.body?.filename || 'ecu_dump.bin').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80);
     const binaryBase64 = String(req.body?.binaryBase64 || '');
@@ -4995,7 +5039,7 @@ app.post('/api/binary/process', requireAuth, (req, res) => {
 });
 
 // POST /api/copilot/diagnose - AutoPro Copilot FR + Darija Technique (OBD2 / UDS / SAE J1939)
-app.post('/api/copilot/diagnose', requireAuth, async (req, res) => {
+app.post('/api/copilot/diagnose', openAccessOrAuth, async (req, res) => {
   try {
     const vehicleLabel = String(req.body?.vehicleLabel || 'Véhicule Atelier').slice(0, 100);
     const ecuModel = String(req.body?.ecuModel || 'ECU Standard').slice(0, 64);
@@ -5115,7 +5159,7 @@ app.post('/api/db/optimize', requireAdmin, (_req, res) => {
 });
 
 // GET /api/history - Retrieve all historical scan sessions with filters
-app.get('/api/history', requireAuth, (req, res) => {
+app.get('/api/history', openAccessOrAuth, (req, res) => {
   try {
     const { vin, vehicleId, status, search, dtcCode } = req.query;
     const scans = saasDatabase.getAllScans({
@@ -5136,7 +5180,7 @@ app.get('/api/history', requireAuth, (req, res) => {
 });
 
 // POST /api/history - Record a new scan session
-app.post('/api/history', requireAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/history', openAccessOrAuth, (req: AuthenticatedRequest, res) => {
   try {
     const sessionData = req.body;
     if (!sessionData || !sessionData.vehicleName) {
@@ -5167,7 +5211,7 @@ app.post('/api/history', requireAuth, (req: AuthenticatedRequest, res) => {
 });
 
 // GET /api/history/:id - Single scan session
-app.get('/api/history/:id', requireAuth, (req, res) => {
+app.get('/api/history/:id', openAccessOrAuth, (req, res) => {
   try {
     const scan = saasDatabase.getScanById(req.params.id);
     if (!scan) {
@@ -5180,7 +5224,7 @@ app.get('/api/history/:id', requireAuth, (req, res) => {
 });
 
 // PATCH /api/history/:id/resolve - Mark DTCs as repaired
-app.patch('/api/history/:id/resolve', requireAuth, (req, res) => {
+app.patch('/api/history/:id/resolve', openAccessOrAuth, (req, res) => {
   try {
     const { notes } = req.body;
     const updated = saasDatabase.resolveScan(req.params.id, notes);
@@ -5245,7 +5289,7 @@ app.get('/api/clients/activity', requireAdmin, (req, res) => {
 });
 
 // POST /api/clients/activity - Log client module usage event + remote stability metrics
-app.post('/api/clients/activity', requireAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/clients/activity', openAccessOrAuth, (req: AuthenticatedRequest, res) => {
   try {
     const authSess = req.authSession!;
     const {
@@ -5289,7 +5333,7 @@ app.get('/api/db/backup', requireAdmin, (_req, res) => {
 });
 
 // POST /api/cameras/command - Control vehicle ADAS / 360 / Reverse / Dashcam cameras via LVDS / CAN-Bus
-app.post('/api/cameras/command', requireAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/cameras/command', openAccessOrAuth, (req: AuthenticatedRequest, res) => {
   const { cameraChannel, action, steeringAngleDeg, guidelinesActive, nightVisionActive, clientName, vehicleName } = req.body;
   const timestamp = new Date().toLocaleTimeString();
 

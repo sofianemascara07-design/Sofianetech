@@ -368,7 +368,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             'diagnostic',
             'flash',
             'comfort',
-            'chinese_flasher',
             'smartech',
             'apps',
             'cameras',

@@ -16,6 +16,7 @@ import {
   KeyRound,
   Eye,
   EyeOff,
+  X,
 } from 'lucide-react';
 import { LicenseSession } from '../types/automotive';
 import { apiFetch } from '../utils/apiBridge';
@@ -24,13 +25,17 @@ import { setAuthToken } from '../utils/authSession';
 interface LicenseGateProps {
   onLicenseActivated: (session: LicenseSession) => void;
   blockReason?: string | null;
+  onClose?: () => void;
+  initialTab?: 'subscriber' | 'admin';
 }
 
 export const LicenseGate: React.FC<LicenseGateProps> = ({
   onLicenseActivated,
   blockReason,
+  onClose,
+  initialTab = 'subscriber',
 }) => {
-  const [authTab, setAuthTab] = useState<'subscriber' | 'admin'>('subscriber');
+  const [authTab, setAuthTab] = useState<'subscriber' | 'admin'>(initialTab);
   const [clientName, setClientName] = useState('');
   const [licenseKey, setLicenseKey] = useState('');
   const [adminPasscode, setAdminPasscode] = useState('');
@@ -102,6 +107,10 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
       clearInterval(offlinePoll);
     };
   }, [runServerStatusCheck]);
+
+  useEffect(() => {
+    setAuthTab(initialTab);
+  }, [initialTab]);
 
   const handleCopyHwid = () => {
     if (!hwid) return;
@@ -264,24 +273,40 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
   const whatsappNumber = '213557767804';
   const whatsappDisplay = '05 57 76 78 04';
   const whatsappMessage = encodeURIComponent(
-    `Salam alikoum Sofiane,\nJe souhaite obtenir ma clé Abonné ou un Pass Démo Limité AutoPro Diagnostic & Flash.\nMon nom / garage : ${clientName || 'Atelier Auto'}\nMon identifiant machine (HWID) : ${hwid}`
+    `Salam alikoum Sofiane,\nL'application AutoPro est Open-Source gratuite, je souhaite activer un Pass Téléchargement Apps Tiers (prix symbolique) pour le Coffre APK.\nMon nom / garage : ${clientName || 'Atelier Auto'}\nMon identifiant machine (HWID) : ${hwid}`
   );
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex items-center justify-center p-4 sm:p-6 selection:bg-cyan-500 selection:text-slate-950">
-      <div className="max-w-xl w-full space-y-5">
+    <div
+      className={
+        onClose
+          ? 'fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm overflow-y-auto flex items-center justify-center p-4 sm:p-6 selection:bg-cyan-500 selection:text-slate-950'
+          : 'min-h-screen bg-[#070b14] text-slate-100 flex items-center justify-center p-4 sm:p-6 selection:bg-cyan-500 selection:text-slate-950'
+      }
+    >
+      <div className="max-w-xl w-full space-y-5 relative my-auto">
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fermer et revenir à l'application Open-Source"
+            className="absolute top-0 right-0 p-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white hover:border-cyan-400 cursor-pointer transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
         <div className="text-center space-y-2">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 text-slate-950 shadow-lg shadow-cyan-500/20 mb-1">
             <Lock className="w-7 h-7" />
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight text-white flex flex-wrap items-center justify-center gap-2">
-            <span>AutoPro Suite Automobile</span>
-            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40">
-              Accès Verrouillé · Liste Blanche
+            <span>Pass Apps Tiers &amp; Administration</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+              App Open-Source · Coffre Prix Symbolique
             </span>
           </h1>
           <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-            Seuls les abonnés validés ou détenteurs d&apos;un Pass Démo autorisé peuvent accéder à la plateforme.
+            Les outils AutoPro sont ouverts gratuitement en Open-Source. Activez une clé Pass à prix symbolique pour débloquer le téléchargement des APK tiers dans le Coffre, ou connectez-vous en Admin.
           </p>
         </div>
 
@@ -290,8 +315,8 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
             <Clock className="w-4 h-4 shrink-0 text-amber-400" />
             <span>
               {demoLinksEnabled
-                ? `Pass Démo Limité actif (${defaultDemoMinutes} min max par clé)`
-                : 'Démonstrations publiques verrouillées · Clé Abonné requise'}
+                ? `Pass Démo (${defaultDemoMinutes} min) · Clé requise pour Coffre APK`
+                : 'Téléchargement APK Tiers · Clé Pass à prix symbolique'}
             </span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -349,7 +374,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
                   ? adminSetupRequired
                     ? 'Configuration Initiale Administrateur'
                     : 'Accès Administrateur'
-                  : 'Activation Clé Abonné ou Pass Démo'}
+                  : 'Activation Clé Pass Apps Tiers'}
               </span>
             </div>
 
@@ -363,7 +388,7 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Abonné
+                Pass APK
               </button>
               <button
                 type="button"
@@ -537,11 +562,11 @@ export const LicenseGate: React.FC<LicenseGateProps> = ({
           <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-xl space-y-2.5">
             <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
               <HelpCircle className="w-4 h-4 text-amber-400" />
-              <span>Demander un Abonnement ou un Pass Démo Limité</span>
+              <span>Obtenir un Pass Téléchargement Apps Tiers (Prix Symbolique)</span>
             </div>
 
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              Contactez directement Sofiane Mascara pour recevoir votre Pass Démo chronométré ou votre clé Abonné liée à votre HWID.
+              Contactez Sofiane Mascara pour recevoir votre clé Pass à prix symbolique permettant de télécharger tous les APK et packs tiers du Coffre.
             </p>
 
             <div className="p-3 bg-slate-950 rounded-xl border border-emerald-800/40 flex items-center justify-between gap-3 text-xs">

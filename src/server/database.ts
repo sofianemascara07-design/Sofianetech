@@ -839,7 +839,10 @@ export class AutoProDatabase {
       notes: rec.notes,
       uploadedAt: rec.uploadedAt,
       updatedAt: rec.updatedAt,
-      isEligible: tier !== 'demo' && rec.allowedTiers.includes(tier as VaultPaidTier),
+      isEligible:
+        tier !== 'demo' &&
+        tier !== 'open_source' &&
+        rec.allowedTiers.includes(tier as VaultPaidTier),
     };
   }
 
@@ -1260,14 +1263,14 @@ export class AutoProDatabase {
       };
     }
 
-    // 2. Strictly reject Demo / unauthenticated attempts
+    // 2. Strictly reject Open-Source free visitors & Demo accounts for third-party APK/file downloads
     const cleanKey = (params.session.keyUpper || '').trim().toUpperCase();
-    if (!cleanKey || params.session.tier === 'demo') {
+    if (!cleanKey || params.session.tier === 'demo' || params.session.tier === 'open_source') {
       return {
         allowed: false,
         statusCode: 403,
         message:
-          'Téléchargement bloqué : un abonnement payant actif est obligatoire. Les comptes Démo ne peuvent pas télécharger.',
+          'L’application est Open-Source gratuite, mais le téléchargement des APK et applications tierces nécessite un Pass Téléchargement à prix symbolique. Contactez Sofiane au 05 57 76 78 04.',
       };
     }
 

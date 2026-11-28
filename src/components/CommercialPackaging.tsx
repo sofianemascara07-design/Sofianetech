@@ -214,7 +214,7 @@ Testez la démo en direct sur votre micro ou votre smartphone en cliquant sur le
       if (onSelectVehicle) onSelectVehicle(coolray);
       onSelectTab('flash');
     } else if (scenarioId === 'chinese_tablet') {
-      onSelectTab('chinese_flasher');
+      onSelectTab('aa_cp_deployer');
     } else if (scenarioId === 'smartech_bridge') {
       onSelectTab('smartech');
     } else if (scenarioId === 'cameras_adas') {
